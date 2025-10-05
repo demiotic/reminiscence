@@ -1,10 +1,9 @@
 # Memora
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 **Semantic cache for multi-agent systems**
 
 Memora is an **experimental** semantic caching library for AI agents, built on LanceDB and sentence-transformers. **Alpha stage** - API may change.
-
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 > [!WARNING]
 > **Alpha Release (v0.1.0) - Not Production Ready**

@@ -13,43 +13,37 @@ def create_fingerprint(context: Dict[str, Any]) -> str:
     """
     Genera fingerprint del contexto estructural.
 
-    El fingerprint agrupa queries por contexto (tools, constraints),
+    El fingerprint agrupa queries por contexto COMPLETO,
     mientras que el embedding maneja la similitud semántica.
 
     Args:
-        context: Diccionario con:
-            - tools: List[str] - herramientas disponibles
-            - constraints: Dict - restricciones (idioma, formato, etc)
-            - entities: List[str] - entidades mencionadas (opcional)
+        context: Diccionario con cualquier key/value
 
     Returns:
-        Hash SHA256 de 16 caracteres
+        Hash SHA256
 
     Example:
         >>> create_fingerprint({"tools": ["search"]})
         'a4d5a016dcc745a9'
     """
-    fingerprint = {}
+    # Si el contexto está vacío, usar default
+    if not context:
+        fingerprint = {"default": True}
+    else:
+        # Normalizar el contexto completo
+        fingerprint = {}
 
-    # Tools: qué puede hacer el agente
-    if "tools" in context and context["tools"]:
-        fingerprint["tools"] = sorted(context["tools"])
-
-    # Constraints: restricciones de output
-    if "constraints" in context and context["constraints"]:
-        fingerprint["constraints"] = context["constraints"]
-
-    # Entities: menciones específicas (opcional, experimental)
-    if "entities" in context and context["entities"]:
-        fingerprint["entities"] = sorted(context["entities"])
-
-    # Default si vacío
-    if not fingerprint:
-        fingerprint["default"] = True
+        for key, value in sorted(context.items()):
+            # Normalizar listas ordenándolas
+            if isinstance(value, list):
+                fingerprint[key] = sorted(str(v) for v in value)
+            # Normalizar dicts recursivamente
+            elif isinstance(value, dict):
+                fingerprint[key] = value  # json.dumps lo manejará
+            else:
+                fingerprint[key] = value
 
     fp_str = json.dumps(fingerprint, sort_keys=True)
-    hash_result = hashlib.sha256(fp_str.encode()).hexdigest()[:16]
-
-    logger.debug(f"Fingerprint generado: {hash_result} | context={fingerprint}")
-
+    hash_result = hashlib.sha256(fp_str.encode()).hexdigest()
+    logger.debug(f"Fingerprint: {hash_result[:16]} | context={fingerprint}")
     return hash_result

@@ -25,3 +25,8 @@ package-dir = { "memora" = "src" }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["-v"]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.2.0",
+]

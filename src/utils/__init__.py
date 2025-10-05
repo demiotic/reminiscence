@@ -1,13 +1,13 @@
 """Utilidades para Memora."""
 
-from .fingerprint import create_fingerprint
 from .embeddings import (
     cosine_similarity,
     cosine_similarity_batch,
     euclidean_distance,
     normalize_embedding,
 )
-from .serialization import serialize, deserialize, is_json_serializable
+from .fingerprint import create_fingerprint, fingerprint_matches
+from .serialization import serialize, deserialize, is_serializable
 from .hashing import (
     content_hash,
     short_hash,
@@ -15,20 +15,16 @@ from .hashing import (
     dependency_chain_hash,
 )
 
-
 __all__ = [
-    # Fingerprinting
-    "create_fingerprint",
-    # Embeddings
     "cosine_similarity",
     "cosine_similarity_batch",
     "euclidean_distance",
     "normalize_embedding",
-    # Serialization
+    "create_fingerprint",
+    "fingerprint_matches",
     "serialize",
     "deserialize",
-    "is_json_serializable",
-    # Hashing
+    "is_serializable",
     "content_hash",
     "short_hash",
     "verify_content_hash",

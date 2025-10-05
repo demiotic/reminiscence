@@ -5,10 +5,6 @@ import inspect
 import logging
 from typing import Any, Callable, Dict, Optional
 
-
-from .utils import serialize, deserialize
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -161,8 +157,8 @@ class MemoraDecorator:
             logger.info(
                 f"Cache HIT | func={func.__name__} | similarity={result.similarity:.3f}"
             )
-            # Deserializar resultado
-            return deserialize(result.result)
+            # result.result YA está deserializado por core.py
+            return result.result
 
         # Cache MISS - ejecutar función
         logger.info(f"Cache MISS | func={func.__name__} | executing...")
@@ -221,8 +217,8 @@ class MemoraDecorator:
             logger.info(
                 f"Cache HIT | func={func.__name__} | similarity={result.similarity:.3f}"
             )
-            # Deserializar resultado
-            return deserialize(result.result)
+            # result.result YA está deserializado por core.py
+            return result.result
 
         # Cache MISS - ejecutar función
         logger.info(f"Cache MISS | func={func.__name__} | executing...")

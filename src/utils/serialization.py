@@ -1,25 +1,28 @@
-"""Serialización/deserialización robusta para caché.
+"""Robust serialization/deserialization for cache.
 
-Estrategia:
-- orjson como formato base (rápido, seguro, portable)
-- Handlers custom para pandas/polars/numpy
-- Arrow IPC como fallback para DataFrames gigantes (>10MB)
-- Sin pickle por seguridad
+Strategy:
+- orjson as base format (fast, safe, portable)
+- Custom handlers for pandas/polars/numpy
+- Arrow IPC as fallback for giant DataFrames (>10MB)
+- No pickle for security
 """
 
 import logging
 from typing import Any
 import orjson
 
+
 logger = logging.getLogger(__name__)
 
-# Imports opcionales - solo si están disponibles
+
+# Optional imports - only if available
 try:
     import pandas as pd
 
     HAS_PANDAS = True
 except ImportError:
     HAS_PANDAS = False
+
 
 try:
     import polars as pl
@@ -28,12 +31,14 @@ try:
 except ImportError:
     HAS_POLARS = False
 
+
 try:
     import numpy as np
 
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
+
 
 try:
     import pyarrow as pa
@@ -42,28 +47,29 @@ try:
 except ImportError:
     HAS_ARROW = False
 
-# Threshold para decidir entre orjson vs Arrow IPC (bytes)
+
+# Threshold to decide between orjson vs Arrow IPC (bytes)
 ARROW_THRESHOLD = 10_000_000  # 10MB
 
 
 def serialize(data: Any) -> bytes:
     """
-    Serializa resultado para almacenamiento.
+    Serialize result for storage.
 
-    Estrategia adaptativa:
-    - DataFrames grandes (>10MB) → Arrow IPC
-    - Todo lo demás → orjson con handlers
+    Adaptive strategy:
+    - Large DataFrames (>10MB) → Arrow IPC
+    - Everything else → orjson with handlers
 
     Args:
-        data: Cualquier objeto Python
+        data: Any Python object
 
     Returns:
-        bytes serializados
+        Serialized bytes
 
     Raises:
-        TypeError: Si el tipo no es serializable
+        TypeError: If type is not serializable
     """
-    # Detectar DataFrames grandes para Arrow IPC
+    # Detect large DataFrames for Arrow IPC
     if HAS_PANDAS and isinstance(data, pd.DataFrame):
         estimated_size = data.memory_usage(deep=True).sum()
         if estimated_size > ARROW_THRESHOLD:
@@ -88,15 +94,15 @@ def serialize(data: Any) -> bytes:
 
 def deserialize(data: bytes) -> Any:
     """
-    Deserializa resultado desde caché.
+    Deserialize result from cache.
 
     Args:
-        data: bytes serializados
+        data: Serialized bytes
 
     Returns:
-        Objeto Python original
+        Original Python object
     """
-    # Detectar formato Arrow IPC
+    # Detect Arrow IPC format
     if data.startswith(b"__arrow_pandas__:"):
         return _deserialize_arrow_pandas(data)
 
@@ -109,22 +115,20 @@ def deserialize(data: bytes) -> Any:
 
 
 def _orjson_handler(obj: Any) -> Any:
-    """Handler para tipos custom en orjson."""
+    """Handler for custom types in orjson."""
 
-    # Pandas DataFrame → dict con metadata
+    # Pandas DataFrame → dict with metadata
     if HAS_PANDAS and isinstance(obj, pd.DataFrame):
-        # FIX: usar to_dict("tight") o manual serialization
         return {
             "__type__": "pandas_df",
             "columns": obj.columns.tolist(),
             "index": obj.index.tolist(),
-            "data": obj.values.tolist(),  # Lista de listas
+            "data": obj.values.tolist(),  # List of lists
             "index_name": obj.index.name,
         }
 
     # Pandas Series
     if HAS_PANDAS and isinstance(obj, pd.Series):
-        # FIX: convertir índice a string para evitar non-string keys
         return {
             "__type__": "pandas_series",
             "values": obj.values.tolist(),
@@ -157,16 +161,15 @@ def _orjson_handler(obj: Any) -> Any:
 
 
 def _reconstruct_nested(obj: Any) -> Any:
-    """Reconstruye objetos custom de forma recursiva."""
+    """Reconstruct custom objects recursively."""
 
-    # Diccionarios pueden contener objetos serializados
+    # Dictionaries may contain serialized objects
     if isinstance(obj, dict):
-        # Detectar objetos custom por __type__
+        # Detect custom objects by __type__
         if "__type__" in obj:
             obj_type = obj["__type__"]
 
             if obj_type == "pandas_df" and HAS_PANDAS:
-                # FIX: reconstruir desde valores/columnas/índice
                 df = pd.DataFrame(
                     data=obj["data"], columns=obj["columns"], index=obj["index"]
                 )
@@ -175,7 +178,6 @@ def _reconstruct_nested(obj: Any) -> Any:
                 return df
 
             elif obj_type == "pandas_series" and HAS_PANDAS:
-                # FIX: reconstruir desde valores e índice
                 return pd.Series(
                     data=obj["values"], index=obj["index"], name=obj.get("name")
                 )
@@ -187,10 +189,10 @@ def _reconstruct_nested(obj: Any) -> Any:
                 arr = np.array(obj["data"], dtype=obj["dtype"])
                 return arr.reshape(obj["shape"])
 
-        # Reconstruir recursivamente
+        # Reconstruct recursively
         return {k: _reconstruct_nested(v) for k, v in obj.items()}
 
-    # Listas
+    # Lists
     elif isinstance(obj, list):
         return [_reconstruct_nested(item) for item in obj]
 
@@ -198,7 +200,7 @@ def _reconstruct_nested(obj: Any) -> Any:
 
 
 def _serialize_arrow_pandas(df: "pd.DataFrame") -> bytes:
-    """Serializa pandas DataFrame grande usando Arrow IPC."""
+    """Serialize large pandas DataFrame using Arrow IPC."""
     if not HAS_ARROW:
         raise RuntimeError("pyarrow required for large DataFrame serialization")
 
@@ -215,7 +217,7 @@ def _serialize_arrow_pandas(df: "pd.DataFrame") -> bytes:
 
 
 def _deserialize_arrow_pandas(data: bytes) -> "pd.DataFrame":
-    """Deserializa pandas DataFrame desde Arrow IPC."""
+    """Deserialize pandas DataFrame from Arrow IPC."""
     if not HAS_ARROW or not HAS_PANDAS:
         raise RuntimeError("pyarrow and pandas required")
 
@@ -227,7 +229,7 @@ def _deserialize_arrow_pandas(data: bytes) -> "pd.DataFrame":
 
 
 def _serialize_arrow_polars(df: "pl.DataFrame") -> bytes:
-    """Serializa polars DataFrame usando Arrow IPC."""
+    """Serialize polars DataFrame using Arrow IPC."""
     if not HAS_ARROW:
         raise RuntimeError("pyarrow required for large DataFrame serialization")
 
@@ -244,7 +246,7 @@ def _serialize_arrow_polars(df: "pl.DataFrame") -> bytes:
 
 
 def _deserialize_arrow_polars(data: bytes) -> "pl.DataFrame":
-    """Deserializa polars DataFrame desde Arrow IPC."""
+    """Deserialize polars DataFrame from Arrow IPC."""
     if not HAS_ARROW or not HAS_POLARS:
         raise RuntimeError("pyarrow and polars required")
 
@@ -257,13 +259,13 @@ def _deserialize_arrow_polars(data: bytes) -> "pl.DataFrame":
 
 def is_serializable(data: Any) -> bool:
     """
-    Verifica si un objeto es serializable.
+    Verify if an object is serializable.
 
     Args:
-        data: Objeto a verificar
+        data: Object to verify
 
     Returns:
-        True si es serializable
+        True if serializable
     """
     try:
         serialize(data)

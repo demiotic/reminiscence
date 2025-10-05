@@ -56,7 +56,6 @@ class Memora:
             log_level=self.config.log_level, json_logs=self.config.json_logs
         )
 
-        # Get logger instance (ESTO reemplaza: logger = logging.getLogger(__name__))
         global logger
         logger = get_logger(__name__)
 
@@ -78,9 +77,9 @@ class Memora:
                 pa.field("query_text", pa.string()),
                 pa.field("context_hash", pa.string()),
                 pa.field("embedding", pa.list_(pa.float32(), self.embedding_dim)),
-                pa.field("result", pa.binary()),  # bytes, not string
-                pa.field("timestamp", pa.int64()),  # Milliseconds since epoch
-                pa.field("metadata", pa.binary()),  # bytes, not string
+                pa.field("result", pa.binary()),
+                pa.field("timestamp", pa.int64()),
+                pa.field("metadata", pa.binary()),
             ]
         )
 
@@ -480,7 +479,7 @@ class Memora:
                 result_size_bytes=len(result_bytes),
                 metadata_size_bytes=len(metadata_bytes),
                 total_payload_bytes=total_payload_size,
-                cache_entries=actual_count,  # ← FIX: Use actual count
+                cache_entries=actual_count,
             )
 
             # 7. Auto-create index if needed

@@ -67,7 +67,7 @@ def benchmark_device(device: str, num_queries: int = 50) -> Dict[str, float]:
         "median_ms": statistics.median(timings),
         "min_ms": min(timings),
         "max_ms": max(timings),
-        "p95_ms": statistics.quantiles(timings, n=20)[18],  # 95th percentile
+        "p95_ms": statistics.quantiles(timings, n=20)[18],
         "queries_per_sec": num_queries / total_time,
     }
 

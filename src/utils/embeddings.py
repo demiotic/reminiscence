@@ -1,53 +1,53 @@
-"""Utilidades para embeddings."""
+"""Utilities for embeddings."""
 
 
 def cosine_similarity(vec1, vec2) -> float:
     """
-    Calcula similitud coseno entre dos vectores L2-normalizados.
+    Calculate cosine similarity between two L2-normalized vectors.
 
-    Para vectores normalizados, cosine_similarity = dot_product.
+    For normalized vectors, cosine_similarity = dot_product.
 
     Args:
-        vec1: Lista de floats o PyArrow scalar/array
-        vec2: Lista de floats o PyArrow scalar/array
+        vec1: List of floats or PyArrow scalar/array
+        vec2: List of floats or PyArrow scalar/array
 
     Returns:
-        Similitud coseno en rango [-1, 1] (típicamente [0, 1] si normalizados)
+        Cosine similarity in range [-1, 1] (typically [0, 1] if normalized)
     """
-    # Convertir a listas Python si son objetos PyArrow
+    # Convert to Python lists if they are PyArrow objects
     if hasattr(vec1, "as_py"):
         vec1 = vec1.as_py()
     if hasattr(vec2, "as_py"):
         vec2 = vec2.as_py()
 
-    # Producto punto
+    # Dot product
     return float(sum(a * b for a, b in zip(vec1, vec2)))
 
 
 def cosine_similarity_batch(query_vec, candidate_vecs) -> list[float]:
     """
-    Calcula similitud coseno entre un query y múltiples candidatos.
+    Calculate cosine similarity between a query and multiple candidates.
 
     Args:
-        query_vec: Vector query (lista de floats)
-        candidate_vecs: Lista de vectores candidatos
+        query_vec: Query vector (list of floats)
+        candidate_vecs: List of candidate vectors
 
     Returns:
-        Lista de similitudes
+        List of similarities
     """
     return [cosine_similarity(query_vec, cand) for cand in candidate_vecs]
 
 
 def euclidean_distance(vec1, vec2) -> float:
     """
-    Calcula distancia euclidiana entre dos vectores.
+    Calculate Euclidean distance between two vectors.
 
     Args:
-        vec1: Lista de floats o PyArrow scalar/array
-        vec2: Lista de floats o PyArrow scalar/array
+        vec1: List of floats or PyArrow scalar/array
+        vec2: List of floats or PyArrow scalar/array
 
     Returns:
-        Distancia euclidiana
+        Euclidean distance
     """
     if hasattr(vec1, "as_py"):
         vec1 = vec1.as_py()
@@ -59,13 +59,13 @@ def euclidean_distance(vec1, vec2) -> float:
 
 def normalize_embedding(vec) -> list[float]:
     """
-    Normaliza un embedding a norma L2 = 1.
+    Normalize an embedding to L2 norm = 1.
 
     Args:
-        vec: Lista de floats o PyArrow scalar/array
+        vec: List of floats or PyArrow scalar/array
 
     Returns:
-        Vector normalizado
+        Normalized vector
     """
     if hasattr(vec, "as_py"):
         vec = vec.as_py()

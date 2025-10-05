@@ -1,4 +1,4 @@
-"""Tipos de datos para Memora."""
+"""Data types for Memora."""
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -8,14 +8,14 @@ import pyarrow as pa
 @dataclass
 class CacheEntry:
     """
-    Entrada individual en el caché.
+    Individual cache entry.
 
-    Representa un resultado almacenado con su metadata asociada.
+    Represents a stored result with its associated metadata.
     """
 
     query_text: str
     context_hash: str
-    embedding: pa.Array  # FixedSizeListArray de float32
+    embedding: pa.Array  # FixedSizeListArray of float32
     result: Any
     timestamp: int
     metadata: Optional[Dict[str, Any]] = None
@@ -24,14 +24,14 @@ class CacheEntry:
 @dataclass
 class LookupResult:
     """
-    Resultado de una operación de búsqueda en caché.
+    Result of a cache lookup operation.
 
     Attributes:
-        hit: True si se encontró match válido
-        result: Datos recuperados (None si miss)
-        similarity: Score de similitud (0-1)
-        matched_query: Query original que hizo match
-        age_seconds: Antigüedad de la entrada
+        hit: True if valid match was found
+        result: Retrieved data (None if miss)
+        similarity: Similarity score (0-1)
+        matched_query: Original query that matched
+        age_seconds: Entry age in seconds
     """
 
     hit: bool
@@ -42,21 +42,21 @@ class LookupResult:
 
     @property
     def is_hit(self) -> bool:
-        """Alias para compatibilidad con diferentes estilos de código."""
+        """Alias for compatibility with different code styles."""
         return self.hit
 
     @property
     def is_miss(self) -> bool:
-        """Inverso de is_hit."""
+        """Inverse of is_hit."""
         return not self.hit
 
 
 @dataclass
 class AvailabilityCheck:
     """
-    Resultado de verificación de disponibilidad.
+    Availability check result.
 
-    Usado por planificadores para saber si existe caché sin recuperar datos.
+    Used by schedulers to know if cache exists without retrieving data.
     """
 
     available: bool
@@ -66,7 +66,7 @@ class AvailabilityCheck:
 
     @property
     def is_fresh(self) -> bool:
-        """Retorna True si la entrada es reciente (< 50% del TTL consumido)."""
+        """Returns True if entry is recent (< 50% of TTL consumed)."""
         if self.ttl_remaining_seconds is None or self.age_seconds is None:
             return True
         total_ttl = self.age_seconds + self.ttl_remaining_seconds
@@ -76,7 +76,7 @@ class AvailabilityCheck:
 @dataclass
 class StoreRequest:
     """
-    Request para almacenar en caché (usado en modo remoto).
+    Request to store in cache (used in remote mode).
     """
 
     query: str
@@ -88,7 +88,7 @@ class StoreRequest:
 @dataclass
 class LookupRequest:
     """
-    Request de búsqueda (usado en modo remoto).
+    Lookup request (used in remote mode).
     """
 
     query: str
@@ -99,7 +99,7 @@ class LookupRequest:
 @dataclass
 class InvalidateRequest:
     """
-    Request de invalidación.
+    Invalidation request.
     """
 
     query: Optional[str] = None

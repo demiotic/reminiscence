@@ -1,4 +1,4 @@
-"""Métricas mejoradas para Memora."""
+"""Enhanced metrics for Memora."""
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
@@ -7,9 +7,9 @@ from typing import List, Dict, Any
 @dataclass
 class CacheMetrics:
     """
-    Métricas de rendimiento del caché.
+    Cache performance metrics.
 
-    Rastrea hits/misses, latencias y tamaños de resultados.
+    Tracks hits/misses, latencies, and result sizes.
     """
 
     hits: int = 0
@@ -23,19 +23,18 @@ class CacheMetrics:
 
     result_sizes_bytes: List[int] = field(default_factory=list)
 
-    # Límite de samples para evitar memory leak
+    # Sample limit to avoid memory leak
     max_samples: int = 10000
 
     def record_lookup_latency(self, latency_ms: float):
-        """Registra latencia de lookup."""
+        """Record lookup latency."""
         self.lookup_latencies_ms.append(latency_ms)
 
-        # Limitar samples
         if len(self.lookup_latencies_ms) > self.max_samples:
             self.lookup_latencies_ms = self.lookup_latencies_ms[-self.max_samples :]
 
     def record_result_size(self, size_bytes: int):
-        """Registra tamaño de resultado cacheado."""
+        """Record cached result size."""
         self.result_sizes_bytes.append(size_bytes)
 
         if len(self.result_sizes_bytes) > self.max_samples:
@@ -43,17 +42,17 @@ class CacheMetrics:
 
     @property
     def hit_rate(self) -> float:
-        """Tasa de hits (0.0 - 1.0)."""
+        """Hit rate (0.0 - 1.0)."""
         total = self.hits + self.misses
         return self.hits / total if total > 0 else 0.0
 
     @property
     def total_requests(self) -> int:
-        """Total de requests."""
+        """Total requests."""
         return self.hits + self.misses
 
     def get_percentiles(self, values: List[float]) -> Dict[str, float]:
-        """Calcula percentiles de una lista de valores."""
+        """Calculate percentiles for a list of values."""
         if not values:
             return {"p50": 0.0, "p95": 0.0, "p99": 0.0}
 
@@ -68,10 +67,10 @@ class CacheMetrics:
 
     def report(self) -> Dict[str, Any]:
         """
-        Genera reporte completo de métricas.
+        Generate comprehensive metrics report.
 
         Returns:
-            Dict con todas las métricas
+            Dict with all metrics
         """
         latency_percentiles = self.get_percentiles(self.lookup_latencies_ms)
         size_percentiles = self.get_percentiles(
@@ -82,7 +81,7 @@ class CacheMetrics:
             "hits": self.hits,
             "misses": self.misses,
             "total_requests": self.total_requests,
-            "hit_rate": f"{self.hit_rate * 100:.2f}%",  # ← CAMBIO AQUÍ: convertir a string con %
+            "hit_rate": f"{self.hit_rate * 100:.2f}%",
             "total_latency_saved_ms": round(self.total_latency_saved_ms, 1),
             "avg_latency_saved_ms": round(
                 self.total_latency_saved_ms / self.hits if self.hits > 0 else 0.0, 1
@@ -106,7 +105,7 @@ class CacheMetrics:
         }
 
     def reset(self):
-        """Resetea todas las métricas."""
+        """Reset all metrics."""
         self.hits = 0
         self.misses = 0
         self.total_latency_saved_ms = 0.0

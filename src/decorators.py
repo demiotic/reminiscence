@@ -31,7 +31,7 @@ def create_cached_decorator(memora: Memora) -> Callable:
     def decorator(
         context: Optional[Dict[str, Any]] = None,
         query_param: str = "query",
-        extract_from_args: bool = True,  # ← DEFAULT: True (más seguro)
+        extract_from_args: bool = True,
         exclude_from_context: Optional[list] = None,
     ) -> Callable[[F], F]:
         """
@@ -180,7 +180,6 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     return output
 
                 return async_wrapper
-
             return wrapper
 
         return decorator_func

@@ -1,4 +1,4 @@
-"""Content-addressable hashing para step cache."""
+"""Content-addressable hashing for step cache."""
 
 import hashlib
 import json
@@ -13,19 +13,19 @@ def content_hash(
     dependencies: List[str] = None,
 ) -> str:
     """
-    Genera content hash determinista para step cache.
+    Generate deterministic content hash for step cache.
 
-    Similar a Docker layer hashing: hash(agent + version + config + inputs + deps)
+    Similar to Docker layer hashing: hash(agent + version + config + inputs + deps)
 
     Args:
-        agent_id: Identificador del agente
-        agent_version: Versión del código (ej: "v1.2.3", git hash)
-        config: Configuración del agente (params, model, etc.)
-        input_data: Datos de entrada (query, context, etc.)
-        dependencies: Lista de hashes de steps upstream (opcional)
+        agent_id: Agent identifier
+        agent_version: Code version (e.g., "v1.2.3", git hash)
+        config: Agent configuration (params, model, etc.)
+        input_data: Input data (query, context, etc.)
+        dependencies: List of upstream step hashes (optional)
 
     Returns:
-        SHA256 hash hexadecimal (64 caracteres)
+        SHA256 hexadecimal hash (64 characters)
 
     Example:
         >>> content_hash(
@@ -44,10 +44,10 @@ def content_hash(
     }
 
     if dependencies:
-        # Ordenar deps para determinismo
+        # Sort deps for determinism
         components["dependencies"] = sorted(dependencies)
 
-    # Serializar de forma determinista
+    # Serialize deterministically
     serialized = json.dumps(components, sort_keys=True, separators=(",", ":"))
 
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -55,14 +55,14 @@ def content_hash(
 
 def short_hash(full_hash: str, length: int = 12) -> str:
     """
-    Retorna versión corta del hash (estilo Docker/Git).
+    Return short version of hash (Docker/Git style).
 
     Args:
-        full_hash: Hash completo (64 chars)
-        length: Número de caracteres a retornar
+        full_hash: Complete hash (64 chars)
+        length: Number of characters to return
 
     Returns:
-        Hash truncado
+        Truncated hash
 
     Example:
         >>> short_hash("a3f5b2c1d4e6...", length=8)
@@ -80,12 +80,12 @@ def verify_content_hash(
     dependencies: List[str] = None,
 ) -> bool:
     """
-    Verifica que un hash coincida con los parámetros dados.
+    Verify that a hash matches the given parameters.
 
-    Útil para debugging o validación de integridad.
+    Useful for debugging or integrity validation.
 
     Returns:
-        True si el hash es correcto
+        True if the hash is correct
     """
     computed = content_hash(agent_id, agent_version, config, input_data, dependencies)
     return computed == provided_hash
@@ -93,13 +93,13 @@ def verify_content_hash(
 
 def _serialize_deterministic(data: Any) -> str:
     """
-    Serializa datos de forma determinista para hashing.
+    Serialize data deterministically for hashing.
 
     Args:
-        data: Cualquier objeto JSON-serializable
+        data: Any JSON-serializable object
 
     Returns:
-        String JSON con claves ordenadas
+        JSON string with sorted keys
     """
     if isinstance(data, str):
         return data
@@ -108,33 +108,33 @@ def _serialize_deterministic(data: Any) -> str:
         return json.dumps(data)
 
     if isinstance(data, (list, tuple)):
-        # Listas: serializar elementos en orden
+        # Lists: serialize elements in order
         return json.dumps([_serialize_deterministic(item) for item in data])
 
     if isinstance(data, dict):
-        # Dicts: ordenar claves
+        # Dicts: sort keys
         return json.dumps(
             {k: _serialize_deterministic(v) for k, v in sorted(data.items())},
             sort_keys=True,
             separators=(",", ":"),
         )
 
-    # Para otros tipos, usar repr() como fallback
+    # For other types, use repr() as fallback
     return repr(data)
 
 
 def dependency_chain_hash(step_hashes: List[str]) -> str:
     """
-    Genera hash de una cadena de dependencias.
+    Generate hash of a dependency chain.
 
-    Útil para invalidación en cascada: si este hash cambia,
-    todos los steps downstream deben invalidarse.
+    Useful for cascade invalidation: if this hash changes,
+    all downstream steps must be invalidated.
 
     Args:
-        step_hashes: Lista ordenada de hashes de steps
+        step_hashes: Ordered list of step hashes
 
     Returns:
-        Hash de la cadena completa
+        Hash of the complete chain
 
     Example:
         >>> deps = ["hash1", "hash2", "hash3"]

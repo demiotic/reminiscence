@@ -31,7 +31,7 @@ def main():
         ttl_seconds=int(os.getenv("MEMORA_TTL_SECONDS", "3600")),
         max_entries=int(os.getenv("MEMORA_MAX_ENTRIES", "10000")),
         similarity_threshold=float(os.getenv("MEMORA_SIMILARITY_THRESHOLD", "0.85")),
-        log_level=os.getenv("MEMORA_LOG_LEVEL", "ERROR"),  # Less verbose
+        log_level=os.getenv("MEMORA_LOG_LEVEL", "ERROR"),
         enable_metrics=True,
     )
 
@@ -52,11 +52,11 @@ def main():
 
     queries = [
         ("What is the weather today?", "weather1"),
-        ("Tell me the weather forecast", "weather2"),  # Similar
+        ("Tell me the weather forecast", "weather2"),
         ("Explain quantum computing", "quantum1"),
-        ("What is quantum computing?", "quantum2"),  # Similar
+        ("What is quantum computing?", "quantum2"),
         ("Write Python code for sorting", "code1"),
-        ("What is the weather like?", "weather3"),  # Similar to first
+        ("What is the weather like?", "weather3"),
     ]
 
     print("\n" + "=" * 60)

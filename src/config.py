@@ -55,7 +55,7 @@ class CacheConfig:
     # Size limits and eviction
     max_entries: Optional[int] = 10_000  # None = unlimited
     max_result_size_bytes: int = 10_000_000  # 10MB default
-    eviction_policy: str = "fifo"  # "fifo" or "lru" (future)
+    eviction_policy: str = "fifo"
 
     @classmethod
     def for_production(cls, db_path: str = "./memora_cache") -> "CacheConfig":
@@ -81,10 +81,10 @@ class CacheConfig:
         """
         return cls(
             db_uri=db_path,
-            ttl_seconds=3600,  # 1 hour
+            ttl_seconds=3600,
             enable_metrics=True,
             log_level="INFO",
-            json_logs=True,  # JSON logs for production monitoring
+            json_logs=True,
             auto_create_index=True,
             index_threshold_entries=1000,
             index_num_partitions=512,
@@ -114,10 +114,10 @@ class CacheConfig:
         """
         return cls(
             db_uri="memory://",
-            ttl_seconds=300,  # 5 minutes
+            ttl_seconds=300,
             enable_metrics=True,
             log_level="DEBUG",
-            json_logs=False,  # Console logs for human readability
+            json_logs=False,
             auto_create_index=False,
             max_entries=1_000,
             max_result_size_bytes=5_000_000,

@@ -1,7 +1,7 @@
 """Memora - Semantic caching for LLMs."""
 
 from .config import CacheConfig
-from .core import Memora, LookupResult  # ← LookupResult, no CacheLookupResult
+from .core import Memora, LookupResult
 from .decorators import create_cached_decorator, MemoraDecorator
 
 __version__ = "0.1.0"

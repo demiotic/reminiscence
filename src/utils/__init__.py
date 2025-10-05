@@ -1,4 +1,4 @@
-"""Utilidades para Memora."""
+"""Utilities for Memora."""
 
 from .embeddings import (
     cosine_similarity,

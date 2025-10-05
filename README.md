@@ -2,9 +2,23 @@
 
 **Semantic cache for multi-agent systems**
 
-Memora is a production-ready semantic caching library built on LanceDB and sentence-transformers. It eliminates redundant computations in AI pipelines by matching semantically similar queries, even when worded differently.
+Memora is an **experimental** semantic caching library for AI agents, built on LanceDB and sentence-transformers. **Alpha stage** - API may change.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
+> [!WARNING]
+> **Alpha Release (v0.1.0) - Not Production Ready**
+> 
+> Memora is functional and tested, but missing critical features for production:
+> - No automatic cleanup/compaction
+> - No concurrency controls  
+> - Limited observability (basic metrics only)
+> - API may change in 0.2.x
+>
+> **Use for:** Prototypes, development, research, experimentation  
+> **Avoid for:** Production systems, multi-tenant apps, large-scale deployments (>100k entries)
+>
+> See [Roadmap](#roadmap) for planned features.
 
 ## Why Memora?
 

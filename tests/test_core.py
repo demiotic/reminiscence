@@ -488,3 +488,269 @@ class TestEdgeCases:
         result = memora_memory.lookup("query", context)
 
         assert result.is_hit
+
+
+class TestSizeLimitsAndEviction:
+    """Size limits and eviction policy tests."""
+
+    def test_max_entries_triggers_eviction(self):
+        """Storing beyond max_entries should evict oldest entry."""
+        print("\n[DEBUG] Test: max_entries_triggers_eviction")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=3,
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Store 4 entries with small delays to ensure different timestamps
+        for i in range(4):
+            memora.store(f"query {i}", {"agent": "test"}, f"result {i}")
+            print(f"[DEBUG] Stored entry {i}, cache size: {memora.table.count_rows()}")
+            time.sleep(0.01)  # Ensure different timestamps
+
+        # Should only have 3 (oldest evicted)
+        assert memora.table.count_rows() == 3
+        print(f"[DEBUG] Final cache size: {memora.table.count_rows()}")
+
+        # First entry (query 0) should be gone
+        result = memora.lookup("query 0", {"agent": "test"})
+        assert result.is_miss
+        print("[DEBUG] Query 0 correctly evicted (MISS)")
+
+        # Entries 1, 2, 3 should still exist
+        for i in range(1, 4):
+            result = memora.lookup(f"query {i}", {"agent": "test"})
+            assert result.is_hit
+            assert result.result == f"result {i}"
+            print(f"[DEBUG] Query {i} still in cache (HIT)")
+
+    def test_oversized_payload_rejected(self):
+        """Payloads larger than max_result_size_bytes should be rejected."""
+        print("\n[DEBUG] Test: oversized_payload_rejected")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_result_size_bytes=1000,  # 1KB limit
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Try to store 10KB payload (should be rejected)
+        large_payload = "x" * 10000
+        print(f"[DEBUG] Attempting to store {len(large_payload)} bytes")
+
+        memora.store("query", {"agent": "test"}, large_payload)
+
+        # Should not be stored
+        assert memora.table.count_rows() == 0
+        print(f"[DEBUG] Cache size after rejected store: {memora.table.count_rows()}")
+
+        # Error should be tracked
+        assert memora.metrics.store_errors >= 1
+        print(f"[DEBUG] store_errors: {memora.metrics.store_errors}")
+
+        # Lookup should return MISS
+        result = memora.lookup("query", {"agent": "test"})
+        assert result.is_miss
+
+    def test_normal_sized_payload_accepted(self):
+        """Payloads within size limit should be accepted."""
+        print("\n[DEBUG] Test: normal_sized_payload_accepted")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_result_size_bytes=10000,  # 10KB limit
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Store 5KB payload (should be accepted)
+        normal_payload = "x" * 5000
+        print(f"[DEBUG] Storing {len(normal_payload)} bytes")
+
+        memora.store("query", {"agent": "test"}, normal_payload)
+
+        # Should be stored
+        assert memora.table.count_rows() == 1
+        print(f"[DEBUG] Cache size: {memora.table.count_rows()}")
+
+        # Lookup should return HIT
+        result = memora.lookup("query", {"agent": "test"})
+        assert result.is_hit
+        assert result.result == normal_payload
+
+    def test_eviction_preserves_newest_entries(self):
+        """FIFO eviction should keep newest entries."""
+        print("\n[DEBUG] Test: eviction_preserves_newest_entries")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=5,
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Use semantically DISTINCT queries to test eviction logic, not semantic matching
+        queries = [
+            "Paris is the capital of France",
+            "Machine learning uses neural networks",
+            "The ocean contains saltwater",
+            "Python is a programming language",
+            "Photosynthesis converts light to energy",
+            "Earth orbits around the Sun",
+            "DNA carries genetic information",
+            "Shakespeare wrote Hamlet",
+            "Mount Everest is the tallest mountain",
+            "Water boils at 100 degrees Celsius",
+        ]
+
+        for i, query in enumerate(queries):
+            memora.store(query, {"agent": "test"}, f"result {i}")
+            time.sleep(0.01)
+            print(f"[DEBUG] Stored entry {i}, cache size: {memora.table.count_rows()}")
+
+        # Should only have 5 entries
+        assert memora.table.count_rows() == 5
+
+        # First 5 entries (0-4) should be evicted
+        for i in range(5):
+            result = memora.lookup(queries[i], {"agent": "test"})
+            assert result.is_miss
+            print(f"[DEBUG] Query {i} evicted (MISS)")
+
+        # Last 5 entries (5-9) should remain
+        for i in range(5, 10):
+            result = memora.lookup(queries[i], {"agent": "test"})
+            assert result.is_hit
+            assert result.result == f"result {i}"
+            print(f"[DEBUG] Query {i} preserved (HIT)")
+
+    def test_max_entries_none_allows_unlimited(self):
+        """Setting max_entries=None should allow unlimited entries."""
+        print("\n[DEBUG] Test: max_entries_none_allows_unlimited")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=None,  # Unlimited
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Store 100 entries
+        for i in range(100):
+            memora.store(f"query {i}", {"agent": "test"}, f"result {i}")
+
+        # All should be stored
+        assert memora.table.count_rows() == 100
+        print(f"[DEBUG] Cache size: {memora.table.count_rows()}")
+
+        # Random checks - all should HIT
+        for i in [0, 50, 99]:
+            result = memora.lookup(f"query {i}", {"agent": "test"})
+            assert result.is_hit
+            print(f"[DEBUG] Query {i} still in cache (HIT)")
+
+    def test_eviction_with_different_contexts(self):
+        """Eviction should work correctly across different contexts."""
+        print("\n[DEBUG] Test: eviction_with_different_contexts")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=3,
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Store entries with different contexts
+        contexts = [
+            {"agent": "agent1"},
+            {"agent": "agent2"},
+            {"agent": "agent3"},
+            {"agent": "agent4"},  # This will trigger eviction
+        ]
+
+        for i, ctx in enumerate(contexts):
+            memora.store(f"query {i}", ctx, f"result {i}")
+            time.sleep(0.01)
+            print(
+                f"[DEBUG] Stored entry {i} with context {ctx}, size: {memora.table.count_rows()}"
+            )
+
+        # Should only have 3 entries
+        assert memora.table.count_rows() == 3
+
+        # First entry should be evicted
+        result = memora.lookup("query 0", contexts[0])
+        assert result.is_miss
+
+        # Last 3 should remain
+        for i in range(1, 4):
+            result = memora.lookup(f"query {i}", contexts[i])
+            assert result.is_hit
+
+    def test_stats_include_size_limits(self):
+        """get_stats() should include size limit information."""
+        print("\n[DEBUG] Test: stats_include_size_limits")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=1000,
+            max_result_size_bytes=5000000,
+            enable_metrics=True,
+        )
+        memora = Memora(config)
+
+        stats = memora.get_stats()
+
+        assert "max_entries" in stats
+        assert stats["max_entries"] == 1000
+
+        assert "max_result_size_bytes" in stats
+        assert stats["max_result_size_bytes"] == 5000000
+
+        assert "eviction_policy" in stats
+        assert stats["eviction_policy"] == "fifo"
+
+        print(
+            f"[DEBUG] Stats: max_entries={stats['max_entries']}, "
+            f"max_result_size_bytes={stats['max_result_size_bytes']}, "
+            f"eviction_policy={stats['eviction_policy']}"
+        )
+
+    def test_eviction_edge_case_single_entry(self):
+        """Eviction should work with max_entries=1."""
+        print("\n[DEBUG] Test: eviction_edge_case_single_entry")
+
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=1,
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        memora = Memora(config)
+
+        # Store first entry
+        memora.store("query 1", {"agent": "test"}, "result 1")
+        assert memora.table.count_rows() == 1
+
+        # Store second entry (should evict first)
+        time.sleep(0.01)
+        memora.store("query 2", {"agent": "test"}, "result 2")
+        assert memora.table.count_rows() == 1
+
+        # First should be evicted
+        result1 = memora.lookup("query 1", {"agent": "test"})
+        assert result1.is_miss
+
+        # Second should remain
+        result2 = memora.lookup("query 2", {"agent": "test"})
+        assert result2.is_hit
+        assert result2.result == "result 2"

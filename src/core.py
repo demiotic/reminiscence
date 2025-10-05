@@ -84,7 +84,8 @@ class Memora:
         logger.info(
             f"Memora ready | dim={self.embedding_dim}, "
             f"threshold={self.config.similarity_threshold}, "
-            f"entries={self.table.count_rows()}"
+            f"entries={self.table.count_rows()}, "
+            f"max_entries={self.config.max_entries}"
         )
 
         # Auto-create index if configured
@@ -144,6 +145,45 @@ class Memora:
         age_ms = self._current_timestamp_ms() - timestamp_ms
         age_seconds = age_ms / 1000
         return age_seconds > self.config.ttl_seconds
+
+    def _evict_oldest(self) -> int:
+        """
+        Evict oldest entry using FIFO policy.
+
+        Returns:
+            Number of entries evicted (0 or 1)
+        """
+        try:
+            arrow_table = self.table.to_arrow()
+            if len(arrow_table) == 0:
+                return 0
+
+            # Find oldest timestamp using pyarrow.compute
+            oldest_ts = pc.min(arrow_table["timestamp"]).as_py()
+
+            # Delete oldest entry
+            if self.config.db_uri == "memory://":
+                mask = pc.not_equal(arrow_table["timestamp"], oldest_ts)
+                filtered = arrow_table.filter(mask)
+                self.table = self.db.create_table(
+                    self.config.table_name,
+                    data=filtered if len(filtered) > 0 else None,
+                    schema=self.schema if len(filtered) == 0 else None,
+                    mode="overwrite",
+                )
+            else:
+                self.table.delete(f"timestamp = {oldest_ts}")
+                try:
+                    self.table.compact_files()
+                except AttributeError:
+                    pass
+
+            logger.info(f"Evicted oldest entry (ts={oldest_ts}) via FIFO policy")
+            return 1
+
+        except Exception as e:
+            logger.error(f"Eviction failed: {e}", exc_info=True)
+            return 0
 
     def lookup(
         self,
@@ -277,7 +317,7 @@ class Memora:
             if self.metrics:
                 self.metrics.misses += 1
                 self.metrics.record_lookup_latency(elapsed_ms)
-                self.metrics.lookup_errors += 1  # ← FIXED: removed hasattr check
+                self.metrics.lookup_errors += 1
             return LookupResult(hit=False)
 
     def store(
@@ -297,18 +337,40 @@ class Memora:
             metadata: Additional metadata (optional)
         """
         try:
+            # 1. Check max_entries BEFORE expensive operations (evict if needed)
+            if self.config.max_entries is not None:
+                current_count = self.table.count_rows()
+                if current_count >= self.config.max_entries:
+                    logger.debug(
+                        f"Cache at max capacity ({current_count}/{self.config.max_entries}), "
+                        f"evicting oldest entry"
+                    )
+                    self._evict_oldest()
+
+            # 2. Generate embedding and fingerprint
             context_hash = create_fingerprint(context)
             embedding = self._embed(query)
             timestamp = self._current_timestamp_ms()
 
-            # Serialize result and metadata to bytes
+            # 3. Serialize and check size limits
             result_bytes = serialize(result)
             metadata_bytes = serialize(metadata) if metadata else b""
 
-            # Track size in metrics
+            # Check payload size
+            if len(result_bytes) > self.config.max_result_size_bytes:
+                logger.warning(
+                    f"Result too large: {len(result_bytes)} bytes "
+                    f"(max: {self.config.max_result_size_bytes}), skipping store"
+                )
+                if self.metrics:
+                    self.metrics.store_errors += 1
+                return  # Don't store oversized payloads
+
+            # 4. Track size in metrics
             if self.metrics:
                 self.metrics.record_result_size(len(result_bytes))
 
+            # 5. Store in table
             data = [
                 {
                     "query_text": query,
@@ -322,10 +384,11 @@ class Memora:
 
             self.table.add(data)
             logger.debug(
-                f"Stored | ctx_hash={context_hash[:8]} | query='{query[:50]}...'"
+                f"Stored | ctx_hash={context_hash[:8]} | query='{query[:50]}...' | "
+                f"size={len(result_bytes)} bytes"
             )
 
-            # Auto-create index if needed
+            # 6. Auto-create index if needed
             if self.config.auto_create_index:
                 self._maybe_auto_create_index()
 
@@ -335,7 +398,7 @@ class Memora:
                 f"Cache store failed: {e} | query='{query[:50]}...'", exc_info=True
             )
             if self.metrics:
-                self.metrics.store_errors += 1  # ← FIXED: removed hasattr check
+                self.metrics.store_errors += 1
 
     def check_availability(
         self,
@@ -530,6 +593,9 @@ class Memora:
         """Return cache statistics."""
         stats = {
             "total_entries": self.table.count_rows(),
+            "max_entries": self.config.max_entries,
+            "max_result_size_bytes": self.config.max_result_size_bytes,
+            "eviction_policy": self.config.eviction_policy,
             "threshold": self.config.similarity_threshold,
             "embedding_dim": self.embedding_dim,
             "model": self.config.model_name,

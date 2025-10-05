@@ -211,8 +211,8 @@ memora.store(query, context, np.array(...))
          │  Core + Utils  │
          └────────┬───────┘
                   │
-       ┏━━━━━━━━━┻━━━━━━━━━┓
-       ▼                   ▼
+        ┏━━━━━━━━━┻━━━━━━━━━┓
+        ▼                   ▼
 ┌──────────────┐    ┌──────────────┐
 │ Embeddings   │    │   LanceDB    │
 │ (sentence-   │    │  (Vector DB) │

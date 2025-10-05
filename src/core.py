@@ -14,7 +14,7 @@ from .metrics import CacheMetrics
 from .types import CacheEntry, LookupResult, AvailabilityCheck
 from .utils import create_fingerprint, cosine_similarity, serialize, deserialize
 
-logger = logging.getLogger(__name__)
+from .utils.logging import configure_logging, get_logger
 
 
 class Memora:
@@ -51,14 +51,20 @@ class Memora:
         """Initialize Memora."""
         self.config = config or CacheConfig()
 
-        # Setup logging
-        logging.basicConfig(
-            level=getattr(logging, self.config.log_level.upper()),
-            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
+        # Setup structured logging
+        configure_logging(
+            log_level=self.config.log_level, json_logs=self.config.json_logs
         )
 
-        logger.info(f"Initializing Memora | model={self.config.model_name}")
+        # Get logger instance (ESTO reemplaza: logger = logging.getLogger(__name__))
+        global logger
+        logger = get_logger(__name__)
+
+        logger.info(
+            "initializing_memora",
+            model=self.config.model_name,
+            db_uri=self.config.db_uri,
+        )
 
         # Initialize components
         self.model = SentenceTransformer(self.config.model_name)
@@ -185,6 +191,42 @@ class Memora:
             logger.error(f"Eviction failed: {e}", exc_info=True)
             return 0
 
+    def cached(
+        self,
+        context: Optional[Dict[str, Any]] = None,
+        query_param: str = "query",
+        extract_from_args: bool = True,
+        exclude_from_context: Optional[list] = None,
+    ):
+        """
+        Decorator to cache function results using this Memora instance.
+
+        Args:
+            context: Static context dict (optional)
+            query_param: Name of query parameter (default: "query")
+            extract_from_args: Extract function params into context (default: True)
+            exclude_from_context: List of params to exclude from context
+
+        Returns:
+            Decorator function
+
+        Example:
+            >>> memora = Memora()
+            >>>
+            >>> @memora.cached(context={"model": "gpt-4"})
+            >>> def ask_llm(query: str, temperature: float = 0.7):
+            >>>     return expensive_api_call(query, temperature)
+        """
+        from .decorators import create_cached_decorator
+
+        decorator_factory = create_cached_decorator(self)
+        return decorator_factory(
+            context=context,
+            query_param=query_param,
+            extract_from_args=extract_from_args,
+            exclude_from_context=exclude_from_context,
+        )
+
     def lookup(
         self,
         query: str,
@@ -209,7 +251,11 @@ class Memora:
 
             # Empty cache
             if self.table.count_rows() == 0:
-                logger.debug("Cache empty")
+                logger.debug(
+                    "cache_empty",
+                    operation="lookup",
+                    query_preview=query[:50],
+                )
                 if self.metrics:
                     self.metrics.misses += 1
                 return LookupResult(hit=False)
@@ -227,7 +273,13 @@ class Memora:
 
             if len(search_results) == 0:
                 elapsed_ms = (time.time() - start_time) * 1000
-                logger.debug(f"MISS | Search no results | {elapsed_ms:.1f}ms")
+                logger.debug(
+                    "cache_miss",
+                    reason="no_results",
+                    query_preview=query[:50],
+                    context_hash_preview=context_hash[:8],
+                    latency_ms=round(elapsed_ms, 1),
+                )
                 if self.metrics:
                     self.metrics.misses += 1
                     self.metrics.record_lookup_latency(elapsed_ms)
@@ -240,7 +292,11 @@ class Memora:
             if len(search_results) == 0:
                 elapsed_ms = (time.time() - start_time) * 1000
                 logger.debug(
-                    f"MISS | No results with matching context | {elapsed_ms:.1f}ms"
+                    "cache_miss",
+                    reason="context_mismatch",
+                    query_preview=query[:50],
+                    context_hash_preview=context_hash[:8],
+                    latency_ms=round(elapsed_ms, 1),
                 )
                 if self.metrics:
                     self.metrics.misses += 1
@@ -256,9 +312,17 @@ class Memora:
                 search_results = search_results.filter(mask_ttl)
 
                 if len(search_results) == 0:
-                    logger.debug("MISS | Results expired")
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    logger.debug(
+                        "cache_miss",
+                        reason="expired",
+                        query_preview=query[:50],
+                        ttl_seconds=self.config.ttl_seconds,
+                        latency_ms=round(elapsed_ms, 1),
+                    )
                     if self.metrics:
                         self.metrics.misses += 1
+                        self.metrics.record_lookup_latency(elapsed_ms)
                     return LookupResult(hit=False)
 
             # First result is most similar
@@ -271,8 +335,13 @@ class Memora:
             if best_sim < threshold:
                 elapsed_ms = (time.time() - start_time) * 1000
                 logger.info(
-                    f"MISS | sim={best_sim:.3f} < threshold={threshold} | "
-                    f"query='{query[:50]}...' | {elapsed_ms:.1f}ms"
+                    "cache_miss",
+                    reason="low_similarity",
+                    similarity=round(best_sim, 3),
+                    threshold=threshold,
+                    query_preview=query[:50],
+                    context_hash_preview=context_hash[:8],
+                    latency_ms=round(elapsed_ms, 1),
                 )
                 if self.metrics:
                     self.metrics.misses += 1
@@ -289,9 +358,14 @@ class Memora:
             elapsed_ms = (time.time() - start_time) * 1000
 
             logger.info(
-                f"HIT | sim={best_sim:.3f} | "
-                f"query='{query[:50]}...' → '{best_query[:50]}...' | "
-                f"age={age_seconds}s | {elapsed_ms:.1f}ms"
+                "cache_hit",
+                similarity=round(best_sim, 3),
+                query_preview=query[:50],
+                matched_query_preview=best_query[:50],
+                context_hash_preview=context_hash[:8],
+                age_seconds=age_seconds,
+                result_size_bytes=len(result_bytes),
+                latency_ms=round(elapsed_ms, 1),
             )
 
             if self.metrics:
@@ -310,8 +384,12 @@ class Memora:
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
             logger.error(
-                f"Cache lookup failed: {e} | query='{query[:50]}...' | "
-                f"context_hash={create_fingerprint(context)[:8]} | {elapsed_ms:.1f}ms",
+                "cache_lookup_error",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                query_preview=query[:50],
+                context_hash_preview=create_fingerprint(context)[:8],
+                latency_ms=round(elapsed_ms, 1),
                 exc_info=True,
             )
             if self.metrics:
@@ -342,8 +420,11 @@ class Memora:
                 current_count = self.table.count_rows()
                 if current_count >= self.config.max_entries:
                     logger.debug(
-                        f"Cache at max capacity ({current_count}/{self.config.max_entries}), "
-                        f"evicting oldest entry"
+                        "cache_eviction_triggered",
+                        reason="max_entries_reached",
+                        current_count=current_count,
+                        max_entries=self.config.max_entries,
+                        eviction_policy=self.config.eviction_policy,
                     )
                     self._evict_oldest()
 
@@ -355,12 +436,17 @@ class Memora:
             # 3. Serialize and check size limits
             result_bytes = serialize(result)
             metadata_bytes = serialize(metadata) if metadata else b""
+            total_payload_size = len(result_bytes) + len(metadata_bytes)
 
             # Check payload size
             if len(result_bytes) > self.config.max_result_size_bytes:
                 logger.warning(
-                    f"Result too large: {len(result_bytes)} bytes "
-                    f"(max: {self.config.max_result_size_bytes}), skipping store"
+                    "cache_store_rejected",
+                    reason="payload_too_large",
+                    payload_size_bytes=len(result_bytes),
+                    max_size_bytes=self.config.max_result_size_bytes,
+                    query_preview=query[:50],
+                    context_hash_preview=context_hash[:8],
                 )
                 if self.metrics:
                     self.metrics.store_errors += 1
@@ -383,19 +469,33 @@ class Memora:
             ]
 
             self.table.add(data)
+
+            # 6. Get ACTUAL count after adding (FIX: don't use stale current_count)
+            actual_count = self.table.count_rows()
+
             logger.debug(
-                f"Stored | ctx_hash={context_hash[:8]} | query='{query[:50]}...' | "
-                f"size={len(result_bytes)} bytes"
+                "cache_store_success",
+                query_preview=query[:50],
+                context_hash_preview=context_hash[:8],
+                result_size_bytes=len(result_bytes),
+                metadata_size_bytes=len(metadata_bytes),
+                total_payload_bytes=total_payload_size,
+                cache_entries=actual_count,  # ← FIX: Use actual count
             )
 
-            # 6. Auto-create index if needed
+            # 7. Auto-create index if needed
             if self.config.auto_create_index:
                 self._maybe_auto_create_index()
 
         except Exception as e:
             # DO NOT propagate error - app must continue without cache
             logger.error(
-                f"Cache store failed: {e} | query='{query[:50]}...'", exc_info=True
+                "cache_store_error",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                query_preview=query[:50],
+                context_preview=str(context)[:100],
+                exc_info=True,
             )
             if self.metrics:
                 self.metrics.store_errors += 1
@@ -621,3 +721,119 @@ class Memora:
             "total_entries": self.table.count_rows(),
             "note": "LanceDB doesn't expose detailed index metrics",
         }
+
+    def health_check(self) -> Dict[str, Any]:
+        """
+        Perform health check on cache components.
+
+        Verifies:
+        - Embedding model functionality
+        - Database accessibility
+        - Recent error rates
+
+        Returns:
+            Dict with health status:
+            {
+                "status": "healthy" | "unhealthy",
+                "checks": {
+                    "embedding": {"ok": bool, "error": str | None},
+                    "database": {"ok": bool, "error": str | None},
+                    "error_rate": {"ok": bool, "details": str}
+                },
+                "metrics": {
+                    "total_entries": int,
+                    "recent_errors": {"lookup": int, "store": int}
+                },
+                "timestamp": int
+            }
+
+        Example:
+            >>> memora = Memora()
+            >>> health = memora.health_check()
+            >>> if health["status"] == "healthy":
+            ...     print("Cache is operational")
+        """
+        checks = {
+            "embedding": {"ok": True, "error": None},
+            "database": {"ok": True, "error": None},
+            "error_rate": {"ok": True, "details": "No metrics available"},
+        }
+
+        # 1. Test embedding generation
+        try:
+            test_embedding = self._embed("health check test")
+            if len(test_embedding) != self.embedding_dim:
+                checks["embedding"]["ok"] = False
+                checks["embedding"]["error"] = (
+                    f"Embedding dimension mismatch: {len(test_embedding)} != {self.embedding_dim}"
+                )
+        except Exception as e:
+            checks["embedding"]["ok"] = False
+            checks["embedding"]["error"] = str(e)
+            logger.error(f"Health check: Embedding test failed: {e}", exc_info=True)
+
+        # 2. Test database access
+        try:
+            entry_count = self.table.count_rows()
+            # Try a basic read operation
+            if entry_count > 0:
+                _ = self.table.to_arrow()
+        except Exception as e:
+            checks["database"]["ok"] = False
+            checks["database"]["error"] = str(e)
+            logger.error(f"Health check: Database test failed: {e}", exc_info=True)
+
+        # 3. Check error rates (if metrics enabled)
+        if self.metrics:
+            total_requests = self.metrics.total_requests
+            lookup_errors = self.metrics.lookup_errors
+            store_errors = self.metrics.store_errors
+            total_errors = lookup_errors + store_errors
+
+            # Consider unhealthy if error rate > 10% and at least 10 requests
+            if total_requests >= 10:
+                error_rate = total_errors / total_requests if total_requests > 0 else 0
+                if error_rate > 0.10:
+                    checks["error_rate"]["ok"] = False
+                    checks["error_rate"]["details"] = (
+                        f"High error rate: {error_rate * 100:.1f}% "
+                        f"({total_errors}/{total_requests} requests)"
+                    )
+                else:
+                    checks["error_rate"]["ok"] = True
+                    checks["error_rate"]["details"] = (
+                        f"Error rate: {error_rate * 100:.1f}% "
+                        f"({total_errors}/{total_requests} requests)"
+                    )
+            else:
+                checks["error_rate"]["ok"] = True
+                checks["error_rate"]["details"] = (
+                    f"Insufficient data: {total_requests} requests"
+                )
+
+        # Determine overall status
+        all_checks_ok = all(check["ok"] for check in checks.values())
+        status = "healthy" if all_checks_ok else "unhealthy"
+
+        # Build response
+        response = {
+            "status": status,
+            "checks": checks,
+            "metrics": {
+                "total_entries": self.table.count_rows()
+                if checks["database"]["ok"]
+                else 0,
+                "recent_errors": {
+                    "lookup": self.metrics.lookup_errors if self.metrics else 0,
+                    "store": self.metrics.store_errors if self.metrics else 0,
+                },
+            },
+            "timestamp": self._current_timestamp_ms(),
+        }
+
+        if status == "unhealthy":
+            logger.warning(f"Health check FAILED: {response}")
+        else:
+            logger.debug(f"Health check PASSED: {response}")
+
+        return response

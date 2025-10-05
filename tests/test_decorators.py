@@ -10,13 +10,11 @@ class TestDecoratorBasics:
     def test_decorator_factory(self, memora_memory):
         """create_cached_decorator debe retornar decorador funcional."""
         cached = create_cached_decorator(memora_memory)
-
         assert callable(cached)
 
     def test_decorator_class(self, memora_memory):
         """MemoraDecorator debe instanciarse correctamente."""
         decorator = MemoraDecorator(memora_memory)
-
         assert decorator.memora is memora_memory
         assert hasattr(decorator, "cached")
 
@@ -68,15 +66,21 @@ class TestSyncFunctions:
         """extract_from_args debe incluir params en contexto."""
         cached = create_cached_decorator(memora_memory)
 
+        call_count = 0
+
         @cached(context={"agent": "test"}, extract_from_args=True)
         def compute(query: str, model: str, temperature: float):
+            nonlocal call_count
+            call_count += 1
             return f"{query}|{model}|{temperature}"
 
         # Primera llamada con model=gpt-4
         result1 = compute("hello", model="gpt-4", temperature=0.7)
+        assert call_count == 1
 
         # Segunda llamada con model=claude (diferente contexto)
         result2 = compute("hello", model="claude", temperature=0.7)
+        assert call_count == 2  # Nuevo call por diferente model
 
         # Deben ser diferentes porque model es parte del contexto
         assert result1 != result2
@@ -85,14 +89,19 @@ class TestSyncFunctions:
         """query_param customizado debe funcionar."""
         cached = create_cached_decorator(memora_memory)
 
+        call_count = 0
+
         @cached(context={"agent": "test"}, query_param="prompt")
         def generate(prompt: str, style: str):
+            nonlocal call_count
+            call_count += 1
             return f"Generated: {prompt} in {style}"
 
         result1 = generate("write poem", style="haiku")
         result2 = generate("write poem", style="haiku")
 
         assert result1 == result2
+        assert call_count == 1  # Second call hit cache
 
     def test_invalid_query_param(self, memora_memory):
         """query_param inválido debe lanzar error."""
@@ -135,50 +144,81 @@ class TestAsyncFunctions:
         """Async con valores default debe funcionar."""
         cached = create_cached_decorator(memora_memory)
 
+        call_count = 0
+
         @cached(context={"agent": "test"})
         async def fetch_data(query: str, limit: int = 10):
+            nonlocal call_count
+            call_count += 1
             return f"fetched {limit} items for {query}"
 
         result1 = await fetch_data("search", limit=10)
         result2 = await fetch_data("search")  # Usa default
 
         assert result1 == result2
+        assert call_count == 1  # Cache hit
 
 
 class TestContextHandling:
     """Tests de manejo de contexto."""
 
     def test_static_context_only(self, memora_memory):
-        """Solo contexto estático (extract_from_args=False)."""
+        """Solo contexto estático (extract_from_args=False) - opt-out explícito."""
         cached = create_cached_decorator(memora_memory)
+
+        call_count = 0
 
         @cached(context={"agent": "static", "version": "v1"}, extract_from_args=False)
         def compute(query: str, param: int):
+            nonlocal call_count
+            call_count += 1
             return f"{query}-{param}"
 
-        # Diferentes params deben usar MISMO caché (porque no se extraen)
         result1 = compute("test", param=1)
         result2 = compute("test", param=2)
 
-        # Mismo resultado porque contexto es idéntico
         assert result1 == result2
+        assert call_count == 1
 
     def test_static_overrides_runtime(self, memora_memory):
-        """Contexto estático debe override runtime."""
+        """Contexto estático debe override extracted params."""
         cached = create_cached_decorator(memora_memory)
+
+        call_count = 0
 
         @cached(context={"agent": "test", "version": "v2"}, extract_from_args=True)
         def compute(query: str, version: str):
+            nonlocal call_count
+            call_count += 1
             return f"{query}-{version}"
 
-        # Aunque pasamos version="v1", contexto estático usa "v2"
-        compute("test", version="v1")
+        # Aunque pasamos version="v1", contexto estático tiene "v2"
+        result1 = compute("test", version="v1")
+        result2 = compute("test", version="v3")  # Diferente version runtime
 
-        # Verificar que el contexto almacenado tiene version="v2"
-        result = memora_memory.lookup(
-            "test", {"query": "test", "version": "v2", "agent": "test"}
-        )
-        # (Esta verificación es aproximada, el punto es que static override)
+        # Mismo resultado porque version="v2" (static) override ambos
+        assert result1 == result2
+        assert call_count == 1
+
+    def test_extract_with_no_static(self, memora_memory):
+        """extract_from_args sin contexto estático debe funcionar."""
+        cached = create_cached_decorator(memora_memory)
+
+        call_count = 0
+
+        @cached(extract_from_args=True)  # No static context
+        def compute(query: str, model: str):
+            nonlocal call_count
+            call_count += 1
+            return f"{query}-{model}"
+
+        result1 = compute("test", model="gpt-4")
+        result2 = compute("test", model="gpt-4")
+        result3 = compute("test", model="claude")
+
+        assert result1 == result2  # Same context
+        assert result1 != result3  # Different context
+        assert call_count == 2  # 2 different contexts
 
 
 class TestComplexResults:
@@ -236,14 +276,19 @@ class TestEdgeCases:
         """Decorador sin contexto debe funcionar."""
         cached = create_cached_decorator(memora_memory)
 
-        @cached()
+        call_count = 0
+
+        @cached()  # No context, no extract_from_args
         def compute(query: str):
+            nonlocal call_count
+            call_count += 1
             return f"result: {query}"
 
         result1 = compute("test")
         result2 = compute("test")
 
         assert result1 == result2
+        assert call_count == 1  # Cache hit
 
     def test_function_metadata_preserved(self, memora_memory):
         """Metadata de función debe preservarse (functools.wraps)."""
@@ -256,3 +301,22 @@ class TestEdgeCases:
 
         assert my_function.__name__ == "my_function"
         assert my_function.__doc__ == "My docstring."
+
+    def test_none_values_excluded(self, memora_memory):
+        """Valores None deben excluirse de contexto extraído."""
+        cached = create_cached_decorator(memora_memory)
+
+        call_count = 0
+
+        @cached(extract_from_args=True)
+        def compute(query: str, optional: str = None):
+            nonlocal call_count
+            call_count += 1
+            return query
+
+        result1 = compute("test", optional=None)
+        result2 = compute("test")  # optional defaults to None
+
+        # Should hit cache (both have optional=None, excluded)
+        assert result1 == result2
+        assert call_count == 1

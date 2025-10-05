@@ -10,6 +10,7 @@ dependencies = [
     "orjson>=3.11.3",
     "pyarrow>=21.0.0",
     "sentence-transformers>=5.1.1",
+    "structlog>=25.4.0",
 ]
 
 [project.optional-dependencies]

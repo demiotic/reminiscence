@@ -754,3 +754,159 @@ class TestSizeLimitsAndEviction:
         result2 = memora.lookup("query 2", {"agent": "test"})
         assert result2.is_hit
         assert result2.result == "result 2"
+
+
+class TestHealthCheck:
+    """Health check tests."""
+
+    def test_health_check_healthy_state(self, memora_memory):
+        """Health check should return healthy on normal cache."""
+        print("\n[DEBUG] Test: health_check_healthy_state")
+
+        # Store some data
+        memora_memory.store("query", {"agent": "test"}, "result")
+
+        # Perform health check
+        health = memora_memory.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        assert health["status"] == "healthy"
+        assert health["checks"]["embedding"]["ok"] is True
+        assert health["checks"]["database"]["ok"] is True
+        assert health["checks"]["error_rate"]["ok"] is True
+        assert health["metrics"]["total_entries"] == 1
+        assert "timestamp" in health
+
+    def test_health_check_embedding_failure(self, memora_memory, monkeypatch):
+        """Health check should detect embedding failures."""
+        print("\n[DEBUG] Test: health_check_embedding_failure")
+
+        # Mock _embed to fail
+        def failing_embed(text):
+            raise RuntimeError("Model crashed")
+
+        monkeypatch.setattr(memora_memory, "_embed", failing_embed)
+
+        # Perform health check
+        health = memora_memory.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        assert health["status"] == "unhealthy"
+        assert health["checks"]["embedding"]["ok"] is False
+        assert "Model crashed" in health["checks"]["embedding"]["error"]
+
+    def test_health_check_database_failure(self, memora_memory, monkeypatch):
+        """Health check should detect database failures."""
+        print("\n[DEBUG] Test: health_check_database_failure")
+
+        # Mock table.count_rows to fail
+        def failing_count_rows():
+            raise Exception("Database connection lost")
+
+        monkeypatch.setattr(memora_memory.table, "count_rows", failing_count_rows)
+
+        # Perform health check
+        health = memora_memory.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        assert health["status"] == "unhealthy"
+        assert health["checks"]["database"]["ok"] is False
+        assert "connection lost" in health["checks"]["database"]["error"].lower()
+
+    def test_health_check_high_error_rate(self, memora_memory, monkeypatch):
+        """Health check should detect high error rates."""
+        print("\n[DEBUG] Test: health_check_high_error_rate")
+
+        # Store some data first
+        memora_memory.store("initial", {"agent": "test"}, "data")
+
+        # Simulate high error rate
+        def failing_embed(text):
+            raise RuntimeError("Intermittent failure")
+
+        monkeypatch.setattr(memora_memory, "_embed", failing_embed)
+
+        # Generate 15 errors
+        for i in range(15):
+            result = memora_memory.lookup(f"query {i}", {"agent": "test"})
+            assert result.is_miss
+
+        print(
+            f"[DEBUG] Errors: lookup={memora_memory.metrics.lookup_errors}, "
+            f"total={memora_memory.metrics.total_requests}"
+        )
+
+        # Restore _embed for health check itself
+        monkeypatch.undo()
+
+        # Perform health check - should detect high error rate
+        health = memora_memory.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        # With 15 errors out of 15 requests = 100% error rate
+        assert health["status"] == "unhealthy"
+        assert health["checks"]["error_rate"]["ok"] is False
+        assert "High error rate" in health["checks"]["error_rate"]["details"]
+
+    def test_health_check_empty_cache(self, memora_memory):
+        """Health check should work on empty cache."""
+        print("\n[DEBUG] Test: health_check_empty_cache")
+
+        # Perform health check on empty cache
+        health = memora_memory.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        assert health["status"] == "healthy"
+        assert health["metrics"]["total_entries"] == 0
+
+    def test_health_check_without_metrics(self):
+        """Health check should work when metrics are disabled."""
+        print("\n[DEBUG] Test: health_check_without_metrics")
+
+        config = CacheConfig(
+            db_uri="memory://", enable_metrics=False, log_level="WARNING"
+        )
+        memora = Memora(config)
+
+        # Perform health check
+        health = memora.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        assert health["status"] == "healthy"
+        assert health["checks"]["error_rate"]["details"] == "No metrics available"
+
+    def test_health_check_low_error_rate_acceptable(self, memora_memory):
+        """Health check should pass with low error rate (<10%)."""
+        print("\n[DEBUG] Test: health_check_low_error_rate_acceptable")
+
+        # Generate 100 requests: 95 hits, 5 misses (5% error rate)
+        for i in range(100):
+            memora_memory.store(f"query {i}", {"agent": "test"}, f"result {i}")
+
+        for i in range(95):
+            result = memora_memory.lookup(f"query {i}", {"agent": "test"})
+            assert result.is_hit
+
+        for i in range(95, 100):
+            result = memora_memory.lookup(f"nonexistent {i}", {"agent": "test"})
+            assert result.is_miss
+
+        print(
+            f"[DEBUG] Stats: hits={memora_memory.metrics.hits}, "
+            f"misses={memora_memory.metrics.misses}"
+        )
+
+        # Perform health check
+        health = memora_memory.health_check()
+
+        print(f"[DEBUG] Health check result: {health}")
+
+        # Should be healthy (0% error rate, misses don't count as errors)
+        assert health["status"] == "healthy"
+        assert health["checks"]["error_rate"]["ok"] is True

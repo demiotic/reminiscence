@@ -93,7 +93,7 @@ class CacheMetrics:
                 "p99": round(latency_percentiles["p99"], 2),
                 "samples": len(self.lookup_latencies_ms),
             },
-            "errors": {  # ← NUEVO
+            "errors": {
                 "lookup": self.lookup_errors,
                 "store": self.store_errors,
             },

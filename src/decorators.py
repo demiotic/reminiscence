@@ -1,261 +1,238 @@
-"""Decoradores para Memora - Cacheo transparente de funciones."""
+"""Decorator utilities for automatic caching."""
 
-from functools import wraps
+import functools
 import inspect
-import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, TypeVar
 
-logger = logging.getLogger(__name__)
+from .core import Memora
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-class MemoraDecorator:
+def create_cached_decorator(memora: Memora) -> Callable:
     """
-    Decorador que envuelve funciones para usar Memora automáticamente.
+    Create a caching decorator bound to a Memora instance.
 
-    Permite cachear resultados de funciones de forma transparente,
-    extrayendo automáticamente contexto de los argumentos.
+    Args:
+        memora: Memora instance to use for caching
+
+    Returns:
+        Decorator function
 
     Example:
-        >>> from memora import Memora, CacheConfig, MemoraDecorator
+        >>> memora = Memora()
+        >>> cached = create_cached_decorator(memora)
         >>>
-        >>> memora = Memora(CacheConfig.for_development())
-        >>> decorator = MemoraDecorator(memora)
-        >>>
-        >>> @decorator.cached(context={"agent": "sql"})
-        >>> def query_db(query: str, db: str, timeout: int = 30):
-        ...     # Lógica del agente
-        ...     return execute_query(query, db)
-        >>>
-        >>> # Context final: {"agent": "sql", "db": "prod", "timeout": 30}
-        >>> result = query_db("SELECT * FROM sales", db="prod")
+        >>> @cached(context={"model": "gpt-4"})
+        >>> def expensive_function(query: str):
+        >>>     return expensive_computation(query)
     """
 
-    def __init__(self, memora_instance):
-        """
-        Args:
-            memora_instance: Instancia de Memora a usar para cacheo
-        """
-        self.memora = memora_instance
-
-    def cached(
-        self,
+    def decorator(
         context: Optional[Dict[str, Any]] = None,
-        extract_from_args: bool = True,
         query_param: str = "query",
-    ):
+        extract_from_args: bool = True,  # ← DEFAULT: True (más seguro)
+        exclude_from_context: Optional[list] = None,
+    ) -> Callable[[F], F]:
         """
-        Decorador que cachea resultados de funciones.
+        Decorator to cache function results.
 
         Args:
-            context: Contexto estático (ej: {"agent": "sql", "version": "v1"})
-            extract_from_args: Si True, extrae contexto de los argumentos de la función
-            query_param: Nombre del parámetro que contiene el query (default: "query")
+            context: Static context dict (optional). Merged with extracted params
+            query_param: Name of the query parameter (default: "query")
+            extract_from_args: If True, extract function parameters into context (default: True)
+            exclude_from_context: List of param names to exclude from extracted context
+
+        Returns:
+            Decorated function
 
         Example:
-            >>> @decorator.cached(
-            ...     context={"agent": "analyzer", "version": "v2"},
-            ...     query_param="prompt"
-            ... )
-            >>> def analyze(prompt: str, model: str = "gpt-4", temperature: float = 0):
-            ...     return llm_call(prompt, model, temperature)
+            >>> # Default: All params affect cache (safest)
+            >>> @cached(context={"agent": "sql"})
+            >>> def query_db(query: str, limit: int = 10):
+            >>>     return run_query(query, limit)
             >>>
-            >>> # Context final: {
-            >>> #   "agent": "analyzer",
-            >>> #   "version": "v2",
-            >>> #   "model": "gpt-4",
-            >>> #   "temperature": 0
-            >>> # }
+            >>> # Explicit opt-out: Ignore function params
+            >>> @cached(context={"agent": "sql"}, extract_from_args=False)
+            >>> def query_db(query: str, limit: int):
+            >>>     return run_query(query, 100)  # limit always 100
         """
-        base_context = context or {}
 
-        def decorator_func(func: Callable) -> Callable:
+        def decorator_func(func: F) -> F:
+            # Get function signature
             sig = inspect.signature(func)
             params = list(sig.parameters.keys())
 
-            # Validar que existe query_param
+            # Validate query_param exists
             if query_param not in params:
                 raise ValueError(
                     f"Parámetro '{query_param}' no encontrado en {func.__name__}. "
                     f"Parámetros disponibles: {params}"
                 )
 
-            # Detectar si es async
-            is_async = inspect.iscoroutinefunction(func)
+            # Default exclude list
+            if exclude_from_context is None:
+                default_exclude = [query_param, "self", "cls"]
+            else:
+                default_exclude = list(exclude_from_context)
+                if query_param not in default_exclude:
+                    default_exclude.append(query_param)
 
-            if is_async:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs) -> Any:
+                # Bind arguments to parameters
+                bound = sig.bind(*args, **kwargs)
+                bound.apply_defaults()
 
-                @wraps(func)
-                async def async_wrapper(*args, **kwargs):
-                    return await self._execute_with_cache_async(
-                        func,
-                        sig,
-                        query_param,
-                        base_context,
-                        extract_from_args,
-                        args,
-                        kwargs,
+                # Extract query value
+                query_value = bound.arguments.get(query_param)
+                if query_value is None:
+                    raise ValueError(
+                        f"Parámetro '{query_param}' es None. "
+                        f"Debe proporcionar un valor para '{query_param}'."
                     )
+
+                # Build cache context
+                cache_context = {}
+
+                # Add static context (if provided)
+                if context is not None:
+                    cache_context.update(context)
+
+                # Extract from args (if enabled)
+                if extract_from_args:
+                    extracted = {
+                        param: value
+                        for param, value in bound.arguments.items()
+                        if param not in default_exclude and value is not None
+                    }
+                    # Static context overrides extracted context
+                    for key, value in extracted.items():
+                        if key not in cache_context:
+                            cache_context[key] = value
+
+                # If no context at all, add function name for disambiguation
+                if not cache_context:
+                    cache_context = {"__function__": func.__name__}
+
+                # Check cache
+                result = memora.lookup(query_value, cache_context)
+
+                if result.is_hit:
+                    return result.result
+
+                # Cache miss - execute function
+                output = func(*args, **kwargs)
+
+                # Store in cache
+                memora.store(query_value, cache_context, output)
+
+                return output
+
+            # Handle async functions
+            if inspect.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def async_wrapper(*args, **kwargs) -> Any:
+                    # Bind arguments to parameters
+                    bound = sig.bind(*args, **kwargs)
+                    bound.apply_defaults()
+
+                    # Extract query value
+                    query_value = bound.arguments.get(query_param)
+                    if query_value is None:
+                        raise ValueError(
+                            f"Parámetro '{query_param}' es None. "
+                            f"Debe proporcionar un valor para '{query_param}'."
+                        )
+
+                    # Build cache context (same logic as sync)
+                    cache_context = {}
+
+                    if context is not None:
+                        cache_context.update(context)
+
+                    if extract_from_args:
+                        extracted = {
+                            param: value
+                            for param, value in bound.arguments.items()
+                            if param not in default_exclude and value is not None
+                        }
+                        for key, value in extracted.items():
+                            if key not in cache_context:
+                                cache_context[key] = value
+
+                    if not cache_context:
+                        cache_context = {"__function__": func.__name__}
+
+                    # Check cache
+                    result = memora.lookup(query_value, cache_context)
+
+                    if result.is_hit:
+                        return result.result
+
+                    # Cache miss - execute async function
+                    output = await func(*args, **kwargs)
+
+                    # Store in cache
+                    memora.store(query_value, cache_context, output)
+
+                    return output
 
                 return async_wrapper
-            else:
 
-                @wraps(func)
-                def sync_wrapper(*args, **kwargs):
-                    return self._execute_with_cache_sync(
-                        func,
-                        sig,
-                        query_param,
-                        base_context,
-                        extract_from_args,
-                        args,
-                        kwargs,
-                    )
-
-                return sync_wrapper
+            return wrapper
 
         return decorator_func
 
-    def _execute_with_cache_sync(
-        self,
-        func,
-        sig,
-        query_param,
-        base_context,
-        extract_from_args,
-        args,
-        kwargs,
-    ):
-        """Lógica de ejecución con cache para funciones síncronas."""
-        # Bind args a parámetros
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-
-        # Extraer query
-        query = bound.arguments[query_param]
-
-        # Construir contexto
-        runtime_context = {}
-
-        if extract_from_args:
-            # Extraer todos los args excepto query_param
-            runtime_context = {
-                k: v for k, v in bound.arguments.items() if k != query_param
-            }
-
-        # Merge con contexto estático (base_context tiene prioridad)
-        runtime_context.update(base_context)
-
-        logger.debug(
-            f"@cached | func={func.__name__} | "
-            f"query='{str(query)[:50]}...' | ctx={runtime_context}"
-        )
-
-        # Lookup en caché
-        result = self.memora.lookup(query, runtime_context)
-
-        if result.is_hit:
-            logger.info(
-                f"Cache HIT | func={func.__name__} | similarity={result.similarity:.3f}"
-            )
-            # result.result YA está deserializado por core.py
-            return result.result
-
-        # Cache MISS - ejecutar función
-        logger.info(f"Cache MISS | func={func.__name__} | executing...")
-
-        output = func(*args, **kwargs)
-
-        # Guardar en caché
-        self.memora.store(
-            query=query,
-            context=runtime_context,
-            result=output,
-            metadata={"function": func.__name__},
-        )
-
-        return output
-
-    async def _execute_with_cache_async(
-        self,
-        func,
-        sig,
-        query_param,
-        base_context,
-        extract_from_args,
-        args,
-        kwargs,
-    ):
-        """Lógica de ejecución con cache para funciones asíncronas."""
-        # Bind args a parámetros
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-
-        # Extraer query
-        query = bound.arguments[query_param]
-
-        # Construir contexto
-        runtime_context = {}
-
-        if extract_from_args:
-            # Extraer todos los args excepto query_param
-            runtime_context = {
-                k: v for k, v in bound.arguments.items() if k != query_param
-            }
-
-        # Merge con contexto estático (base_context tiene prioridad)
-        runtime_context.update(base_context)
-
-        logger.debug(
-            f"@cached | func={func.__name__} | "
-            f"query='{str(query)[:50]}...' | ctx={runtime_context}"
-        )
-
-        # Lookup en caché
-        result = self.memora.lookup(query, runtime_context)
-
-        if result.is_hit:
-            logger.info(
-                f"Cache HIT | func={func.__name__} | similarity={result.similarity:.3f}"
-            )
-            # result.result YA está deserializado por core.py
-            return result.result
-
-        # Cache MISS - ejecutar función
-        logger.info(f"Cache MISS | func={func.__name__} | executing...")
-
-        output = await func(*args, **kwargs)
-
-        # Guardar en caché
-        self.memora.store(
-            query=query,
-            context=runtime_context,
-            result=output,
-            metadata={"function": func.__name__},
-        )
-
-        return output
+    return decorator
 
 
-def create_cached_decorator(memora_instance):
+class MemoraDecorator:
     """
-    Factory function para crear decorador rápidamente.
+    Class-based decorator interface for Memora.
 
-    Shortcut conveniente para no tener que instanciar MemoraDecorator.
-
-    Args:
-        memora_instance: Instancia de Memora
-
-    Returns:
-        Método cached listo para usar como decorador
+    Provides an alternative API for creating cached decorators.
 
     Example:
-        >>> from memora import Memora, CacheConfig, create_cached_decorator
-        >>>
-        >>> memora = Memora(CacheConfig.for_development())
-        >>> cached = create_cached_decorator(memora)
-        >>>
-        >>> @cached(context={"agent": "sql"})
-        >>> def query_db(query: str, db: str):
-        ...     return execute_query(query, db)
+        >>> decorator = MemoraDecorator(memora)
+        >>> @decorator.cached(context={"model": "gpt-4"})
+        >>> def my_function(query: str):
+        >>>     return expensive_computation(query)
     """
-    return MemoraDecorator(memora_instance).cached
+
+    def __init__(self, memora: Memora):
+        """
+        Initialize decorator with Memora instance.
+
+        Args:
+            memora: Memora instance to use for caching
+        """
+        self.memora = memora
+        self._cached_decorator = create_cached_decorator(memora)
+
+    def cached(
+        self,
+        context: Optional[Dict[str, Any]] = None,
+        query_param: str = "query",
+        extract_from_args: bool = False,
+        exclude_from_context: Optional[list] = None,
+    ) -> Callable[[F], F]:
+        """
+        Create a cached decorator with specified options.
+
+        Args:
+            context: Static context dict (optional)
+            query_param: Name of the query parameter (default: "query")
+            extract_from_args: If True, extract function parameters into context
+            exclude_from_context: List of param names to exclude from extracted context
+
+        Returns:
+            Decorator function
+        """
+        return self._cached_decorator(
+            context=context,
+            query_param=query_param,
+            extract_from_args=extract_from_args,
+            exclude_from_context=exclude_from_context,
+        )

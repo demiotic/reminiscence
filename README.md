@@ -3,21 +3,22 @@
 
 **Semantic cache for multi-agent systems**
 
-Memora is an **experimental** semantic caching library for AI agents, built on LanceDB and sentence-transformers. **Alpha stage** - API may change.
+Memora is an **experimental** semantic caching library for AI agents, built on LanceDB and sentence-transformers. **Beta stage** - approaching production readiness.
 
 > [!WARNING]
-> **Alpha Release (v0.1.0) - Not Production Ready**
+> **Beta Release (v0.1.0) - Approaching Production**
 > 
-> Memora is functional and tested, but missing critical features for production:
-> - No automatic cleanup/compaction
-> - No concurrency controls  
-> - Limited observability (basic metrics only)
-> - API may change in 0.2.x
+> Memora is functional with production features, but still missing some critical capabilities:
+> - ✅ Health checks
+> - ✅ Structured logging
+> - ✅ Error handling
+> - ✅ Size limits and eviction
+> - ❌ Background cleanup scheduler
+> - ❌ LRU eviction (only FIFO available)
 >
-> **Use for:** Prototypes, development, research, experimentation  
-> **Avoid for:** Production systems, multi-tenant apps, large-scale deployments (>100k entries)
+> **Use for:** Development, staging environments, low-concurrency production  
 >
-> See [Roadmap](#roadmap) for planned features.
+> See [Roadmap](#roadmap) for remaining features.
 
 ## Why Memora?
 
@@ -32,17 +33,103 @@ Multi-agent systems often execute the same expensive operations repeatedly. Memo
 
 ## Features
 
-- **Semantic matching**: Finds similar queries using embeddings (cosine similarity)
-- **Context-aware**: Groups cache by execution context (agent, config, tools)
-- **Embedded or remote**: Use in-memory, on-disk, or connect to remote LanceDB
-- **Type-safe serialization**: Handles pandas/polars DataFrames, numpy arrays, nested dicts
-- **Production-ready**: TTL, metrics, automatic indexing, cleanup
-- **Zero-config decorators**: Cache functions transparently
+### Core Functionality
+- **Semantic matching** - Finds similar queries using embeddings (cosine similarity)
+- **Context-aware** - Groups cache by execution context (agent, config, tools)
+- **Flexible storage** - In-memory, on-disk, or remote LanceDB
+- **Type-safe serialization** - Handles pandas/polars DataFrames, numpy arrays, nested dicts
+- **TTL and eviction** - Automatic expiration with FIFO eviction policy
+- **Metrics tracking** - Hit rate, latency, payload sizes
+- **Zero-config decorators** - Cache functions transparently
+
+### ⭐ Monitoring & Observability (v0.1.0-beta)
+
+#### Health Checks
+Monitor cache health in production with built-in diagnostics:
+
+```python
+from memora import Memora, CacheConfig
+
+memora = Memora(CacheConfig.for_production())
+
+# Check cache health
+health = memora.health_check()
+print(health["status"])  # "healthy" or "unhealthy"
+
+# Example output:
+# {
+#   "status": "healthy",
+#   "checks": {
+#     "embedding": {"ok": true, "error": null},
+#     "database": {"ok": true, "error": null},
+#     "error_rate": {"ok": true, "details": "Error rate: 0.5%"}
+#   },
+#   "metrics": {
+#     "total_entries": 1234,
+#     "recent_errors": {"lookup": 2, "store": 0}
+#   }
+# }
+```
+
+**Use cases:**
+- Kubernetes liveness/readiness probes
+- Monitoring alerts (Prometheus, Datadog, CloudWatch)
+- Production debugging
+
+#### Structured Logging
+JSON logs for production observability:
+
+```python
+# Development: Human-readable console logs
+config = CacheConfig.for_development()  # json_logs=False
+
+# Production: Structured JSON logs
+config = CacheConfig.for_production()  # json_logs=True
+memora = Memora(config)
+
+# Example JSON log output:
+# {"event": "cache_hit", "timestamp": "2025-10-05T14:30:00Z", 
+#  "similarity": 0.923, "latency_ms": 12.3, "age_seconds": 120}
+```
+
+**Integrations:** ELK Stack, Datadog, Grafana Loki, CloudWatch Logs
+
+#### Environment Variable Configuration
+Configure Memora without code changes (Docker/Kubernetes friendly):
+
+```bash
+# docker-compose.yml or Kubernetes ConfigMap
+environment:
+  MEMORA_DB_URI: /var/cache/memora
+  MEMORA_JSON_LOGS: true
+  MEMORA_LOG_LEVEL: INFO
+  MEMORA_MAX_ENTRIES: 100000
+  MEMORA_TTL_SECONDS: 3600
+  MEMORA_SIMILARITY_THRESHOLD: 0.85
+```
+
+```python
+from memora import Memora, CacheConfig
+
+# Reads all config from environment variables
+memora = Memora(CacheConfig.from_env())
+```
+
+**Supported environment variables:**
+- `MEMORA_DB_URI` - Database path (default: memory://)
+- `MEMORA_JSON_LOGS` - Enable JSON logging (true/false)
+- `MEMORA_LOG_LEVEL` - Log level (DEBUG/INFO/WARNING/ERROR)
+- `MEMORA_MAX_ENTRIES` - Max cache entries (int or None)
+- `MEMORA_TTL_SECONDS` - Time-to-live in seconds
+- `MEMORA_SIMILARITY_THRESHOLD` - Match threshold (0.0-1.0)
+- `MEMORA_MAX_RESULT_SIZE_BYTES` - Max payload size
+- `MEMORA_EVICTION_POLICY` - Eviction strategy (fifo)
+- See `CacheConfig.from_env()` docstring for complete list
 
 ## Quick Start
 
 ```bash
-pip install lancedb sentence-transformers orjson
+pip install lancedb sentence-transformers orjson pyarrow
 ```
 
 ### Basic Usage
@@ -65,7 +152,7 @@ if result.is_hit:
 else:
     # Execute expensive operation
     data = expensive_sql_query(...)
-    
+
     # Store in cache
     memora.store(
         query="Analyze sales for Q3 2024",
@@ -84,7 +171,7 @@ cached = create_cached_decorator(memora)
 
 @cached(context={"agent": "sql"})
 def query_database(query: str, db: str, timeout: int = 30):
-    """This function's results are automatically cached."""
+    # This function results are automatically cached
     return execute_query(query, db, timeout)
 
 # First call executes, second hits cache
@@ -100,6 +187,7 @@ result2 = query_database("Show all sales data", db="prod")  # Cache hit!
 config = CacheConfig.for_development()
 # - In-memory storage
 # - Debug logging
+# - Human-readable logs
 # - Metrics enabled
 ```
 
@@ -108,7 +196,8 @@ config = CacheConfig.for_development()
 ```python
 config = CacheConfig.for_production(db_path="./cache.db")
 # - Persistent storage
-# - 24h TTL
+# - 1h TTL
+# - JSON structured logging
 # - Auto-indexing at 1000 entries
 # - 512 IVF partitions
 ```
@@ -118,12 +207,15 @@ config = CacheConfig.for_production(db_path="./cache.db")
 ```python
 config = CacheConfig(
     model_name="paraphrase-multilingual-MiniLM-L12-v2",
-    similarity_threshold=0.80,
+    similarity_threshold=0.85,
     db_uri="./my_cache.db",
     ttl_seconds=3600,  # 1 hour
     enable_metrics=True,
+    json_logs=True,  # Structured logging
     auto_create_index=True,
     index_threshold_entries=500,
+    max_entries=50_000,
+    max_result_size_bytes=10_000_000,
 )
 ```
 
@@ -152,6 +244,20 @@ memora.invalidate(older_than_seconds=3600)  # Older than 1 hour
 
 # Cleanup expired entries
 deleted = memora.cleanup_expired()
+```
+
+### Size Limits and Eviction
+
+```python
+config = CacheConfig(
+    max_entries=10_000,  # Maximum cache entries
+    max_result_size_bytes=10_000_000,  # 10MB max per result
+    eviction_policy="fifo",  # First In First Out
+)
+
+memora = Memora(config)
+
+# When max_entries is reached, oldest entries are automatically evicted
 ```
 
 ### Vector Indexing
@@ -183,9 +289,10 @@ memora = Memora(CacheConfig(enable_metrics=True))
 
 # Get performance metrics
 stats = memora.get_stats()
-print(f"Hit rate: {stats['hit_rate']:.2%}")
+print(f"Hit rate: {stats['hit_rate']}")
 print(f"Latency p95: {stats['lookup_latency_ms']['p95']:.1f}ms")
 print(f"Total savings: {stats['total_latency_saved_ms']/1000:.1f}s")
+print(f"Errors: {stats['errors']}")
 ```
 
 ## Supported Data Types
@@ -249,7 +356,7 @@ See the `examples/` directory:
 pytest
 
 # Run specific test file
-pytest tests/test_serialization.py
+pytest tests/test_core.py
 
 # Run with coverage
 pytest --cov=memora --cov-report=html
@@ -269,10 +376,11 @@ For production workloads >1000 entries, enable auto-indexing.
 ## Requirements
 
 - Python 3.9+
-- lancedb >= 0.3
-- sentence-transformers >= 2.2
-- orjson >= 3.9
-- pyarrow >= 12.0
+- lancedb >= 0.15.0
+- sentence-transformers >= 3.0.0
+- orjson >= 3.10.0
+- pyarrow >= 18.0.0
+- structlog >= 24.0.0 (for structured logging)
 
 Optional:
 - pandas (for DataFrame caching)
@@ -301,8 +409,21 @@ Contributions welcome! Please read CONTRIBUTING.md first.
 
 ## Roadmap
 
-- [ ] Remote LanceDB support
+### v0.1.0 (Current)
+- [x] Health check method
+- [x] Structured logging (JSON)
+- [x] Environment variable configuration
+- [x] Improved error handling and logging
+
+### v0.2.0 (Planned)
+- [ ] Background cleanup scheduler
+- [ ] LRU eviction policy
+- [ ] Prometheus metrics exporter
+- [ ] S3/GCS remote storage backends
+- [ ] Multi-tenancy support
+
+### Future
 - [ ] Custom embedding models
 - [ ] Semantic invalidation (invalidate by query similarity)
 - [ ] Distributed caching
-- [ ] Prometheus metrics exporter
+- [ ] GraphQL API

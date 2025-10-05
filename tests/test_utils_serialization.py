@@ -1,9 +1,10 @@
-"""Tests para serialization.py - versión completa."""
+"""Tests for serialization.py - complete version."""
 
 import pytest
 from memora.utils.serialization import serialize, deserialize, is_serializable
 
-# Imports condicionales
+
+# Conditional imports
 try:
     import pandas as pd
 
@@ -11,12 +12,14 @@ try:
 except ImportError:
     HAS_PANDAS = False
 
+
 try:
     import polars as pl
 
     HAS_POLARS = True
 except ImportError:
     HAS_POLARS = False
+
 
 try:
     import numpy as np
@@ -27,28 +30,28 @@ except ImportError:
 
 
 class TestSerialization:
-    """Tests básicos compatibles con versión original."""
+    """Basic tests compatible with original version."""
 
     def test_serialize_string(self):
-        """String debe serializarse a bytes."""
+        """String should serialize to bytes."""
         data = "test string"
         serialized = serialize(data)
 
-        # Ahora retorna bytes, no string
+        # Now returns bytes, not string
         assert isinstance(serialized, bytes)
         assert deserialize(serialized) == data
 
     def test_serialize_dict(self):
-        """Dict debe serializarse a JSON (bytes)."""
+        """Dict should serialize to JSON (bytes)."""
         data = {"key": "value", "number": 42}
         serialized = serialize(data)
 
         assert isinstance(serialized, bytes)
-        # Verificar que contiene la clave
+        # Verify it contains the key
         assert b"key" in serialized or b'"key"' in serialized
 
     def test_serialize_deserialize_roundtrip(self):
-        """Serializar + deserializar debe retornar datos originales."""
+        """Serialize + deserialize should return original data."""
         original = {"status": "ok", "items": [1, 2, 3], "meta": {"count": 3}}
 
         serialized = serialize(original)
@@ -57,7 +60,7 @@ class TestSerialization:
         assert deserialized == original
 
     def test_deserialize_string(self):
-        """String debe deserializarse correctamente desde bytes."""
+        """String should deserialize correctly from bytes."""
         data = "plain string"
         serialized = serialize(data)
         result = deserialize(serialized)
@@ -65,7 +68,7 @@ class TestSerialization:
         assert result == data
 
     def test_serialize_list(self):
-        """List debe serializarse a JSON (bytes)."""
+        """List should serialize to JSON (bytes)."""
         data = [1, 2, 3, "test"]
         serialized = serialize(data)
 
@@ -73,7 +76,7 @@ class TestSerialization:
         assert b"[" in serialized
 
     def test_serialize_nested(self):
-        """Estructuras nested deben serializarse."""
+        """Nested structures should serialize."""
         data = {"level1": {"level2": {"level3": [1, 2, 3]}}}
 
         serialized = serialize(data)
@@ -82,7 +85,7 @@ class TestSerialization:
         assert deserialized == data
 
     def test_serialize_unicode(self):
-        """Unicode debe manejarse correctamente."""
+        """Unicode should be handled correctly."""
         data = {"text": "Hello 世界 مرحبا 🌍"}
 
         serialized = serialize(data)
@@ -92,21 +95,21 @@ class TestSerialization:
 
 
 class TestAdvancedSerialization:
-    """Tests para tipos avanzados."""
+    """Tests for advanced types."""
 
     def test_none(self):
-        """None debe manejarse correctamente."""
+        """None should be handled correctly."""
         data = None
         serialized = serialize(data)
         assert deserialize(serialized) is None
 
     def test_bool(self):
-        """Bools deben preservarse."""
+        """Bools should be preserved."""
         assert deserialize(serialize(True)) is True
         assert deserialize(serialize(False)) is False
 
     def test_floats(self):
-        """Floats deben preservar precisión."""
+        """Floats should preserve precision."""
         data = {"pi": 3.14159, "e": 2.71828}
         serialized = serialize(data)
         deserialized = deserialize(serialized)
@@ -114,7 +117,7 @@ class TestAdvancedSerialization:
         assert abs(deserialized["e"] - 2.71828) < 1e-5
 
     def test_mixed_types(self):
-        """Mezcla de tipos en una estructura."""
+        """Mix of types in a structure."""
         data = {
             "string": "hello",
             "int": 42,
@@ -129,7 +132,7 @@ class TestAdvancedSerialization:
         assert deserialized == data
 
     def test_is_serializable(self):
-        """Test de verificación de serializabilidad."""
+        """Test serializability check."""
         assert is_serializable("string")
         assert is_serializable({"key": "value"})
         assert is_serializable([1, 2, 3])
@@ -141,10 +144,10 @@ class TestAdvancedSerialization:
 
 @pytest.mark.skipif(not HAS_NUMPY, reason="numpy not installed")
 class TestNumpySerialization:
-    """Tests para numpy arrays."""
+    """Tests for numpy arrays."""
 
     def test_numpy_array_1d(self):
-        """Array 1D debe preservarse."""
+        """1D array should be preserved."""
         data = np.array([1, 2, 3, 4, 5])
         serialized = serialize(data)
         deserialized = deserialize(serialized)
@@ -153,7 +156,7 @@ class TestNumpySerialization:
         assert np.array_equal(deserialized, data)
 
     def test_numpy_array_2d(self):
-        """Array 2D debe preservar shape."""
+        """2D array should preserve shape."""
         data = np.array([[1, 2, 3], [4, 5, 6]])
         serialized = serialize(data)
         deserialized = deserialize(serialized)
@@ -163,7 +166,7 @@ class TestNumpySerialization:
         assert deserialized.shape == (2, 3)
 
     def test_numpy_float_array(self):
-        """Array de floats debe preservar dtype."""
+        """Float array should preserve dtype."""
         data = np.array([1.1, 2.2, 3.3], dtype=np.float32)
         serialized = serialize(data)
         deserialized = deserialize(serialized)
@@ -173,14 +176,14 @@ class TestNumpySerialization:
         assert np.allclose(deserialized, data)
 
     def test_numpy_scalar(self):
-        """Scalars numpy deben convertirse a Python nativos."""
+        """Numpy scalars should convert to native Python."""
         data = {"value": np.int64(42)}
         serialized = serialize(data)
         deserialized = deserialize(serialized)
         assert deserialized["value"] == 42
 
     def test_numpy_in_nested_structure(self):
-        """Arrays numpy dentro de estructuras nested."""
+        """Numpy arrays inside nested structures."""
         data = {
             "results": {
                 "embeddings": np.array([0.1, 0.2, 0.3]),
@@ -197,10 +200,10 @@ class TestNumpySerialization:
 
 @pytest.mark.skipif(not HAS_PANDAS, reason="pandas not installed")
 class TestPandasSerialization:
-    """Tests para pandas DataFrames."""
+    """Tests for pandas DataFrames."""
 
     def test_simple_dataframe(self):
-        """DataFrame simple debe preservarse."""
+        """Simple DataFrame should be preserved."""
         data = pd.DataFrame(
             {
                 "id": [1, 2, 3],
@@ -216,7 +219,7 @@ class TestPandasSerialization:
         pd.testing.assert_frame_equal(deserialized, data)
 
     def test_dataframe_with_index(self):
-        """DataFrame con índice nombrado."""
+        """DataFrame with named index."""
         data = pd.DataFrame({"value": [10, 20, 30]}, index=["a", "b", "c"])
         data.index.name = "key"
 
@@ -227,7 +230,7 @@ class TestPandasSerialization:
         pd.testing.assert_frame_equal(deserialized, data)
 
     def test_series(self):
-        """Series debe preservarse."""
+        """Series should be preserved."""
         data = pd.Series([1, 2, 3, 4], name="values")
 
         serialized = serialize(data)
@@ -237,7 +240,7 @@ class TestPandasSerialization:
         pd.testing.assert_series_equal(deserialized, data)
 
     def test_dataframe_nested_in_dict(self):
-        """DataFrame dentro de dict."""
+        """DataFrame inside dict."""
         df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
         data = {"status": "ok", "data": df, "metadata": {"rows": 2}}
 
@@ -248,7 +251,7 @@ class TestPandasSerialization:
         pd.testing.assert_frame_equal(deserialized["data"], df)
 
     def test_dataframe_with_mixed_types(self):
-        """DataFrame con tipos mixtos."""
+        """DataFrame with mixed types."""
         data = pd.DataFrame(
             {
                 "int_col": [1, 2, 3],
@@ -266,10 +269,10 @@ class TestPandasSerialization:
 
 @pytest.mark.skipif(not HAS_POLARS, reason="polars not installed")
 class TestPolarsSerialization:
-    """Tests para polars DataFrames."""
+    """Tests for polars DataFrames."""
 
     def test_simple_dataframe(self):
-        """DataFrame polars simple."""
+        """Simple polars DataFrame."""
         data = pl.DataFrame(
             {
                 "id": [1, 2, 3],
@@ -285,7 +288,7 @@ class TestPolarsSerialization:
         assert deserialized.equals(data)
 
     def test_polars_nested_in_dict(self):
-        """DataFrame polars dentro de dict."""
+        """Polars DataFrame inside dict."""
         df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
         data = {"status": "ok", "data": df, "metadata": {"rows": 2}}
 
@@ -297,20 +300,20 @@ class TestPolarsSerialization:
 
 
 class TestEdgeCases:
-    """Tests para casos edge."""
+    """Tests for edge cases."""
 
     def test_empty_dict(self):
-        """Dict vacío."""
+        """Empty dict."""
         data = {}
         assert deserialize(serialize(data)) == data
 
     def test_empty_list(self):
-        """Lista vacía."""
+        """Empty list."""
         data = []
         assert deserialize(serialize(data)) == data
 
     def test_large_nested_structure(self):
-        """Estructura profundamente nested."""
+        """Deeply nested structure."""
         data = {"level": 1}
         current = data
         for i in range(2, 20):
@@ -322,7 +325,7 @@ class TestEdgeCases:
         assert deserialized == data
 
     def test_special_characters_in_keys(self):
-        """Keys con caracteres especiales."""
+        """Keys with special characters."""
         data = {
             "key-with-dash": 1,
             "key.with.dot": 2,

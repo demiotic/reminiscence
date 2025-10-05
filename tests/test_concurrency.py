@@ -9,9 +9,6 @@ multiprocessing.set_start_method("spawn", force=True)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import pytest
-from memora import Memora, CacheConfig
-
 
 def worker_store_many(db_path: str, worker_id: int, num_stores: int):
     """Worker that performs many stores."""

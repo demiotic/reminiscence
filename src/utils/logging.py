@@ -2,7 +2,6 @@
 
 import logging
 import structlog
-from typing import Any, Dict
 
 
 def configure_logging(log_level: str = "INFO", json_logs: bool = True) -> None:

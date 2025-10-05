@@ -141,12 +141,12 @@ def compare_devices(num_queries: int = 50):
     print("=" * 70)
 
     print("\nFor LLM caching:")
-    print(f"  • CPU latency overhead: ~{cpu_stats['avg_ms']:.0f}ms per lookup")
-    print(f"  • LLM call saved: ~2000ms (typical)")
+    print("  • CPU latency overhead: ~{cpu_stats['avg_ms']:.0f}ms per lookup")
+    print("  • LLM call saved: ~2000ms (typical)")
     print(
         f"  • Cache overhead: {cpu_stats['avg_ms'] / 2000 * 100:.1f}% of LLM call time"
     )
-    print(f"\n✅ Conclusion: CPU overhead is negligible compared to LLM latency")
+    print("\n✅ Conclusion: CPU overhead is negligible compared to LLM latency")
     print("   CPU is perfectly viable for cache use case")
 
 

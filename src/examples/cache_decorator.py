@@ -1,7 +1,7 @@
 """LLM caching with decorator pattern."""
 
 import time
-from memora import cached  # ← Import explícito
+from memora import cached
 
 
 # Wrap LLM function with cache

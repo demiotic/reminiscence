@@ -1,7 +1,6 @@
 """Tests for memora.config.CacheConfig."""
 
 import os
-import pytest
 from memora import CacheConfig
 
 

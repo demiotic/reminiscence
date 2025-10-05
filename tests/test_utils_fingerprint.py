@@ -1,6 +1,5 @@
 """Tests for fingerprint.py - context normalization."""
 
-import pytest
 from memora.utils.fingerprint import create_fingerprint, fingerprint_matches
 
 

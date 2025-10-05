@@ -1,6 +1,5 @@
 """Memora core - Queryable semantic cache."""
 
-import logging
 import time
 from typing import Any, Dict, List, Optional
 
@@ -11,7 +10,7 @@ from sentence_transformers import SentenceTransformer
 
 from .config import CacheConfig
 from .metrics import CacheMetrics
-from .types import CacheEntry, LookupResult, AvailabilityCheck
+from .types import LookupResult, AvailabilityCheck
 from .utils import create_fingerprint, cosine_similarity, serialize, deserialize
 
 from .utils.logging import configure_logging, get_logger

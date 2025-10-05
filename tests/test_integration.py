@@ -1,5 +1,3 @@
-import pytest
-import pyarrow as pa
 from memora.utils import (
     content_hash,
     short_hash,

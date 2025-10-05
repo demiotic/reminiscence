@@ -1,4 +1,3 @@
-import pytest
 import pyarrow as pa
 from memora.utils import (
     cosine_similarity,

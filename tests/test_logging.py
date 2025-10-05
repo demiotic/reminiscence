@@ -1,11 +1,8 @@
 """Tests for structured logging functionality."""
 
 import json
-import logging
 import sys
 from io import StringIO
-
-import pytest
 from memora import Memora, CacheConfig
 
 

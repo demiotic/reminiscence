@@ -1,4 +1,4 @@
-"""Core de Memora - Caché semántica consultable."""
+"""Memora core - Queryable semantic cache."""
 
 import logging
 import time
@@ -19,36 +19,36 @@ logger = logging.getLogger(__name__)
 
 class Memora:
     """
-    Caché semántica para sistemas multiagente.
+    Semantic cache for multi-agent systems.
 
-    Diseño: Solo almacenamiento y consulta. NO ejecuta lógica.
+    Design: Storage and query only. Does NOT execute logic.
 
-    API Principal:
-    - lookup(): Busca resultado existente
-    - store(): Guarda nuevo resultado
-    - check_availability(): Verifica disponibilidad sin recuperar datos
-    - invalidate(): Marca entradas como inválidas
-    - create_index(): Crea índice vectorial para búsquedas rápidas
+    Main API:
+    - lookup(): Search for existing result
+    - store(): Save new result
+    - check_availability(): Verify availability without retrieving data
+    - invalidate(): Mark entries as invalid
+    - create_index(): Create vector index for fast searches
 
     Example:
         >>> memora = Memora(CacheConfig.for_development())
         >>>
-        >>> # Consultar
+        >>> # Query
         >>> result = memora.lookup(
-        ...     query="Analiza ventas Q3",
+        ...     query="Analyze Q3 sales",
         ...     context={"agent": "sql", "db": "prod"}
         ... )
         >>>
         >>> if result.is_hit:
         ...     print(result.result)
         ... else:
-        ...     # Ejecutar agente externamente
+        ...     # Execute agent externally
         ...     data = execute_agent(...)
         ...     memora.store(query, context, data)
     """
 
     def __init__(self, config: Optional[CacheConfig] = None):
-        """Inicializa Memora."""
+        """Initialize Memora."""
         self.config = config or CacheConfig()
 
         # Setup logging
@@ -58,23 +58,23 @@ class Memora:
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
-        logger.info(f"Inicializando Memora | modelo={self.config.model_name}")
+        logger.info(f"Initializing Memora | model={self.config.model_name}")
 
-        # Inicializar componentes
+        # Initialize components
         self.model = SentenceTransformer(self.config.model_name)
         self.db = lancedb.connect(self.config.db_uri)
         self.embedding_dim = self.model.get_sentence_embedding_dimension()
         self.metrics = CacheMetrics() if self.config.enable_metrics else None
 
-        # Schema - timestamp en milisegundos, result y metadata como binary
+        # Schema - timestamp in milliseconds, result and metadata as binary
         self.schema = pa.schema(
             [
                 pa.field("query_text", pa.string()),
                 pa.field("context_hash", pa.string()),
                 pa.field("embedding", pa.list_(pa.float32(), self.embedding_dim)),
-                pa.field("result", pa.binary()),  # bytes, no string
-                pa.field("timestamp", pa.int64()),  # Milisegundos desde epoch
-                pa.field("metadata", pa.binary()),  # bytes, no string
+                pa.field("result", pa.binary()),  # bytes, not string
+                pa.field("timestamp", pa.int64()),  # Milliseconds since epoch
+                pa.field("metadata", pa.binary()),  # bytes, not string
             ]
         )
 
@@ -82,54 +82,63 @@ class Memora:
         self._index_created = False
 
         logger.info(
-            f"Memora listo | dim={self.embedding_dim}, "
+            f"Memora ready | dim={self.embedding_dim}, "
             f"threshold={self.config.similarity_threshold}, "
             f"entries={self.table.count_rows()}"
         )
 
-        # Auto-crear índice si está configurado
+        # Auto-create index if configured
         if self.config.auto_create_index:
             self._maybe_auto_create_index()
 
     def _init_table(self):
-        """Inicializa o abre tabla LanceDB."""
+        """Initialize or open LanceDB table."""
         try:
             table = self.db.open_table(self.config.table_name)
-            logger.debug(f"Tabla '{self.config.table_name}' abierta")
+            logger.debug(f"Table '{self.config.table_name}' opened")
             return table
         except Exception:
             table = self.db.create_table(
                 self.config.table_name, schema=self.schema, mode="overwrite"
             )
-            logger.debug(f"Tabla '{self.config.table_name}' creada")
+            logger.debug(f"Table '{self.config.table_name}' created")
             return table
 
     def _maybe_auto_create_index(self):
-        """Crea índice automáticamente si se alcanza el threshold."""
+        """Create index automatically if threshold is reached."""
         if self._index_created:
             return
 
         row_count = self.table.count_rows()
         if row_count >= self.config.index_threshold_entries:
             logger.info(
-                f"Auto-creando índice: {row_count} >= {self.config.index_threshold_entries}"
+                f"Auto-creating index: {row_count} >= {self.config.index_threshold_entries}"
             )
             self.create_index(num_partitions=self.config.index_num_partitions)
             self._index_created = True
 
     def _embed(self, text: str) -> List[float]:
-        """Genera embedding L2-normalizado."""
-        embedding_np = self.model.encode(
-            text, convert_to_numpy=True, normalize_embeddings=True
-        )
-        return embedding_np.tolist()
+        """Generate L2-normalized embedding."""
+        try:
+            embedding_np = self.model.encode(
+                text, convert_to_numpy=True, normalize_embeddings=True
+            )
+            return embedding_np.tolist()
+        except Exception as e:
+            logger.error(
+                f"Embedding generation failed: {e} | text='{text[:50]}...'",
+                exc_info=True,
+            )
+            # Re-raise because we can't do anything without embedding
+            # Will be caught by lookup() or store()
+            raise
 
     def _current_timestamp_ms(self) -> int:
-        """Retorna timestamp actual en milisegundos."""
+        """Return current timestamp in milliseconds."""
         return int(time.time() * 1000)
 
     def _is_expired(self, timestamp_ms: int) -> bool:
-        """Verifica expiración según TTL."""
+        """Check expiration according to TTL."""
         if self.config.ttl_seconds is None:
             return False
         age_ms = self._current_timestamp_ms() - timestamp_ms
@@ -143,62 +152,62 @@ class Memora:
         similarity_threshold: Optional[float] = None,
     ) -> LookupResult:
         """
-        Busca entrada en caché por similitud semántica.
+        Search cache entry by semantic similarity.
 
         Args:
-            query: Query del usuario
-            context: Contexto (agent_id, tools, params, etc.)
-            similarity_threshold: Override del threshold global
+            query: User query
+            context: Context (agent_id, tools, params, etc.)
+            similarity_threshold: Override global threshold
 
         Returns:
-            LookupResult con hit/miss y datos asociados
+            LookupResult with hit/miss and associated data
         """
         start_time = time.time()
-        context = context or {}
-        threshold = similarity_threshold or self.config.similarity_threshold
-
-        # Cache vacío
-        if self.table.count_rows() == 0:
-            logger.debug("Caché vacío")
-            if self.metrics:
-                self.metrics.misses += 1
-            return LookupResult(hit=False)
-
-        # Preparar búsqueda
-        context_hash = create_fingerprint(context)
-        query_embedding = self._embed(query)
-
         try:
-            # Buscar candidatos (sin filtro de contexto en search, lo haremos después)
+            context = context or {}
+            threshold = similarity_threshold or self.config.similarity_threshold
+
+            # Empty cache
+            if self.table.count_rows() == 0:
+                logger.debug("Cache empty")
+                if self.metrics:
+                    self.metrics.misses += 1
+                return LookupResult(hit=False)
+
+            # Prepare search
+            context_hash = create_fingerprint(context)
+            query_embedding = self._embed(query)
+
+            # Search candidates (without context filter in search, we'll do it after)
             search_results = (
                 self.table.search(query_embedding)
-                .limit(50)  # Más candidatos para filtrar después
+                .limit(50)  # More candidates to filter later
                 .to_arrow()
             )
 
             if len(search_results) == 0:
                 elapsed_ms = (time.time() - start_time) * 1000
-                logger.debug(f"MISS | Search sin resultados | {elapsed_ms:.1f}ms")
+                logger.debug(f"MISS | Search no results | {elapsed_ms:.1f}ms")
                 if self.metrics:
                     self.metrics.misses += 1
                     self.metrics.record_lookup_latency(elapsed_ms)
                 return LookupResult(hit=False)
 
-            # Filtrar por context_hash manualmente (más confiable)
+            # Filter by context_hash manually (more reliable)
             mask_context = pc.equal(search_results["context_hash"], context_hash)
             search_results = search_results.filter(mask_context)
 
             if len(search_results) == 0:
                 elapsed_ms = (time.time() - start_time) * 1000
                 logger.debug(
-                    f"MISS | Ningún resultado con contexto matching | {elapsed_ms:.1f}ms"
+                    f"MISS | No results with matching context | {elapsed_ms:.1f}ms"
                 )
                 if self.metrics:
                     self.metrics.misses += 1
                     self.metrics.record_lookup_latency(elapsed_ms)
                 return LookupResult(hit=False)
 
-            # Filtrar por TTL (timestamp en ms)
+            # Filter by TTL (timestamp in ms)
             if self.config.ttl_seconds is not None:
                 cutoff_ms = self._current_timestamp_ms() - int(
                     self.config.ttl_seconds * 1000
@@ -207,18 +216,18 @@ class Memora:
                 search_results = search_results.filter(mask_ttl)
 
                 if len(search_results) == 0:
-                    logger.debug("MISS | Resultados expiraron")
+                    logger.debug("MISS | Results expired")
                     if self.metrics:
                         self.metrics.misses += 1
                     return LookupResult(hit=False)
 
-            # El primer resultado es el más similar
+            # First result is most similar
             best_idx = 0
             best_query = search_results["query_text"][best_idx].as_py()
             best_embedding = search_results["embedding"][best_idx].as_py()
             best_sim = cosine_similarity(query_embedding, best_embedding)
 
-            # Evaluar threshold
+            # Evaluate threshold
             if best_sim < threshold:
                 elapsed_ms = (time.time() - start_time) * 1000
                 logger.info(
@@ -230,7 +239,7 @@ class Memora:
                     self.metrics.record_lookup_latency(elapsed_ms)
                 return LookupResult(hit=False, similarity=best_sim)
 
-            # HIT - Deserializar resultado
+            # HIT - Deserialize result
             result_bytes = search_results["result"][best_idx].as_py()
             result_data = deserialize(result_bytes)
 
@@ -260,10 +269,15 @@ class Memora:
 
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
-            logger.error(f"Error en lookup: {e} | {elapsed_ms:.1f}ms", exc_info=True)
+            logger.error(
+                f"Cache lookup failed: {e} | query='{query[:50]}...' | "
+                f"context_hash={create_fingerprint(context)[:8]} | {elapsed_ms:.1f}ms",
+                exc_info=True,
+            )
             if self.metrics:
                 self.metrics.misses += 1
                 self.metrics.record_lookup_latency(elapsed_ms)
+                self.metrics.lookup_errors += 1  # ← FIXED: removed hasattr check
             return LookupResult(hit=False)
 
     def store(
@@ -274,43 +288,54 @@ class Memora:
         metadata: Optional[Dict[str, Any]] = None,
     ):
         """
-        Almacena resultado en caché.
+        Store result in cache.
 
         Args:
-            query: Query del usuario
-            context: Contexto del agente
-            result: Resultado a cachear (str, dict, etc.)
-            metadata: Metadata adicional (opcional)
+            query: User query
+            context: Agent context
+            result: Result to cache (str, dict, etc.)
+            metadata: Additional metadata (optional)
         """
-        context_hash = create_fingerprint(context)
-        embedding = self._embed(query)
-        timestamp = self._current_timestamp_ms()  # Milisegundos
+        try:
+            context_hash = create_fingerprint(context)
+            embedding = self._embed(query)
+            timestamp = self._current_timestamp_ms()
 
-        # Serializar result y metadata a bytes
-        result_bytes = serialize(result)
-        metadata_bytes = serialize(metadata) if metadata else b""
+            # Serialize result and metadata to bytes
+            result_bytes = serialize(result)
+            metadata_bytes = serialize(metadata) if metadata else b""
 
-        # Registrar tamaño en métricas
-        if self.metrics:
-            self.metrics.record_result_size(len(result_bytes))
+            # Track size in metrics
+            if self.metrics:
+                self.metrics.record_result_size(len(result_bytes))
 
-        data = [
-            {
-                "query_text": query,
-                "context_hash": context_hash,
-                "embedding": embedding,
-                "result": result_bytes,
-                "timestamp": timestamp,
-                "metadata": metadata_bytes,
-            }
-        ]
+            data = [
+                {
+                    "query_text": query,
+                    "context_hash": context_hash,
+                    "embedding": embedding,
+                    "result": result_bytes,
+                    "timestamp": timestamp,
+                    "metadata": metadata_bytes,
+                }
+            ]
 
-        self.table.add(data)
-        logger.debug(f"Stored | ctx_hash={context_hash[:8]} | query='{query[:50]}...'")
+            self.table.add(data)
+            logger.debug(
+                f"Stored | ctx_hash={context_hash[:8]} | query='{query[:50]}...'"
+            )
 
-        # Auto-crear índice si es necesario
-        if self.config.auto_create_index:
-            self._maybe_auto_create_index()
+            # Auto-create index if needed
+            if self.config.auto_create_index:
+                self._maybe_auto_create_index()
+
+        except Exception as e:
+            # DO NOT propagate error - app must continue without cache
+            logger.error(
+                f"Cache store failed: {e} | query='{query[:50]}...'", exc_info=True
+            )
+            if self.metrics:
+                self.metrics.store_errors += 1  # ← FIXED: removed hasattr check
 
     def check_availability(
         self,
@@ -319,17 +344,17 @@ class Memora:
         similarity_threshold: Optional[float] = None,
     ) -> AvailabilityCheck:
         """
-        Verifica disponibilidad sin recuperar datos completos.
+        Verify availability without retrieving full data.
 
-        Útil para planificadores que solo necesitan saber si existe cache.
+        Useful for planners that only need to know if cache exists.
 
         Args:
-            query: Query a verificar
-            context: Contexto
-            similarity_threshold: Override del threshold
+            query: Query to verify
+            context: Context
+            similarity_threshold: Override threshold
 
         Returns:
-            AvailabilityCheck con metadata mínima
+            AvailabilityCheck with minimal metadata
         """
         result = self.lookup(query, context, similarity_threshold)
 
@@ -354,40 +379,40 @@ class Memora:
         older_than_seconds: Optional[float] = None,
     ) -> int:
         """
-        Invalida entradas del caché.
+        Invalidate cache entries.
 
         Args:
-            query: Si especificado, invalida matches semánticos
-            context: Si especificado, invalida por context_hash
-            older_than_seconds: Si especificado, invalida entries antiguas (acepta decimales)
+            query: If specified, invalidate semantic matches
+            context: If specified, invalidate by context_hash
+            older_than_seconds: If specified, invalidate old entries (accepts decimals)
 
         Returns:
-            Número de entradas invalidadas
+            Number of invalidated entries
         """
         if query is None and context is None and older_than_seconds is None:
-            logger.warning("invalidate() llamado sin criterios, ignorando")
+            logger.warning("invalidate() called without criteria, ignoring")
             return 0
 
         before = self.table.count_rows()
 
-        # Invalidar por edad
+        # Invalidate by age
         if older_than_seconds is not None:
-            # Convertir segundos a milisegundos
+            # Convert seconds to milliseconds
             cutoff_ms = self._current_timestamp_ms() - int(older_than_seconds * 1000)
             return self._cleanup_by_timestamp(cutoff_ms, before)
 
-        # Invalidar por contexto
+        # Invalidate by context
         if context is not None:
             context_hash = create_fingerprint(context)
             return self._delete_by_hash(context_hash, before)
 
-        # Invalidar por query (semántico)
+        # Invalidate by query (semantic)
         if query is not None:
-            logger.warning("Invalidación semántica no implementada aún")
+            logger.warning("Semantic invalidation not implemented yet")
             return 0
 
     def _delete_by_hash(self, context_hash: str, before: int) -> int:
-        """Elimina entries con context_hash específico."""
+        """Delete entries with specific context_hash."""
         if self.config.db_uri == "memory://":
             arrow_table = self.table.to_arrow()
             mask = pc.not_equal(arrow_table["context_hash"], context_hash)
@@ -412,10 +437,10 @@ class Memora:
         return deleted
 
     def _cleanup_by_timestamp(self, cutoff_ms: int, before: int) -> int:
-        """Elimina entries con timestamp <= cutoff_ms (más antiguas que cutoff)."""
+        """Delete entries with timestamp <= cutoff_ms (older than cutoff)."""
         if self.config.db_uri == "memory://":
             arrow_table = self.table.to_arrow()
-            # Mantener solo entries MÁS NUEVAS que cutoff
+            # Keep only NEWER entries than cutoff
             mask = pc.greater(arrow_table["timestamp"], cutoff_ms)
             filtered = arrow_table.filter(mask)
 
@@ -426,7 +451,7 @@ class Memora:
                 mode="overwrite",
             )
         else:
-            # Borrar entries MÁS VIEJAS que cutoff
+            # Delete OLDER entries than cutoff
             self.table.delete(f"timestamp <= {cutoff_ms}")
             try:
                 self.table.compact_files()
@@ -440,13 +465,13 @@ class Memora:
 
     def cleanup_expired(self) -> int:
         """
-        Limpia entries expiradas según TTL configurado.
+        Clean expired entries according to configured TTL.
 
         Returns:
-            Número de entries eliminadas
+            Number of deleted entries
         """
         if self.config.ttl_seconds is None:
-            logger.warning("No TTL configurado, skip cleanup")
+            logger.warning("No TTL configured, skipping cleanup")
             return 0
 
         cutoff_ms = self._current_timestamp_ms() - int(self.config.ttl_seconds * 1000)
@@ -460,25 +485,25 @@ class Memora:
         num_sub_vectors: Optional[int] = None,
     ) -> None:
         """
-        Crea índice IVF-PQ para búsquedas vectoriales rápidas.
+        Create IVF-PQ index for fast vector searches.
 
-        IMPORTANTE: Solo útil con >256 entries. Para menos, usa ANN lineal.
+        IMPORTANT: Only useful with >256 entries. For less, use linear ANN.
 
         Args:
-            num_partitions: Número de clusters IVF (default: 256)
-            num_sub_vectors: Subvectores para PQ (default: embedding_dim // 4)
+            num_partitions: Number of IVF clusters (default: 256)
+            num_sub_vectors: Sub-vectors for PQ (default: embedding_dim // 4)
 
         Example:
             >>> memora = Memora(CacheConfig.for_production())
-            >>> # ... agregar >1000 entradas ...
+            >>> # ... add >1000 entries ...
             >>> memora.create_index(num_partitions=512)
         """
         row_count = self.table.count_rows()
 
         if row_count < 256:
             logger.warning(
-                f"Solo {row_count} entradas - índice no recomendado. "
-                "Se requieren al menos 256 entradas."
+                f"Only {row_count} entries - index not recommended. "
+                "At least 256 entries required."
             )
             return
 
@@ -486,7 +511,7 @@ class Memora:
             num_sub_vectors = max(1, self.embedding_dim // 4)
 
         logger.info(
-            f"Creando índice vectorial: partitions={num_partitions}, "
+            f"Creating vector index: partitions={num_partitions}, "
             f"sub_vectors={num_sub_vectors}, entries={row_count}"
         )
 
@@ -496,13 +521,13 @@ class Memora:
                 num_sub_vectors=num_sub_vectors,
             )
             self._index_created = True
-            logger.info("Índice creado exitosamente")
+            logger.info("Index created successfully")
         except Exception as e:
-            logger.error(f"Error al crear índice: {e}", exc_info=True)
+            logger.error(f"Error creating index: {e}", exc_info=True)
             raise
 
     def get_stats(self) -> Dict[str, Any]:
-        """Retorna estadísticas del caché."""
+        """Return cache statistics."""
         stats = {
             "total_entries": self.table.count_rows(),
             "threshold": self.config.similarity_threshold,
@@ -520,13 +545,13 @@ class Memora:
 
     def get_index_stats(self) -> Dict[str, Any]:
         """
-        Retorna estadísticas del índice vectorial.
+        Return vector index statistics.
 
         Returns:
-            Dict con metadata del índice (o None si no existe)
+            Dict with index metadata (or None if doesn't exist)
         """
         return {
             "has_index": self._index_created,
             "total_entries": self.table.count_rows(),
-            "note": "LanceDB no expone métricas detalladas del índice",
+            "note": "LanceDB doesn't expose detailed index metrics",
         }

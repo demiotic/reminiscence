@@ -16,8 +16,11 @@ class CacheMetrics:
     misses: int = 0
     total_latency_saved_ms: float = 0.0
 
-    # Nuevas métricas
     lookup_latencies_ms: List[float] = field(default_factory=list)
+
+    store_errors: int = 0
+    lookup_errors: int = 0
+
     result_sizes_bytes: List[int] = field(default_factory=list)
 
     # Límite de samples para evitar memory leak
@@ -89,6 +92,10 @@ class CacheMetrics:
                 "p95": round(latency_percentiles["p95"], 2),
                 "p99": round(latency_percentiles["p99"], 2),
                 "samples": len(self.lookup_latencies_ms),
+            },
+            "errors": {  # ← NUEVO
+                "lookup": self.lookup_errors,
+                "store": self.store_errors,
             },
             "result_size_bytes": {
                 "p50": int(size_percentiles["p50"]),

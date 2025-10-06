@@ -1,6 +1,6 @@
 [project]
 name = "memora-cache"
-version = "0.1.0"
+version = "0.1.1" # Incrementa la versión
 description = "Semantic caching for LLMs"
 authors = [{ name = "Juan José de las Heras Herrera" }]
 readme = "README.md"
@@ -21,8 +21,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["memora"]
-package-dir = { "memora" = "src" }
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

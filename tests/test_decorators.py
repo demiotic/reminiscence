@@ -1,7 +1,36 @@
 """Tests for memora.decorators."""
 
 import pytest
-from memora import create_cached_decorator, MemoraDecorator
+from memora import create_cached_decorator, MemoraDecorator, Memora, CacheConfig
+
+
+# ============================================================================
+# LOCAL SESSION FIXTURES (solo para este archivo)
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def memora_session_local():
+    """Memora instance for this test module only."""
+    config = CacheConfig(
+        db_uri="memory://",
+        similarity_threshold=0.75,
+        enable_metrics=True,
+        log_level="WARNING",
+    )
+    return Memora(config)
+
+
+@pytest.fixture
+def memora_memory(memora_session_local):
+    """Clean Memora for each test."""
+    memora_session_local.clear()
+    yield memora_session_local
+
+
+# ============================================================================
+# TESTS
+# ============================================================================
 
 
 class TestDecoratorBasics:
@@ -28,62 +57,90 @@ class TestSyncFunctions:
 
         call_count = 0
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         def compute(query: str, param: int):
             nonlocal call_count
             call_count += 1
             return f"result: {query} | {param}"
 
         # First call (executes function)
-        result1 = compute("test", param=42)
+        result1 = compute("What is machine learning?", param=42)
         assert call_count == 1
-        assert result1 == "result: test | 42"
+        assert "machine learning" in result1
 
         # Second call (uses cache)
-        result2 = compute("test", param=42)
+        result2 = compute("What is machine learning?", param=42)
         assert call_count == 1
         assert result2 == result1
 
-    def test_different_params_no_cache(self, memora_memory):
-        """Different params should execute function."""
+    def test_different_queries_no_cache(self, memora_memory):
+        """Different queries should execute function."""
         cached = create_cached_decorator(memora_memory)
 
         call_count = 0
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         def compute(query: str, param: int):
             nonlocal call_count
             call_count += 1
             return f"{query}-{param}"
 
-        result1 = compute("test", param=1)
-        result2 = compute("test", param=2)
+        result1 = compute("How does AI work?", param=1)
+        result2 = compute("What is deep learning?", param=1)
 
         assert call_count == 2
         assert result1 != result2
 
-    def test_extract_from_args(self, memora_memory):
-        """extract_from_args should include params in context."""
+    def test_strict_params(self, memora_memory):
+        """strict_params should enforce exact matching."""
         cached = create_cached_decorator(memora_memory)
 
         call_count = 0
 
-        @cached(context={"agent": "test"}, extract_from_args=True)
+        @cached(static_context={"agent": "test"}, strict_params=["model"])
         def compute(query: str, model: str, temperature: float):
             nonlocal call_count
             call_count += 1
             return f"{query}|{model}|{temperature}"
 
         # First call with model=gpt-4
-        result1 = compute("hello", model="gpt-4", temperature=0.7)
+        result1 = compute("hello world", model="gpt-4", temperature=0.7)
         assert call_count == 1
 
-        # Second call with model=claude (different context)
-        result2 = compute("hello", model="claude", temperature=0.7)
-        assert call_count == 2  # New call due to different model
+        # Second call with same query and model (cache hit)
+        result2 = compute("hello world", model="gpt-4", temperature=0.9)
+        assert call_count == 1  # Cache hit (temperature not strict)
+        assert result1 == result2
 
-        # Should be different because model is part of context
-        assert result1 != result2
+        # Third call with different model (cache miss)
+        result3 = compute("hello world", model="claude", temperature=0.7)
+        assert call_count == 2  # New call due to different model
+        assert result1 != result3
+
+    def test_auto_strict(self, memora_memory):
+        """auto_strict should detect non-string params."""
+        cached = create_cached_decorator(memora_memory)
+
+        call_count = 0
+
+        @cached(query_param="prompt", auto_strict=True)
+        def generate(prompt: str, temperature: float, max_tokens: int):
+            nonlocal call_count
+            call_count += 1
+            return f"{prompt}|{temperature}|{max_tokens}"
+
+        # First call
+        result1 = generate("hello world", temperature=0.7, max_tokens=100)
+        assert call_count == 1
+
+        # Same prompt, different params (cache miss - params are strict)
+        result2 = generate("hello world", temperature=0.8, max_tokens=100)
+        assert call_count == 2
+
+        # Same everything (cache hit)
+        result3 = generate("hello world", temperature=0.8, max_tokens=100)
+        assert call_count == 2
+        assert result2 == result3
 
     def test_custom_query_param(self, memora_memory):
         """Custom query_param should work."""
@@ -91,14 +148,14 @@ class TestSyncFunctions:
 
         call_count = 0
 
-        @cached(context={"agent": "test"}, query_param="prompt")
+        @cached(static_context={"agent": "test"}, query_param="prompt")
         def generate(prompt: str, style: str):
             nonlocal call_count
             call_count += 1
             return f"Generated: {prompt} in {style}"
 
-        result1 = generate("write poem", style="haiku")
-        result2 = generate("write poem", style="haiku")
+        result1 = generate("write a poem about nature", style="haiku")
+        result2 = generate("write a poem about nature", style="haiku")
 
         assert result1 == result2
         assert call_count == 1  # Second call hit cache
@@ -109,7 +166,7 @@ class TestSyncFunctions:
 
         with pytest.raises(ValueError, match="not found"):
 
-            @cached(context={"agent": "test"}, query_param="nonexistent")
+            @cached(static_context={"agent": "test"}, query_param="nonexistent")
             def compute(query: str):
                 return "result"
 
@@ -124,18 +181,18 @@ class TestAsyncFunctions:
 
         call_count = 0
 
-        @cached(context={"agent": "async_test"})
+        @cached(static_context={"agent": "async_test"})
         async def async_compute(query: str, param: int):
             nonlocal call_count
             call_count += 1
             return f"async result: {query} | {param}"
 
         # First call
-        result1 = await async_compute("test", param=42)
+        result1 = await async_compute("What is Python?", param=42)
         assert call_count == 1
 
         # Second call (cache)
-        result2 = await async_compute("test", param=42)
+        result2 = await async_compute("What is Python?", param=42)
         assert call_count == 1
         assert result2 == result1
 
@@ -146,14 +203,14 @@ class TestAsyncFunctions:
 
         call_count = 0
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         async def fetch_data(query: str, limit: int = 10):
             nonlocal call_count
             call_count += 1
             return f"fetched {limit} items for {query}"
 
-        result1 = await fetch_data("search", limit=10)
-        result2 = await fetch_data("search")  # Uses default
+        result1 = await fetch_data("search for articles", limit=10)
+        result2 = await fetch_data("search for articles")  # Uses default
 
         assert result1 == result2
         assert call_count == 1  # Cache hit
@@ -163,62 +220,73 @@ class TestContextHandling:
     """Context handling tests."""
 
     def test_static_context_only(self, memora_memory):
-        """Static context only (extract_from_args=False) - explicit opt-out."""
+        """Static context with no strict params - query is semantic key."""
         cached = create_cached_decorator(memora_memory)
 
         call_count = 0
 
-        @cached(context={"agent": "static", "version": "v1"}, extract_from_args=False)
+        @cached(static_context={"agent": "static", "version": "v1"})
         def compute(query: str, param: int):
             nonlocal call_count
             call_count += 1
-            return f"{query}-{param}"
+            return f"{query}-{call_count}"
 
-        result1 = compute("test", param=1)
-        result2 = compute("test", param=2)
+        # Same query, different param (cache hit because param not in context)
+        result1 = compute("Explain quantum computing", param=1)
+        result2 = compute("Explain quantum computing", param=2)
 
+        # Should be same result (cache hit - param doesn't affect caching)
         assert result1 == result2
+        assert result1 == "Explain quantum computing-1"
         assert call_count == 1
 
-    def test_static_overrides_runtime(self, memora_memory):
-        """Static context should override extracted params."""
+    def test_complex_strict_param(self, memora_memory):
+        """Complex types in strict_params should serialize correctly."""
         cached = create_cached_decorator(memora_memory)
 
         call_count = 0
 
-        @cached(context={"agent": "test", "version": "v2"}, extract_from_args=True)
-        def compute(query: str, version: str):
+        @cached(strict_params=["tools"])
+        def call_agent(query: str, tools: list):
             nonlocal call_count
             call_count += 1
-            return f"{query}-{version}"
+            return f"call {call_count}"
 
-        # Although we pass version="v1", static context has "v2"
-        result1 = compute("test", version="v1")
-        result2 = compute("test", version="v3")  # Different runtime version
+        tools1 = [{"name": "search"}, {"name": "calc"}]
+        tools2 = [{"name": "search"}, {"name": "calc"}]
+        tools3 = [{"name": "calc"}, {"name": "search"}]
 
-        # Same result because version="v2" (static) overrides both
-        assert result1 == result2
+        # Use a longer, more semantic query
+        query = "What is the weather today in San Francisco?"
+
+        result1 = call_agent(query, tools=tools1)
         assert call_count == 1
 
-    def test_extract_with_no_static(self, memora_memory):
-        """extract_from_args without static context should work."""
+        result2 = call_agent(query, tools=tools2)
+        assert call_count == 1  # Cache hit - same tools
+        assert result1 == result2
+
+        result3 = call_agent(query, tools=tools3)
+        assert call_count == 2  # Cache miss - different order
+        assert result1 != result3
+
+    def test_no_context_uses_function_name(self, memora_memory):
+        """No context should use __function__ as default."""
         cached = create_cached_decorator(memora_memory)
 
         call_count = 0
 
-        @cached(extract_from_args=True)  # No static context
-        def compute(query: str, model: str):
+        @cached()  # No context at all
+        def compute(query: str):
             nonlocal call_count
             call_count += 1
-            return f"{query}-{model}"
+            return f"result: {query}"
 
-        result1 = compute("test", model="gpt-4")
-        result2 = compute("test", model="gpt-4")
-        result3 = compute("test", model="claude")
+        result1 = compute("How does blockchain work?")
+        result2 = compute("How does blockchain work?")
 
-        assert result1 == result2  # Same context
-        assert result1 != result3  # Different context
-        assert call_count == 2  # 2 different contexts
+        assert result1 == result2
+        assert call_count == 1
 
 
 class TestComplexResults:
@@ -228,12 +296,12 @@ class TestComplexResults:
         """Dict results should be cached."""
         cached = create_cached_decorator(memora_memory)
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         def get_data(query: str):
             return {"status": "ok", "data": [1, 2, 3]}
 
-        result1 = get_data("test")
-        result2 = get_data("test")
+        result1 = get_data("Fetch user data")
+        result2 = get_data("Fetch user data")
 
         assert result1 == result2
         assert isinstance(result1, dict)
@@ -242,12 +310,12 @@ class TestComplexResults:
         """List results should be cached."""
         cached = create_cached_decorator(memora_memory)
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         def get_items(query: str):
             return [1, 2, 3, 4, 5]
 
-        result1 = get_items("test")
-        result2 = get_items("test")
+        result1 = get_items("Get list of items")
+        result2 = get_items("Get list of items")
 
         assert result1 == result2
         assert isinstance(result1, list)
@@ -256,15 +324,15 @@ class TestComplexResults:
         """Nested structures should be cached."""
         cached = create_cached_decorator(memora_memory)
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         def complex_data(query: str):
             return {
                 "users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
                 "meta": {"count": 2},
             }
 
-        result1 = complex_data("test")
-        result2 = complex_data("test")
+        result1 = complex_data("Get all users")
+        result2 = complex_data("Get all users")
 
         assert result1 == result2
 
@@ -278,14 +346,14 @@ class TestEdgeCases:
 
         call_count = 0
 
-        @cached()  # No context, no extract_from_args
+        @cached()
         def compute(query: str):
             nonlocal call_count
             call_count += 1
             return f"result: {query}"
 
-        result1 = compute("test")
-        result2 = compute("test")
+        result1 = compute("Explain neural networks")
+        result2 = compute("Explain neural networks")
 
         assert result1 == result2
         assert call_count == 1
@@ -294,7 +362,7 @@ class TestEdgeCases:
         """Function metadata should be preserved (functools.wraps)."""
         cached = create_cached_decorator(memora_memory)
 
-        @cached(context={"agent": "test"})
+        @cached(static_context={"agent": "test"})
         def my_function(query: str):
             """My docstring."""
             return "result"
@@ -303,20 +371,20 @@ class TestEdgeCases:
         assert my_function.__doc__ == "My docstring."
 
     def test_none_values_excluded(self, memora_memory):
-        """None values should be excluded from extracted context."""
+        """None values should be excluded from strict params."""
         cached = create_cached_decorator(memora_memory)
 
         call_count = 0
 
-        @cached(extract_from_args=True)
+        @cached(strict_params=["optional"])
         def compute(query: str, optional: str = None):
             nonlocal call_count
             call_count += 1
             return query
 
-        result1 = compute("test", optional=None)
-        result2 = compute("test")
+        result1 = compute("What is AI?", optional=None)
+        result2 = compute("What is AI?")
 
-        # Should hit cache (both have optional=None, excluded)
+        # Should hit cache (both have optional=None)
         assert result1 == result2
         assert call_count == 1

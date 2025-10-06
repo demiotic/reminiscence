@@ -14,11 +14,19 @@ class CacheEntry:
     """
 
     query_text: str
-    context_hash: str
-    embedding: pa.Array  # FixedSizeListArray of float32
+    context: Dict[str, Any]
+    embedding: pa.Array
     result: Any
     timestamp: int
+    similarity: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @property
+    def age_seconds(self) -> float:
+        """Calculate entry age in seconds."""
+        import time
+
+        return time.time() - self.timestamp
 
 
 @dataclass
@@ -32,13 +40,17 @@ class LookupResult:
         similarity: Similarity score (0-1)
         matched_query: Original query that matched
         age_seconds: Entry age in seconds
+        entry_id: ID of matched entry (for debugging)
+        context: Context of matched entry (for debugging)  # <- NEW
     """
 
     hit: bool
     result: Optional[Any] = None
     similarity: Optional[float] = None
     matched_query: Optional[str] = None
-    age_seconds: Optional[int] = None
+    age_seconds: Optional[float] = None
+    entry_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
 
     @property
     def is_hit(self) -> bool:
@@ -60,8 +72,8 @@ class AvailabilityCheck:
     """
 
     available: bool
-    age_seconds: Optional[int] = None
-    ttl_remaining_seconds: Optional[int] = None
+    age_seconds: Optional[float] = None
+    ttl_remaining_seconds: Optional[float] = None
     similarity: Optional[float] = None
 
     @property
@@ -104,4 +116,4 @@ class InvalidateRequest:
 
     query: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
-    older_than_seconds: Optional[int] = None
+    older_than_seconds: Optional[float] = None

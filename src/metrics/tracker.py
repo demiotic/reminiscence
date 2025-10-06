@@ -105,9 +105,11 @@ class CacheMetrics:
         }
 
     def reset(self):
-        """Reset all metrics."""
+        """Reset all metrics to zero."""
         self.hits = 0
         self.misses = 0
+        self.lookup_errors = 0
+        self.store_errors = 0
         self.total_latency_saved_ms = 0.0
         self.lookup_latencies_ms.clear()
         self.result_sizes_bytes.clear()

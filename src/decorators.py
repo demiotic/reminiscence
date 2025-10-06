@@ -1,12 +1,37 @@
-"""Decorator utilities for automatic caching."""
+"""Decorator utilities for automatic caching with hybrid matching."""
 
 import functools
 import inspect
-from typing import Any, Callable, Dict, Optional, TypeVar
+import json
+from typing import Any, Callable, Dict, Optional, TypeVar, List
 
 from .core import Memora
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _serialize_strict(value: Any) -> Any:
+    """
+    Serialize value for exact matching in context.
+
+    Converts complex types (lists, dicts, objects) to JSON strings
+    for consistent exact matching.
+
+    Args:
+        value: Value to serialize
+
+    Returns:
+        Serialized value (primitives as-is, complex types as JSON)
+    """
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    elif isinstance(value, (list, dict)):
+        return json.dumps(value, sort_keys=True)
+    else:
+        try:
+            return json.dumps(value, default=str, sort_keys=True)
+        except (TypeError, ValueError):
+            return repr(value)
 
 
 def create_cached_decorator(memora: Memora) -> Callable:
@@ -23,43 +48,47 @@ def create_cached_decorator(memora: Memora) -> Callable:
         >>> memora = Memora()
         >>> cached = create_cached_decorator(memora)
         >>>
-        >>> @cached(context={"model": "gpt-4"})
-        >>> def expensive_function(query: str):
-        >>>     return expensive_computation(query)
+        >>> @cached(query_param="prompt", strict_params=["model"])
+        >>> def call_llm(prompt: str, model: str):
+        >>>     return expensive_llm_call(prompt, model)
     """
 
     def decorator(
-        context: Optional[Dict[str, Any]] = None,
         query_param: str = "query",
-        extract_from_args: bool = True,
-        exclude_from_context: Optional[list] = None,
+        strict_params: Optional[List[str]] = None,
+        static_context: Optional[Dict[str, Any]] = None,
+        auto_strict: bool = False,
     ) -> Callable[[F], F]:
         """
-        Decorator to cache function results.
+        Decorator to cache function results with hybrid matching.
 
         Args:
-            context: Static context dict (optional). Merged with extracted params
-            query_param: Name of the query parameter (default: "query")
-            extract_from_args: If True, extract function parameters into context (default: True)
-            exclude_from_context: List of param names to exclude from extracted context
+            query_param: Name of the query parameter for semantic search
+            strict_params: Parameters that must match exactly (agent_id, tools, model, etc)
+            static_context: Static context dict (merged with extracted params)
+            auto_strict: If True, auto-detect non-string params as strict
 
         Returns:
             Decorated function
 
         Example:
-            >>> # Default: All params affect cache (safest)
-            >>> @cached(context={"agent": "sql"})
-            >>> def query_db(query: str, limit: int = 10):
-            >>>     return run_query(query, limit)
+            >>> # Semantic query + exact model/tools matching
+            >>> @cached(
+            ...     query_param="user_input",
+            ...     strict_params=["agent_id", "tools"],
+            ...     static_context={"model": "gpt-4"}
+            ... )
+            >>> def call_agent(user_input: str, agent_id: str, tools: List[Dict]):
+            ...     return expensive_call(user_input, agent_id, tools)
             >>>
-            >>> # Explicit opt-out: Ignore function params
-            >>> @cached(context={"agent": "sql"}, extract_from_args=False)
-            >>> def query_db(query: str, limit: int):
-            >>>     return run_query(query, 100)  # limit always 100
+            >>> # Auto-detect: non-strings become strict
+            >>> @cached(query_param="prompt", auto_strict=True)
+            >>> def ask_llm(prompt: str, temperature: float, max_tokens: int):
+            ...     # temperature and max_tokens auto-detected as strict
+            ...     return llm_call(prompt, temperature, max_tokens)
         """
 
         def decorator_func(func: F) -> F:
-            # Get function signature
             sig = inspect.signature(func)
             params = list(sig.parameters.keys())
 
@@ -70,17 +99,26 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     f"Available parameters: {params}"
                 )
 
-            # Default exclude list
-            if exclude_from_context is None:
-                default_exclude = [query_param, "self", "cls"]
+            # Determine strict params with correct precedence
+            if strict_params is not None:
+                # Explicit strict_params takes precedence
+                strict_list = strict_params
+            elif auto_strict:
+                # Auto-detect non-string params as strict
+                detected_strict = []
+                for name, param in sig.parameters.items():
+                    if name in {query_param, "self", "cls"}:
+                        continue
+                    ann = param.annotation
+                    if ann not in {str, "str", inspect.Parameter.empty}:
+                        detected_strict.append(name)
+                strict_list = detected_strict
             else:
-                default_exclude = list(exclude_from_context)
-                if query_param not in default_exclude:
-                    default_exclude.append(query_param)
+                # No strict params - pure semantic matching
+                strict_list = []
 
             @functools.wraps(func)
             def wrapper(*args, **kwargs) -> Any:
-                # Bind arguments to parameters
                 bound = sig.bind(*args, **kwargs)
                 bound.apply_defaults()
 
@@ -92,24 +130,18 @@ def create_cached_decorator(memora: Memora) -> Callable:
                         f"Must provide a value for '{query_param}'."
                     )
 
-                # Build cache context
+                # Build cache context (exact matching)
                 cache_context = {}
 
-                # Add static context (if provided)
-                if context is not None:
-                    cache_context.update(context)
+                # Add static context first
+                if static_context is not None:
+                    cache_context.update(static_context)
 
-                # Extract from args (if enabled)
-                if extract_from_args:
-                    extracted = {
-                        param: value
-                        for param, value in bound.arguments.items()
-                        if param not in default_exclude and value is not None
-                    }
-                    # Static context overrides extracted context
-                    for key, value in extracted.items():
-                        if key not in cache_context:
-                            cache_context[key] = value
+                # Extract strict params
+                for param in strict_list:
+                    value = bound.arguments.get(param)
+                    if value is not None:
+                        cache_context[param] = _serialize_strict(value)
 
                 # If no context at all, add function name for disambiguation
                 if not cache_context:
@@ -134,7 +166,6 @@ def create_cached_decorator(memora: Memora) -> Callable:
 
                 @functools.wraps(func)
                 async def async_wrapper(*args, **kwargs) -> Any:
-                    # Bind arguments to parameters
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
 
@@ -149,18 +180,13 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     # Build cache context (same logic as sync)
                     cache_context = {}
 
-                    if context is not None:
-                        cache_context.update(context)
+                    if static_context is not None:
+                        cache_context.update(static_context)
 
-                    if extract_from_args:
-                        extracted = {
-                            param: value
-                            for param, value in bound.arguments.items()
-                            if param not in default_exclude and value is not None
-                        }
-                        for key, value in extracted.items():
-                            if key not in cache_context:
-                                cache_context[key] = value
+                    for param in strict_list:
+                        value = bound.arguments.get(param)
+                        if value is not None:
+                            cache_context[param] = _serialize_strict(value)
 
                     if not cache_context:
                         cache_context = {"__function__": func.__name__}
@@ -180,6 +206,7 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     return output
 
                 return async_wrapper
+
             return wrapper
 
         return decorator_func
@@ -195,9 +222,12 @@ class MemoraDecorator:
 
     Example:
         >>> decorator = MemoraDecorator(memora)
-        >>> @decorator.cached(context={"model": "gpt-4"})
-        >>> def my_function(query: str):
-        >>>     return expensive_computation(query)
+        >>> @decorator.cached(
+        ...     query_param="prompt",
+        ...     strict_params=["model", "agent_id"]
+        ... )
+        >>> def my_function(prompt: str, model: str, agent_id: str):
+        >>>     return expensive_computation(prompt, model, agent_id)
     """
 
     def __init__(self, memora: Memora):
@@ -212,26 +242,26 @@ class MemoraDecorator:
 
     def cached(
         self,
-        context: Optional[Dict[str, Any]] = None,
         query_param: str = "query",
-        extract_from_args: bool = False,
-        exclude_from_context: Optional[list] = None,
+        strict_params: Optional[List[str]] = None,
+        static_context: Optional[Dict[str, Any]] = None,
+        auto_strict: bool = False,
     ) -> Callable[[F], F]:
         """
-        Create a cached decorator with specified options.
+        Create a cached decorator with hybrid matching.
 
         Args:
-            context: Static context dict (optional)
-            query_param: Name of the query parameter (default: "query")
-            extract_from_args: If True, extract function parameters into context
-            exclude_from_context: List of param names to exclude from extracted context
+            query_param: Name of the query parameter for semantic search
+            strict_params: Parameters that must match exactly
+            static_context: Static context dict
+            auto_strict: Auto-detect non-string params as strict
 
         Returns:
             Decorator function
         """
         return self._cached_decorator(
-            context=context,
             query_param=query_param,
-            extract_from_args=extract_from_args,
-            exclude_from_context=exclude_from_context,
+            strict_params=strict_params,
+            static_context=static_context,
+            auto_strict=auto_strict,
         )

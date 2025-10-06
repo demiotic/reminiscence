@@ -28,21 +28,7 @@ class CacheConfig:
     - MEMORA_INDEX_THRESHOLD_ENTRIES: Min entries for index
     - MEMORA_INDEX_NUM_PARTITIONS: IVF partitions
     - MEMORA_MAX_ENTRIES: Max cache entries
-    - MEMORA_MAX_RESULT_SIZE_BYTES: Max payload size
     - MEMORA_EVICTION_POLICY: Eviction policy (fifo/lru)
-
-    Example:
-        >>> # Local dev (uses defaults)
-        >>> config = CacheConfig.from_env()
-        >>> memora = Memora(config)
-        >>>
-        >>> # Production (reads MEMORA_* env vars)
-        >>> config = CacheConfig.from_env()
-        >>> memora = Memora(config)
-        >>>
-        >>> # Custom (override specific values)
-        >>> config = CacheConfig(db_uri="./custom.db", max_entries=5000)
-        >>> memora = Memora(config)
     """
 
     # Model - portable defaults for local testing
@@ -71,7 +57,6 @@ class CacheConfig:
 
     # Limits - small for local testing
     max_entries: Optional[int] = 1_000
-    max_result_size_bytes: int = 5_000_000  # 5MB for local dev
     eviction_policy: str = "fifo"
 
     @classmethod
@@ -83,10 +68,6 @@ class CacheConfig:
 
         Returns:
             CacheConfig instance
-
-        Example:
-            >>> config = CacheConfig.from_env()
-            >>> memora = Memora(config)
         """
 
         defaults = cls()
@@ -152,11 +133,6 @@ class CacheConfig:
                 os.getenv(
                     "MEMORA_MAX_ENTRIES",
                     str(defaults.max_entries) if defaults.max_entries else "none",
-                )
-            ),
-            max_result_size_bytes=int(
-                os.getenv(
-                    "MEMORA_MAX_RESULT_SIZE_BYTES", str(defaults.max_result_size_bytes)
                 )
             ),
             eviction_policy=os.getenv(

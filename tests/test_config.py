@@ -21,8 +21,7 @@ class TestConfigDefaults:
         assert config.ttl_seconds is None
         assert config.log_level == "INFO"
         assert config.json_logs is False
-        assert config.max_entries == 1_000  # Changed from 10_000
-        assert config.max_result_size_bytes == 5_000_000  # Changed from 10_000_000
+        assert config.max_entries == 1_000
         assert config.eviction_policy == "fifo"
 
 
@@ -49,7 +48,6 @@ class TestConfigLoad:
         assert config.log_level == "INFO"
         assert config.json_logs is False
         assert config.max_entries == 1_000
-        assert config.max_result_size_bytes == 5_000_000
         assert config.eviction_policy == "fifo"
 
     def test_load_with_json_logs_enabled(self, monkeypatch):
@@ -73,11 +71,10 @@ class TestConfigLoad:
         monkeypatch.setenv("MEMORA_ENABLE_METRICS", "false")
         monkeypatch.setenv("MEMORA_TTL_SECONDS", "7200")
         monkeypatch.setenv("MEMORA_LOG_LEVEL", "debug")
-        monkeypatch.setenv("MEMORA_JSON_LOGS", "1")  # Test "1" as true
+        monkeypatch.setenv("MEMORA_JSON_LOGS", "1")
         monkeypatch.setenv("MEMORA_MAX_ENTRIES", "50000")
-        monkeypatch.setenv("MEMORA_MAX_RESULT_SIZE_BYTES", "5000000")
         monkeypatch.setenv("MEMORA_EVICTION_POLICY", "lru")
-        monkeypatch.setenv("MEMORA_AUTO_CREATE_INDEX", "yes")  # Test "yes" as true
+        monkeypatch.setenv("MEMORA_AUTO_CREATE_INDEX", "yes")
 
         config = CacheConfig.load()
 
@@ -89,10 +86,9 @@ class TestConfigLoad:
         assert config.table_name == "custom_cache"
         assert config.enable_metrics is False
         assert config.ttl_seconds == 7200
-        assert config.log_level == "DEBUG"  # Should be uppercased
+        assert config.log_level == "DEBUG"
         assert config.json_logs is True
         assert config.max_entries == 50_000
-        assert config.max_result_size_bytes == 5_000_000
         assert config.eviction_policy == "lru"
         assert config.auto_create_index is True
 

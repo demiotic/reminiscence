@@ -1,36 +1,132 @@
-"""Fixtures compartidos para tests de Memora."""
+"""Shared fixtures for Memora tests."""
 
 import pytest
 import tempfile
 import shutil
+import structlog
+import logging
 from pathlib import Path
 
 from memora import Memora, CacheConfig
+from memora.cache import CacheOperations
+from memora.embeddings import create_embedder
+from memora.storage import create_storage_backend
+from memora.eviction import create_eviction_policy
+from memora.metrics import CacheMetrics
+
+
+# ============================================================================
+# STRUCTLOG RESET FIXTURES
+# ============================================================================
+
+
+@pytest.fixture
+def reset_config():
+    """Reset configuration singleton to force reload."""
+    from memora.config import CacheConfig
+
+    if hasattr(CacheConfig, "_instance"):
+        delattr(CacheConfig, "_instance")
+    yield
+
+
+@pytest.fixture
+def reset_structlog():
+    """
+    Reset structlog configuration before and after each test.
+
+    This ensures complete isolation between tests that use different
+    logging configurations (JSON vs text).
+    """
+    # Reset before test
+    structlog.reset_defaults()
+
+    # Clear any cached loggers
+    structlog._config._CONFIG = structlog._config._Configuration()
+
+    # Reset standard logging
+    logging.root.handlers = []
+    logging.root.setLevel(logging.WARNING)
+
+    yield
+
+    # Reset after test
+    structlog.reset_defaults()
+    structlog._config._CONFIG = structlog._config._Configuration()
+    logging.root.handlers = []
+
+
+@pytest.fixture
+def json_logging_env(reset_structlog, reset_config, monkeypatch):
+    """
+    Configure environment for JSON logging tests.
+
+    Sets MEMORA_JSON_LOGS=true and MEMORA_LOG_LEVEL=INFO
+    before any code runs, ensuring proper structlog configuration.
+    """
+    monkeypatch.setenv("MEMORA_JSON_LOGS", "true")
+    monkeypatch.setenv("MEMORA_LOG_LEVEL", "INFO")
+
+    # Force configuration reload
+    from memora.utils.logging import configure_logging
+
+    configure_logging(log_level="INFO", json_logs=True)
+
+    yield
+
+
+@pytest.fixture
+def text_logging_env(reset_structlog, reset_config, monkeypatch):
+    """
+    Configure environment for text logging tests.
+
+    Sets MEMORA_JSON_LOGS=false and MEMORA_LOG_LEVEL=INFO
+    before any code runs, ensuring proper structlog configuration.
+    """
+    monkeypatch.setenv("MEMORA_JSON_LOGS", "false")
+    monkeypatch.setenv("MEMORA_LOG_LEVEL", "INFO")
+
+    # Force configuration reload
+    from memora.utils.logging import configure_logging
+
+    configure_logging(log_level="INFO", json_logs=False)
+
+    yield
+
+
+# ============================================================================
+# DIRECTORY FIXTURES
+# ============================================================================
 
 
 @pytest.fixture
 def temp_cache_dir():
-    """Crea directorio temporal para caché en disco."""
+    """Create temporary directory for disk cache."""
     temp_dir = tempfile.mkdtemp()
     yield temp_dir
     shutil.rmtree(temp_dir)
 
 
+# ============================================================================
+# CONFIG FIXTURES
+# ============================================================================
+
+
 @pytest.fixture
 def memory_config():
-    """Configuración para caché en memoria (rápido para tests)."""
+    """Configuration for in-memory cache (fast for tests)."""
     return CacheConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,
-        log_level="WARNING",  # Silenciar logs en tests
+        log_level="WARNING",
         ttl_seconds=None,
     )
 
 
 @pytest.fixture
 def disk_config(temp_cache_dir):
-    """Configuración para caché en disco."""
+    """Configuration for disk-based cache."""
     return CacheConfig(
         db_uri=str(Path(temp_cache_dir) / "test_cache.db"),
         similarity_threshold=0.75,
@@ -40,35 +136,128 @@ def disk_config(temp_cache_dir):
     )
 
 
+# ============================================================================
+# MEMORA FIXTURES - High-level API
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def memora_memory_session():
+    """
+    Shared in-memory Memora instance (loaded once per session).
+
+    Uses scope="session" to load the embeddings model only once
+    and reuse it across all tests, improving performance.
+    """
+    config = CacheConfig(
+        db_uri="memory://",
+        similarity_threshold=0.75,
+        enable_metrics=True,
+        log_level="WARNING",
+        ttl_seconds=None,
+    )
+    return Memora(config)
+
+
 @pytest.fixture
-def memora_memory(memory_config):
-    """Instancia de Memora en memoria."""
-    return Memora(memory_config)
+def memora_memory(memora_memory_session):
+    """
+    Clean in-memory Memora instance for each test.
+
+    Reuses the global session instance but clears cache and resets
+    metrics before each test for speed.
+    """
+    # Clear cache and reset metrics before each test
+    memora_memory_session.clear()
+    yield memora_memory_session
 
 
 @pytest.fixture
 def memora_disk(disk_config):
-    """Instancia de Memora en disco."""
+    """Disk-based Memora instance (new for each test)."""
     return Memora(disk_config)
+
+
+# ============================================================================
+# CACHE OPERATIONS FIXTURES - Low-level API
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def cache_ops_session():
+    """
+    Shared CacheOperations instance for entire test module.
+
+    More lightweight than Memora for testing core cache logic.
+    The model is loaded once per module for performance.
+
+    Use this when you need direct access to CacheOperations internals
+    or want to test with custom configurations.
+    """
+    config = CacheConfig(
+        db_uri="memory://",
+        similarity_threshold=0.75,
+        enable_metrics=True,
+        log_level="WARNING",
+    )
+
+    embedder = create_embedder(config)
+    storage = create_storage_backend(config, embedder.embedding_dim)
+    eviction = create_eviction_policy(config.eviction_policy)
+    metrics = CacheMetrics()
+
+    return CacheOperations(
+        storage=storage,
+        embedder=embedder,
+        eviction=eviction,
+        config=config,
+        metrics=metrics,
+    )
+
+
+@pytest.fixture
+def cache_ops(cache_ops_session):
+    """
+    Clean CacheOperations instance for each test.
+
+    Reuses the same session instance but clears storage and metrics
+    before each test for isolation.
+
+    This is faster than creating a new instance because the embedding
+    model is already loaded.
+    """
+    # Clear storage and reset metrics
+    cache_ops_session.storage.clear()
+    cache_ops_session.metrics.reset()
+    yield cache_ops_session
+
+
+# ============================================================================
+# TEST DATA FIXTURES
+# ============================================================================
 
 
 @pytest.fixture
 def sample_queries():
-    """Queries de prueba con diferentes niveles de similitud."""
+    """Test queries with different similarity levels."""
     return {
-        "identical": ["¿Qué es Python?", "¿Qué es Python?"],
+        "identical": ["What is Python?", "What is Python?"],
         "similar": [
-            "¿Qué es Python?",
-            "Explica qué es Python",
-            "¿Puedes describir Python?",
+            "What is Python?",
+            "Explain me Python",
+            "Can you describe Python?",
         ],
-        "different": ["¿Qué es Python?", "¿Cómo instalo Node.js?", "Receta de paella"],
+        "different": [
+            "What is Python?",
+            "How can I install Cargo?",
+            "Give me a cheese cake recipe",
+        ],
     }
 
 
 @pytest.fixture
 def sample_contexts():
-    """Contextos de prueba."""
+    """Test contexts for different agents."""
     return {
         "llm_gpt4": {"agent": "llm", "model": "gpt-4"},
         "llm_claude": {"agent": "llm", "model": "claude"},

@@ -1,103 +1,176 @@
-from memora.utils import (
-    content_hash,
-    short_hash,
-)
+"""Integration tests for end-to-end scenarios."""
+
+import pytest
+import time
+
+from memora import Memora, CacheConfig
 
 
-class TestContentHashing:
-    """Tests for utils/hashing.py."""
+class TestEndToEnd:
+    """End-to-end workflow tests."""
 
-    def test_content_hash_basic(self):
-        """Basic content hash should generate valid hash."""
-        hash_val = content_hash(
-            agent_id="test_agent",
-            agent_version="v1.0.0",
-            config={"model": "gpt-4"},
-            input_data="test input",
+    def test_complete_workflow(self):
+        """Test complete cache workflow with exact matches."""
+        config = CacheConfig(
+            db_uri="memory://",
+            similarity_threshold=0.75,
+            enable_metrics=True,
+            log_level="WARNING",
+        )
+        cache = Memora(config)
+
+        # 1. Empty cache
+        stats = cache.get_stats()
+        assert stats["total_entries"] == 0
+
+        # 2. Store multiple entries
+        for i in range(5):
+            cache.store(f"query {i}", {"agent": "test"}, f"result {i}")
+
+        # 3. Lookup exact
+        result = cache.lookup("query 0", {"agent": "test"})
+        assert result.is_hit
+        assert result.result == "result 0"
+
+        # 4. Check stats
+        stats = cache.get_stats()
+        assert stats["total_entries"] == 5
+        assert stats["hits"] >= 1
+
+        # 5. Invalidate
+        deleted = cache.invalidate(context={"agent": "test"})
+        assert deleted == 5
+        assert cache.backend.count() == 0
+
+    def test_semantic_similarity_workflow(self):
+        """Test semantic similarity matching."""
+        config = CacheConfig(
+            db_uri="memory://",
+            similarity_threshold=0.70,
+            log_level="WARNING",
+        )
+        cache = Memora(config)
+
+        # Store detailed query
+        cache.store(
+            "What is machine learning and how does it work?",
+            {"agent": "qa"},
+            "Machine learning explanation",
         )
 
-        assert isinstance(hash_val, str)
-        assert len(hash_val) == 64
+        # Lookup with similar wording
+        result = cache.lookup("Explain how machine learning works", {"agent": "qa"})
 
-    def test_content_hash_deterministic(self):
-        """Same parameters should generate same hash."""
-        params = {
-            "agent_id": "test",
-            "agent_version": "v1",
-            "config": {"param": "value"},
-            "input_data": "input",
-        }
+        assert result.is_hit
+        assert result.result == "Machine learning explanation"
+        assert result.similarity > 0.70
 
-        hash1 = content_hash(**params)
-        hash2 = content_hash(**params)
+    def test_multi_context_workflow(self):
+        """Test with multiple contexts."""
+        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
-        assert hash1 == hash2
+        # Store with different contexts
+        contexts = [
+            {"agent": "sql", "db": "prod"},
+            {"agent": "sql", "db": "dev"},
+            {"agent": "api", "service": "payments"},
+        ]
 
-    def test_content_hash_different_version(self):
-        """Different version should change hash."""
-        base_params = {
-            "agent_id": "test",
-            "config": {"param": "value"},
-            "input_data": "input",
-        }
+        for ctx in contexts:
+            cache.store("test query", ctx, f"result for {ctx}")
 
-        hash1 = content_hash(**base_params, agent_version="v1")
-        hash2 = content_hash(**base_params, agent_version="v2")
+        # Lookup should respect context
+        for ctx in contexts:
+            result = cache.lookup("test query", ctx)
+            assert result.is_hit
+            assert str(ctx) in str(result.result)
 
-        assert hash1 != hash2
+    def test_persistence_workflow(self, temp_cache_dir):
+        """Test persistence across instances."""
+        from pathlib import Path
 
-    def test_content_hash_different_input(self):
-        """Different input should change hash."""
-        base_params = {"agent_id": "test", "agent_version": "v1", "config": {}}
+        db_path = str(Path(temp_cache_dir) / "persist.db")
 
-        hash1 = content_hash(**base_params, input_data="input1")
-        hash2 = content_hash(**base_params, input_data="input2")
+        # First instance - store data
+        config1 = CacheConfig(db_uri=db_path, log_level="WARNING")
+        cache1 = Memora(config1)
+        cache1.store("persistent query", {"agent": "test"}, "persistent result")
 
-        assert hash1 != hash2
+        # Second instance - should find data
+        config2 = CacheConfig(db_uri=db_path, log_level="WARNING")
+        cache2 = Memora(config2)
 
-    def test_content_hash_with_dependencies(self):
-        """Hash with dependencies should include them."""
-        hash1 = content_hash(
-            agent_id="test", agent_version="v1", config={}, input_data="input"
+        result = cache2.lookup("persistent query", {"agent": "test"})
+        assert result.is_hit
+        assert result.result == "persistent result"
+
+    def test_ttl_workflow(self):
+        """Test TTL expiration workflow."""
+        config = CacheConfig(
+            db_uri="memory://",
+            ttl_seconds=1,
+            log_level="WARNING",
         )
+        cache = Memora(config)
 
-        hash2 = content_hash(
-            agent_id="test",
-            agent_version="v1",
-            config={},
-            input_data="input",
-            dependencies=["dep1", "dep2"],
+        # Store entry
+        cache.store("expiring query", {"agent": "test"}, "temporary result")
+
+        # Should hit immediately
+        result = cache.lookup("expiring query", {"agent": "test"})
+        assert result.is_hit
+
+        # Wait for expiration
+        time.sleep(1.2)
+
+        # Should miss after TTL
+        result = cache.lookup("expiring query", {"agent": "test"})
+        assert result.is_miss
+
+    def test_decorator_workflow(self):
+        """Test decorator integration."""
+        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
+
+        call_count = 0
+
+        @cache.cached(static_context={"function": "expensive"})
+        def expensive_function(query: str):
+            nonlocal call_count
+            call_count += 1
+            return f"Computed: {query}"
+
+        # First call
+        result1 = expensive_function("compute this")
+        assert call_count == 1
+
+        # Second call (cache hit)
+        result2 = expensive_function("compute this")
+        assert call_count == 1
+        assert result1 == result2
+
+    def test_eviction_workflow(self):
+        """Test eviction policy workflow."""
+        config = CacheConfig(
+            db_uri="memory://",
+            max_entries=3,
+            eviction_policy="fifo",
+            log_level="WARNING",
         )
+        cache = Memora(config)
 
-        assert hash1 != hash2
+        # Store 4 entries
+        for i in range(4):
+            cache.store(f"query {i}", {"agent": "test"}, f"result {i}")
+            time.sleep(0.01)
 
-    def test_content_hash_dependencies_order(self):
-        """Order of dependencies should not affect hash."""
-        base_params = {
-            "agent_id": "test",
-            "agent_version": "v1",
-            "config": {},
-            "input_data": "input",
-        }
+        # Should have evicted oldest
+        assert cache.backend.count() == 3
 
-        hash1 = content_hash(**base_params, dependencies=["dep1", "dep2"])
-        hash2 = content_hash(**base_params, dependencies=["dep2", "dep1"])
+        # First entry should be gone
+        result = cache.lookup("query 0", {"agent": "test"})
+        assert result.is_miss
 
-        assert hash1 == hash2  # Sorted internally
-
-    def test_short_hash(self):
-        """Short hash should return truncated version."""
-        full_hash = "a" * 64
-
-        short = short_hash(full_hash, length=8)
-
-        assert len(short) == 8
-        assert short == "aaaaaaaa"
-
-    def test_short_hash_default(self):
-        """Short hash with default length should be 12 chars."""
-        full_hash = "b" * 64
-
-        short = short_hash(full_hash)
-
-        assert len(short) == 12
+        # Newer entries should exist
+        for i in range(1, 4):
+            result = cache.lookup(f"query {i}", {"agent": "test"})
+            assert result.is_hit

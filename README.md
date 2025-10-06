@@ -417,6 +417,27 @@ stats = cache.get_index_stats()
 - **Without index**: 10-50ms lookup (<1K entries)
 - **With index**: 5-15ms lookup (>10K entries)
 
+### Background Cleanup Scheduler
+
+Automatically clean expired entries in the background:
+```python
+from memora import Memora, CacheConfig
+
+config = CacheConfig(
+    ttl_seconds=3600,  # 1 hour TTL
+    cleanup_interval_seconds=1800  # Cleanup every 30 minutes
+)
+
+cache = Memora(config)
+
+# Start automatic cleanup
+cache.start_scheduler()
+
+# ... use cache normally ...
+
+# Stop when done
+cache.stop_scheduler()
+
 ### Metrics and Observability
 
 ```python
@@ -622,7 +643,7 @@ Contributions welcome! Please:
 - [x] ONNX optimization
 
 ### v0.2.0 (Planned)
-- [ ] Background cleanup scheduler
+- [x] Background cleanup scheduler
 - [ ] Prometheus metrics exporter
 - [ ] S3/GCS remote storage
 - [ ] Distributed caching

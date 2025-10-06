@@ -10,6 +10,7 @@ from .storage import create_storage_backend
 from .eviction import create_eviction_policy
 from .cache import CacheOperations
 from .metrics import CacheMetrics
+from .scheduler import CleanupScheduler
 from .utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -31,6 +32,8 @@ class Memora:
     - get_stats(): Return cache statistics
     - health_check(): Perform health checks
     - cached(): Decorator for automatic caching
+    - start_scheduler(): Start background cleanup
+    - stop_scheduler(): Stop background cleanup
 
     Example:
         >>> cache = Memora()
@@ -42,6 +45,11 @@ class Memora:
         ... else:
         ...     data = expensive_llm_call()
         ...     cache.store("What is ML?", {"agent": "qa", "model": "gpt-4"}, data)
+        >>>
+        >>> # With automatic background cleanup
+        >>> cache.start_scheduler(interval_seconds=3600)  # Cleanup every hour
+        >>> # ... use cache ...
+        >>> cache.stop_scheduler()
         >>>
         >>> # Decorator usage
         >>> @cache.cached(query_param="question", strict_params=["model"])
@@ -82,6 +90,9 @@ class Memora:
             config=self.config,
             metrics=self.metrics,
         )
+
+        # Background scheduler (optional)
+        self.scheduler: Optional[CleanupScheduler] = None
 
         logger.info(
             "memora_ready",
@@ -206,6 +217,92 @@ class Memora:
         )
 
     # ====================
+    # SCHEDULER
+    # ====================
+
+    def start_scheduler(
+        self,
+        interval_seconds: Optional[int] = None,
+        initial_delay_seconds: int = 60,
+    ):
+        """
+        Start background cleanup scheduler.
+
+        Args:
+            interval_seconds: Time between cleanup runs (default: from config or 3600)
+            initial_delay_seconds: Delay before first cleanup (default: 60)
+
+        Example:
+            >>> cache = Memora()
+            >>> cache.start_scheduler(interval_seconds=1800)  # Cleanup every 30 minutes
+            >>> # ... use cache ...
+            >>> cache.stop_scheduler()
+        """
+        if self.scheduler and self.scheduler.is_running():
+            logger.warning("scheduler_already_running")
+            return
+
+        if self.config.ttl_seconds is None:
+            logger.warning(
+                "scheduler_started_without_ttl",
+                message="Scheduler will run but no TTL configured - nothing to cleanup",
+            )
+
+        # Use config value or provided value
+        interval = interval_seconds or getattr(
+            self.config, "cleanup_interval_seconds", 3600
+        )
+
+        self.scheduler = CleanupScheduler(
+            cleanup_func=self.cleanup_expired,
+            interval_seconds=interval,
+            initial_delay_seconds=initial_delay_seconds,
+        )
+
+        self.scheduler.start()
+
+        logger.info(
+            "scheduler_started",
+            interval_seconds=interval,
+            initial_delay_seconds=initial_delay_seconds,
+            ttl_seconds=self.config.ttl_seconds,
+        )
+
+    def stop_scheduler(self, timeout: float = 5.0):
+        """
+        Stop background cleanup scheduler.
+
+        Args:
+            timeout: Maximum time to wait for scheduler to stop (seconds)
+
+        Example:
+            >>> cache.stop_scheduler()
+        """
+        if self.scheduler is None:
+            logger.warning("scheduler_not_initialized")
+            return
+
+        self.scheduler.stop(timeout=timeout)
+
+    def get_scheduler_stats(self) -> Optional[Dict[str, Any]]:
+        """
+        Get scheduler statistics.
+
+        Returns:
+            Dict with scheduler stats or None if scheduler not started
+
+        Example:
+            >>> stats = cache.get_scheduler_stats()
+            >>> if stats:
+            ...     print(f"Total cleanups: {stats['total_runs']}")
+            ...     print(f"Total deleted: {stats['total_deleted']}")
+        """
+        if self.scheduler is None:
+            return None
+
+        return self.scheduler.get_stats()
+
+    # ====================
     # INDEX & STATS
     # ====================
 
@@ -252,6 +349,10 @@ class Memora:
         if self.metrics:
             stats.update(self.metrics.report())
 
+        # Add scheduler stats if available
+        if self.scheduler:
+            stats["scheduler"] = self.scheduler.get_stats()
+
         return stats
 
     def get_index_stats(self) -> Dict[str, Any]:
@@ -272,6 +373,7 @@ class Memora:
             "embedding": {"ok": True, "error": None},
             "database": {"ok": True, "error": None},
             "error_rate": {"ok": True, "details": "No metrics available"},
+            "scheduler": {"ok": True, "details": "Not running"},
         }
 
         # Test embedding
@@ -324,6 +426,25 @@ class Memora:
                     f"Insufficient data: {total_requests} requests"
                 )
 
+        # Check scheduler
+        if self.scheduler:
+            if self.scheduler.is_running():
+                scheduler_stats = self.scheduler.get_stats()
+                if scheduler_stats["errors"] > 0:
+                    checks["scheduler"]["ok"] = False
+                    checks["scheduler"]["details"] = (
+                        f"Scheduler running with {scheduler_stats['errors']} errors"
+                    )
+                else:
+                    checks["scheduler"]["ok"] = True
+                    checks["scheduler"]["details"] = (
+                        f"Running (runs: {scheduler_stats['total_runs']}, "
+                        f"deleted: {scheduler_stats['total_deleted']})"
+                    )
+            else:
+                checks["scheduler"]["ok"] = False
+                checks["scheduler"]["details"] = "Scheduler initialized but not running"
+
         # Overall status
         all_checks_ok = all(check["ok"] for check in checks.values())
         status = "healthy" if all_checks_ok else "unhealthy"
@@ -371,3 +492,17 @@ class Memora:
             static_context=static_context,
             auto_strict=auto_strict,
         )
+
+    # ====================
+    # CONTEXT MANAGER
+    # ====================
+
+    def __enter__(self):
+        """Context manager support - optionally starts scheduler."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager support - stops scheduler if running."""
+        if self.scheduler and self.scheduler.is_running():
+            self.stop_scheduler()
+        return False

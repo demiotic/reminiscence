@@ -28,7 +28,9 @@ class CacheConfig:
     - MEMORA_INDEX_THRESHOLD_ENTRIES: Min entries for index
     - MEMORA_INDEX_NUM_PARTITIONS: IVF partitions
     - MEMORA_MAX_ENTRIES: Max cache entries
-    - MEMORA_EVICTION_POLICY: Eviction policy (fifo/lru)
+    - MEMORA_EVICTION_POLICY: Eviction policy (fifo/lru/lfu)
+    - MEMORA_CLEANUP_INTERVAL_SECONDS: Interval for background cleanup (None = disabled)
+    - MEMORA_CLEANUP_INITIAL_DELAY: Initial delay before first cleanup
     """
 
     # Model - portable defaults for local testing
@@ -58,6 +60,10 @@ class CacheConfig:
     # Limits - small for local testing
     max_entries: Optional[int] = 1_000
     eviction_policy: str = "fifo"
+
+    # Scheduler - disabled by default
+    cleanup_interval_seconds: Optional[int] = None  # None = no auto cleanup
+    cleanup_initial_delay: int = 60  # seconds
 
     @classmethod
     def load(cls) -> "CacheConfig":
@@ -138,4 +144,19 @@ class CacheConfig:
             eviction_policy=os.getenv(
                 "MEMORA_EVICTION_POLICY", defaults.eviction_policy
             ).lower(),
+            # Scheduler
+            cleanup_interval_seconds=parse_int_or_none(
+                os.getenv(
+                    "MEMORA_CLEANUP_INTERVAL_SECONDS",
+                    str(defaults.cleanup_interval_seconds)
+                    if defaults.cleanup_interval_seconds
+                    else "none",
+                )
+            ),
+            cleanup_initial_delay=int(
+                os.getenv(
+                    "MEMORA_CLEANUP_INITIAL_DELAY",
+                    str(defaults.cleanup_initial_delay),
+                )
+            ),
         )

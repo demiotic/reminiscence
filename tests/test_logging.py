@@ -14,16 +14,6 @@ class TestLoggingConfiguration:
         config = CacheConfig()
         assert config.json_logs is False
 
-    def test_production_preset_enables_json_logs(self):
-        """Production preset should enable JSON logs."""
-        config = CacheConfig.for_production()
-        assert config.json_logs is True
-
-    def test_development_preset_disables_json_logs(self):
-        """Development preset should use console logs."""
-        config = CacheConfig.for_development()
-        assert config.json_logs is False
-
     def test_json_logs_can_be_toggled(self):
         """json_logs setting should be configurable."""
         config = CacheConfig(json_logs=True)
@@ -31,6 +21,18 @@ class TestLoggingConfiguration:
 
         config = CacheConfig(json_logs=False)
         assert config.json_logs is False
+
+    def test_production_config_with_json_logs(self):
+        """Production-style config should enable JSON logs."""
+        config = CacheConfig(json_logs=True, log_level="INFO", db_uri="./prod_cache.db")
+        assert config.json_logs is True
+        assert config.log_level == "INFO"
+
+    def test_development_config_with_console_logs(self):
+        """Development-style config should use console logs."""
+        config = CacheConfig(json_logs=False, log_level="DEBUG", db_uri="memory://")
+        assert config.json_logs is False
+        assert config.log_level == "DEBUG"
 
 
 class TestStructuredLogging:
@@ -107,13 +109,13 @@ class TestStructuredLogging:
 
         assert result.is_hit
 
-    def test_from_env_json_logs_integration(self, monkeypatch):
+    def test_load_json_logs_integration(self, monkeypatch):
         """Test full integration: env var → config → Memora."""
         monkeypatch.setenv("MEMORA_JSON_LOGS", "true")
         monkeypatch.setenv("MEMORA_LOG_LEVEL", "WARNING")
         monkeypatch.setenv("MEMORA_DB_URI", "memory://")
 
-        config = CacheConfig.from_env()
+        config = CacheConfig.load()  # Changed from from_env()
         memora = Memora(config)
 
         assert memora.config.json_logs is True

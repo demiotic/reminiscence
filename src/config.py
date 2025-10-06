@@ -10,185 +10,156 @@ class CacheConfig:
     """
     Configuration for Memora semantic cache.
 
-    Attributes:
-        model_name: Sentence-transformers model
-            - 'paraphrase-multilingual-MiniLM-L12-v2' (default): 384 dims, 50+ languages
-            - 'all-MiniLM-L6-v2': 384 dims, English only (faster)
-            - 'paraphrase-multilingual-mpnet-base-v2': 768 dims, better quality
-        similarity_threshold: Cosine similarity threshold
-            - 0.75-0.80 for multilingual models
-            - 0.85-0.90 for monolingual models (recommended)
-        db_uri: LanceDB URI
-            - 'memory://' for in-memory (doesn't persist)
-            - './cache.db' for disk persistence
-        table_name: Table name in LanceDB
-        enable_metrics: If True, collect performance metrics
-        ttl_seconds: Time-to-live in seconds (None = no expiration)
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        json_logs: Enable JSON structured logging (recommended for production)
-        cleanup_threshold: Threshold for automatic cleanup
-        auto_create_index: If True, create index automatically
-        index_threshold_entries: Minimum entries before creating index
-        index_num_partitions: Number of IVF partitions for index
-        max_entries: Maximum total entries (triggers eviction when reached)
-        max_result_size_bytes: Maximum size per payload (rejects larger)
-        eviction_policy: Eviction strategy when max_entries reached
-            - 'fifo': First In First Out (remove oldest)
-            - 'lru': Least Recently Used (future)
+    Defaults are optimized for local development/testing.
+    Use environment variables (MEMORA_*) for production.
+
+    Environment variables:
+    - MEMORA_MODEL_NAME: Embedding model
+    - MEMORA_USE_ONNX: Use ONNX backend (true/false)
+    - MEMORA_ONNX_MODEL_FILE: ONNX model file
+    - MEMORA_SIMILARITY_THRESHOLD: Similarity threshold (0.0-1.0)
+    - MEMORA_DB_URI: Database URI
+    - MEMORA_TABLE_NAME: Table name
+    - MEMORA_ENABLE_METRICS: Enable metrics (true/false)
+    - MEMORA_TTL_SECONDS: TTL in seconds (None = no expiration)
+    - MEMORA_LOG_LEVEL: Log level (DEBUG/INFO/WARNING/ERROR)
+    - MEMORA_JSON_LOGS: JSON logging (true/false)
+    - MEMORA_AUTO_CREATE_INDEX: Auto-create index (true/false)
+    - MEMORA_INDEX_THRESHOLD_ENTRIES: Min entries for index
+    - MEMORA_INDEX_NUM_PARTITIONS: IVF partitions
+    - MEMORA_MAX_ENTRIES: Max cache entries
+    - MEMORA_MAX_RESULT_SIZE_BYTES: Max payload size
+    - MEMORA_EVICTION_POLICY: Eviction policy (fifo/lru)
+
+    Example:
+        >>> # Local dev (uses defaults)
+        >>> config = CacheConfig.from_env()
+        >>> memora = Memora(config)
+        >>>
+        >>> # Production (reads MEMORA_* env vars)
+        >>> config = CacheConfig.from_env()
+        >>> memora = Memora(config)
+        >>>
+        >>> # Custom (override specific values)
+        >>> config = CacheConfig(db_uri="./custom.db", max_entries=5000)
+        >>> memora = Memora(config)
     """
 
+    # Model - portable defaults for local testing
     model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    use_onnx: bool = True
+    onnx_model_file: str = "model.onnx"
+
+    # Cache - in-memory by default for local dev
     similarity_threshold: float = 0.85
     db_uri: str = "memory://"
     table_name: str = "semantic_cache"
     enable_metrics: bool = True
     ttl_seconds: Optional[int] = None
+
+    # Logging - human-readable for local dev
     log_level: str = "INFO"
     json_logs: bool = False
+
+    # Cleanup
     cleanup_threshold: float = 0.3
 
-    # Vector index configuration
+    # Index - manual by default (no auto-indexing for small local tests)
     auto_create_index: bool = False
     index_threshold_entries: int = 256
     index_num_partitions: int = 256
 
-    # Size limits and eviction
-    max_entries: Optional[int] = 10_000  # None = unlimited
-    max_result_size_bytes: int = 10_000_000  # 10MB default
+    # Limits - small for local testing
+    max_entries: Optional[int] = 1_000
+    max_result_size_bytes: int = 5_000_000  # 5MB for local dev
     eviction_policy: str = "fifo"
 
     @classmethod
-    def for_production(cls, db_path: str = "./memora_cache") -> "CacheConfig":
+    def load(cls) -> "CacheConfig":
         """
-        Production preset - optimized for high load.
+        Load configuration from environment variables.
 
-        Features:
-        - 50k entries capacity
-        - 10MB result size limit
-        - JSON structured logging (machine-readable)
-        - 1 hour TTL
-        - Auto-indexing enabled
-
-        Args:
-            db_path: Path for cache persistence
+        Falls back to development defaults if not set.
 
         Returns:
-            CacheConfig configured for production
+            CacheConfig instance
 
         Example:
-            >>> config = CacheConfig.for_production()
-            >>> memora = Memora(config)
-        """
-        return cls(
-            db_uri=db_path,
-            ttl_seconds=3600,
-            enable_metrics=True,
-            log_level="INFO",
-            json_logs=True,
-            auto_create_index=True,
-            index_threshold_entries=1000,
-            index_num_partitions=512,
-            max_entries=50_000,
-            max_result_size_bytes=10_000_000,
-            eviction_policy="fifo",
-        )
-
-    @classmethod
-    def for_development(cls) -> "CacheConfig":
-        """
-        Development preset - optimized for testing and debugging.
-
-        Features:
-        - 1k entries capacity (smaller for testing)
-        - 5MB result size limit
-        - Human-readable console logs
-        - DEBUG level logging
-        - Manual indexing (no auto-indexing)
-
-        Returns:
-            CacheConfig configured for development
-
-        Example:
-            >>> config = CacheConfig.for_development()
-            >>> memora = Memora(config)
-        """
-        return cls(
-            db_uri="memory://",
-            ttl_seconds=300,
-            enable_metrics=True,
-            log_level="DEBUG",
-            json_logs=False,
-            auto_create_index=False,
-            max_entries=1_000,
-            max_result_size_bytes=5_000_000,
-            eviction_policy="fifo",
-        )
-
-    @classmethod
-    def from_env(cls) -> "CacheConfig":
-        """
-        Create configuration from environment variables.
-
-        Supported environment variables:
-        - MEMORA_MODEL_NAME: Embedding model name
-        - MEMORA_SIMILARITY_THRESHOLD: Similarity threshold (float)
-        - MEMORA_DB_URI: Database URI (default: memory://)
-        - MEMORA_TABLE_NAME: Table name (default: semantic_cache)
-        - MEMORA_ENABLE_METRICS: Enable metrics (true/false, default: true)
-        - MEMORA_TTL_SECONDS: TTL in seconds (int, None = no expiration)
-        - MEMORA_LOG_LEVEL: Log level (DEBUG/INFO/WARNING/ERROR, default: INFO)
-        - MEMORA_JSON_LOGS: Enable JSON logs (true/false, default: false)
-        - MEMORA_MAX_ENTRIES: Max cache entries (int, None = unlimited)
-        - MEMORA_MAX_RESULT_SIZE_BYTES: Max payload size (int, default: 10MB)
-        - MEMORA_EVICTION_POLICY: Eviction policy (fifo/lru, default: fifo)
-        - MEMORA_AUTO_CREATE_INDEX: Auto-create index (true/false, default: false)
-
-        Returns:
-            CacheConfig with values from environment
-
-        Example:
-            # In shell:
-            export MEMORA_JSON_LOGS=true
-            export MEMORA_LOG_LEVEL=WARNING
-            export MEMORA_MAX_ENTRIES=100000
-
-            # In Python:
             >>> config = CacheConfig.from_env()
             >>> memora = Memora(config)
         """
 
-        def get_bool(key: str, default: bool) -> bool:
-            """Parse boolean from env var."""
-            value = os.getenv(key, str(default)).lower()
-            return value in ("true", "1", "yes", "on")
+        defaults = cls()
 
-        def get_int_or_none(key: str, default: Optional[int]) -> Optional[int]:
-            """Parse optional int from env var."""
-            value = os.getenv(key)
-            if value is None:
-                return default
-            return int(value) if value.lower() != "none" else None
+        def parse_bool(value: str) -> bool:
+            """Parse boolean from string."""
+            return value.lower() in ("true", "1", "yes", "on")
 
-        def get_float(key: str, default: float) -> float:
-            """Parse float from env var."""
-            value = os.getenv(key)
-            return float(value) if value else default
+        def parse_int_or_none(value: str) -> Optional[int]:
+            """Parse optional int from string."""
+            return None if value.lower() == "none" else int(value)
 
         return cls(
-            model_name=os.getenv(
-                "MEMORA_MODEL_NAME", "paraphrase-multilingual-MiniLM-L12-v2"
+            # Model
+            model_name=os.getenv("MEMORA_MODEL_NAME", defaults.model_name),
+            use_onnx=parse_bool(
+                os.getenv("MEMORA_USE_ONNX", str(defaults.use_onnx).lower())
             ),
-            similarity_threshold=get_float("MEMORA_SIMILARITY_THRESHOLD", 0.85),
-            db_uri=os.getenv("MEMORA_DB_URI", "memory://"),
-            table_name=os.getenv("MEMORA_TABLE_NAME", "semantic_cache"),
-            enable_metrics=get_bool("MEMORA_ENABLE_METRICS", True),
-            ttl_seconds=get_int_or_none("MEMORA_TTL_SECONDS", None),
-            log_level=os.getenv("MEMORA_LOG_LEVEL", "INFO").upper(),
-            json_logs=get_bool("MEMORA_JSON_LOGS", False),
-            auto_create_index=get_bool("MEMORA_AUTO_CREATE_INDEX", False),
-            max_entries=get_int_or_none("MEMORA_MAX_ENTRIES", 10_000),
-            max_result_size_bytes=get_int_or_none(
-                "MEMORA_MAX_RESULT_SIZE_BYTES", 10_000_000
+            onnx_model_file=os.getenv(
+                "MEMORA_ONNX_MODEL_FILE", defaults.onnx_model_file
             ),
-            eviction_policy=os.getenv("MEMORA_EVICTION_POLICY", "fifo").lower(),
+            # Cache
+            similarity_threshold=float(
+                os.getenv(
+                    "MEMORA_SIMILARITY_THRESHOLD", str(defaults.similarity_threshold)
+                )
+            ),
+            db_uri=os.getenv("MEMORA_DB_URI", defaults.db_uri),
+            table_name=os.getenv("MEMORA_TABLE_NAME", defaults.table_name),
+            enable_metrics=parse_bool(
+                os.getenv("MEMORA_ENABLE_METRICS", str(defaults.enable_metrics).lower())
+            ),
+            ttl_seconds=parse_int_or_none(
+                os.getenv(
+                    "MEMORA_TTL_SECONDS",
+                    str(defaults.ttl_seconds) if defaults.ttl_seconds else "none",
+                )
+            ),
+            # Logging
+            log_level=os.getenv("MEMORA_LOG_LEVEL", defaults.log_level).upper(),
+            json_logs=parse_bool(
+                os.getenv("MEMORA_JSON_LOGS", str(defaults.json_logs).lower())
+            ),
+            # Index
+            auto_create_index=parse_bool(
+                os.getenv(
+                    "MEMORA_AUTO_CREATE_INDEX", str(defaults.auto_create_index).lower()
+                )
+            ),
+            index_threshold_entries=int(
+                os.getenv(
+                    "MEMORA_INDEX_THRESHOLD_ENTRIES",
+                    str(defaults.index_threshold_entries),
+                )
+            ),
+            index_num_partitions=int(
+                os.getenv(
+                    "MEMORA_INDEX_NUM_PARTITIONS", str(defaults.index_num_partitions)
+                )
+            ),
+            # Limits
+            max_entries=parse_int_or_none(
+                os.getenv(
+                    "MEMORA_MAX_ENTRIES",
+                    str(defaults.max_entries) if defaults.max_entries else "none",
+                )
+            ),
+            max_result_size_bytes=int(
+                os.getenv(
+                    "MEMORA_MAX_RESULT_SIZE_BYTES", str(defaults.max_result_size_bytes)
+                )
+            ),
+            eviction_policy=os.getenv(
+                "MEMORA_EVICTION_POLICY", defaults.eviction_policy
+            ).lower(),
         )

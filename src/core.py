@@ -48,8 +48,7 @@ class Memora:
 
     def __init__(self, config: Optional[CacheConfig] = None):
         """Initialize Memora."""
-        self.config = config or CacheConfig()
-
+        self.config = config or CacheConfig.load()
         # Setup structured logging
         configure_logging(
             log_level=self.config.log_level, json_logs=self.config.json_logs
@@ -65,7 +64,30 @@ class Memora:
         )
 
         # Initialize components
-        self.model = SentenceTransformer(self.config.model_name)
+        self.model = SentenceTransformer(
+            self.config.model_name,
+            backend="onnx",
+        )
+
+        # Log which ONNX model file was loaded
+        try:
+            if hasattr(self.model, "_backend") and hasattr(
+                self.model._backend, "_model_path"
+            ):
+                model_path = self.model._backend._model_path
+                logger.info(
+                    "onnx_model_loaded",
+                    model_path=str(model_path),
+                    is_quantized="qint8" in str(model_path)
+                    or "quint8" in str(model_path),
+                )
+            else:
+                logger.debug(
+                    "onnx_model_info", message="Cannot access backend model path"
+                )
+        except Exception as e:
+            logger.debug("onnx_model_info", error=str(e))
+
         self.db = lancedb.connect(self.config.db_uri)
         self.embedding_dim = self.model.get_sentence_embedding_dimension()
         self.metrics = CacheMetrics() if self.config.enable_metrics else None

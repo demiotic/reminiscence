@@ -66,8 +66,8 @@ def create_cached_decorator(memora: Memora) -> Callable:
             # Validate query_param exists
             if query_param not in params:
                 raise ValueError(
-                    f"Parámetro '{query_param}' no encontrado en {func.__name__}. "
-                    f"Parámetros disponibles: {params}"
+                    f"Parameter '{query_param}' not found in {func.__name__}. "
+                    f"Available parameters: {params}"
                 )
 
             # Default exclude list
@@ -88,8 +88,8 @@ def create_cached_decorator(memora: Memora) -> Callable:
                 query_value = bound.arguments.get(query_param)
                 if query_value is None:
                     raise ValueError(
-                        f"Parámetro '{query_param}' es None. "
-                        f"Debe proporcionar un valor para '{query_param}'."
+                        f"Parameter '{query_param}' is None. "
+                        f"Must provide a value for '{query_param}'."
                     )
 
                 # Build cache context
@@ -142,8 +142,8 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     query_value = bound.arguments.get(query_param)
                     if query_value is None:
                         raise ValueError(
-                            f"Parámetro '{query_param}' es None. "
-                            f"Debe proporcionar un valor para '{query_param}'."
+                            f"Parameter '{query_param}' is None. "
+                            f"Must provide a value for '{query_param}'."
                         )
 
                     # Build cache context (same logic as sync)

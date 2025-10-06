@@ -641,9 +641,9 @@ Contributions welcome! Please:
 - [x] Environment configuration
 - [x] Decorator API with auto-strict mode
 - [x] ONNX optimization
+- [x] Background cleanup scheduler
 
 ### v0.2.0 (Planned)
-- [x] Background cleanup scheduler
 - [ ] Prometheus metrics exporter
 - [ ] S3/GCS remote storage
 - [ ] Distributed caching

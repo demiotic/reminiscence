@@ -6,7 +6,7 @@ from memora.types import LookupResult, AvailabilityCheck
 from memora.decorators import create_cached_decorator, MemoraDecorator
 from memora.scheduler import CleanupScheduler, SchedulerManager
 
-__version__ = "0.2.0"
+__version__ = "0.1.0"
 
 __all__ = [
     "Memora",

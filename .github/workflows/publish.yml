@@ -28,8 +28,9 @@ jobs:
     - name: Build package
       run: uv build
     
-    - name: Publish to PyPI
-      env:
-        UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        UV_PUBLISH_INDEX: ${{ vars.PYPI_FEED }}
-      run: uv publish
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        environment: release
+      permissions:
+        id-token: write        

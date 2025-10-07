@@ -1,0 +1,88 @@
+# Model registry for embedding backends
+
+# Sentence-transformers models (also compatible with FastEmbed)
+sentence_transformers:
+  all-MiniLM-L6-v2:
+    full_name: sentence-transformers/all-MiniLM-L6-v2
+    dimension: 384
+    size_mb: 80
+    description: Fast, lightweight, English only
+    languages: [en]
+  
+  all-mpnet-base-v2:
+    full_name: sentence-transformers/all-mpnet-base-v2
+    dimension: 768
+    size_mb: 420
+    description: High quality, English only
+    languages: [en]
+  
+  paraphrase-multilingual-MiniLM-L12-v2:
+    full_name: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    dimension: 384
+    size_mb: 420
+    description: Multilingual, good quality
+    languages: [en, de, es, fr, it, nl, pl, pt, ru, ar, zh, ja, ko]
+
+# FastEmbed native models (ONNX optimized)
+fastembed:
+  # English only
+  bge-small-en:
+    full_name: BAAI/bge-small-en-v1.5
+    dimension: 384
+    size_mb: 33
+    description: Fast, high quality, English only
+    languages: [en]
+  
+  bge-base-en:
+    full_name: BAAI/bge-base-en-v1.5
+    dimension: 768
+    size_mb: 110
+    description: Better quality, English only
+    languages: [en]
+  
+  # Multilingual models
+  multilingual-e5-small:
+    full_name: intfloat/multilingual-e5-small
+    dimension: 384
+    size_mb: 118
+    description: Multilingual, 100+ languages, recommended
+    languages: [en, es, fr, de, it, pt, nl, ru, zh, ja, ko, ar, hi, th, vi, id, tr, pl, uk, ro, sv, cs, da, fi, no, he, bn, ta, te, mr, gu, kn, ml, pa, ur]
+  
+  multilingual-e5-base:
+    full_name: intfloat/multilingual-e5-base
+    dimension: 768
+    size_mb: 278
+    description: Multilingual, 100+ languages, better quality
+    languages: [en, es, fr, de, it, pt, nl, ru, zh, ja, ko, ar, hi, th, vi, id, tr, pl, uk, ro, sv, cs, da, fi, no, he, bn, ta, te, mr, gu, kn, ml, pa, ur]
+  
+  multilingual-e5-large:
+    full_name: intfloat/multilingual-e5-large
+    dimension: 1024
+    size_mb: 560
+    description: Multilingual, 100+ languages, best quality
+    languages: [en, es, fr, de, it, pt, nl, ru, zh, ja, ko, ar, hi, th, vi, id, tr, pl, uk, ro, sv, cs, da, fi, no, he, bn, ta, te, mr, gu, kn, ml, pa, ur]
+  
+  paraphrase-multilingual-mpnet:
+    full_name: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+    dimension: 768
+    size_mb: 278
+    description: Multilingual, 50+ languages, alternative option
+    languages: [en, de, es, fr, it, nl, pl, pt, ru, ar, zh, ja, ko]
+  
+  bge-small-zh:
+    full_name: BAAI/bge-small-zh-v1.5
+    dimension: 512
+    size_mb: 93
+    description: Chinese and English bilingual
+    languages: [zh, en]
+  
+  bge-base-zh:
+    full_name: BAAI/bge-base-zh-v1.5
+    dimension: 768
+    size_mb: 406
+    description: Chinese and English bilingual, better quality
+    languages: [zh, en]
+
+default:
+  fastembed: multilingual-e5-small
+  sentence_transformers: all-MiniLM-L6-v2

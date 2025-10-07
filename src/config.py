@@ -8,7 +8,7 @@ from typing import Optional
 @dataclass
 class CacheConfig:
     """
-    Configuration for Memora semantic cache.
+    Configuration for Reminiscence semantic cache.
 
     Defaults are optimized for local development/testing.
     Use environment variables (MEMORA_*) for production.

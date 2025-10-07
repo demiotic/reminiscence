@@ -55,7 +55,7 @@ class CleanupScheduler:
         self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(
-            target=self._run_loop, name="memora-cleanup-scheduler", daemon=True
+            target=self._run_loop, name="reminiscence-cleanup-scheduler", daemon=True
         )
         self._thread.start()
 

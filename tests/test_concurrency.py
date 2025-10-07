@@ -1,4 +1,4 @@
-"""Concurrency tests for Memora - verify behavior without locking."""
+"""Concurrency tests for Reminiscence - verify behavior without locking."""
 
 import multiprocessing
 import time
@@ -13,7 +13,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def worker_store_many(db_path: str, worker_id: int, num_stores: int):
     """Worker that performs many stores."""
     # Imports inside worker (after spawn)
-    from memora import Memora, CacheConfig
+    from reminiscence import Reminiscence, CacheConfig
     import os
 
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -26,7 +26,7 @@ def worker_store_many(db_path: str, worker_id: int, num_stores: int):
         log_level="ERROR",
         json_logs=False,
     )
-    memora = Memora(config)
+    reminiscence = Reminiscence(config)
 
     print(
         f"[Worker {worker_id}] Initialized, storing {num_stores} entries...",
@@ -36,7 +36,7 @@ def worker_store_many(db_path: str, worker_id: int, num_stores: int):
     failed_stores = 0
     for i in range(num_stores):
         try:
-            memora.store(
+            reminiscence.store(
                 query=f"worker_{worker_id}_query_{i}",
                 context={"worker": worker_id},
                 result=f"result_{i}",
@@ -45,7 +45,7 @@ def worker_store_many(db_path: str, worker_id: int, num_stores: int):
             failed_stores += 1
             print(f"[Worker {worker_id}] Store {i} FAILED: {e}", flush=True)
 
-    stats = memora.get_stats()
+    stats = reminiscence.get_stats()
     print(
         f"[Worker {worker_id}] FINISHED - {num_stores - failed_stores}/{num_stores} successful",
         flush=True,
@@ -98,11 +98,11 @@ class TestConcurrentStores:
         print(f"Failure rate: {total_failed / total_attempted * 100:.2f}%")
 
         # Verify final state
-        from memora import Memora, CacheConfig
+        from reminiscence import Reminiscence, CacheConfig
 
         config = CacheConfig(db_uri=db_path, log_level="ERROR")
-        memora = Memora(config)
-        final_count = memora.backend.count()  # ✅ .backend.count()
+        reminiscence = Reminiscence(config)
+        final_count = reminiscence.backend.count()  # ✅ .backend.count()
 
         print(f"Final cache entries: {final_count}")
         print(f"Expected: ~{total_attempted - total_failed}")
@@ -150,11 +150,11 @@ class TestConcurrentStores:
         print(f"Failure rate: {total_failed / total_attempted * 100:.2f}%")
 
         # Verify final state
-        from memora import Memora, CacheConfig
+        from reminiscence import Reminiscence, CacheConfig
 
         config = CacheConfig(db_uri=db_path, log_level="ERROR")
-        memora = Memora(config)
-        final_count = memora.backend.count()  # ✅ .backend.count()
+        reminiscence = Reminiscence(config)
+        final_count = reminiscence.backend.count()  # ✅ .backend.count()
 
         print(f"Final cache entries: {final_count}")
 

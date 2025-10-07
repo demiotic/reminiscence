@@ -1,6 +1,6 @@
 """Tests for fingerprint.py - context hashing."""
 
-from memora.utils.fingerprint import create_fingerprint
+from reminiscence.utils.fingerprint import create_fingerprint
 
 
 class TestFingerprintBasics:

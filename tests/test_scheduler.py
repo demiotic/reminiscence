@@ -2,8 +2,8 @@
 
 import time
 import pytest
-from memora import Memora, CacheConfig
-from memora.scheduler import CleanupScheduler, SchedulerManager
+from reminiscence import Reminiscence, CacheConfig
+from reminiscence.scheduler import CleanupScheduler, SchedulerManager
 
 
 class TestCleanupScheduler:
@@ -248,17 +248,17 @@ class TestSchedulerManager:
         assert call_count >= 1
 
 
-class TestMemoraSchedulerIntegration:
-    """Test scheduler integration with Memora."""
+class TestReminiscenceSchedulerIntegration:
+    """Test scheduler integration with Reminiscence."""
 
-    def test_memora_start_stop_scheduler(self):
-        """Memora should start and stop scheduler."""
+    def test_reminiscence_start_stop_scheduler(self):
+        """Reminiscence should start and stop scheduler."""
         config = CacheConfig(
             db_uri="memory://",
             ttl_seconds=1,
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # Store some entries
         cache.store("q1", {"agent": "test"}, "r1")
@@ -281,14 +281,14 @@ class TestMemoraSchedulerIntegration:
         cache.stop_scheduler()
         assert not cache.scheduler.is_running()
 
-    def test_memora_scheduler_stats(self):
-        """Memora should expose scheduler stats."""
+    def test_reminiscence_scheduler_stats(self):
+        """Reminiscence should expose scheduler stats."""
         config = CacheConfig(
             db_uri="memory://",
             ttl_seconds=0.5,
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # No scheduler yet
         assert cache.get_scheduler_stats() is None
@@ -305,9 +305,9 @@ class TestMemoraSchedulerIntegration:
 
         cache.stop_scheduler()
 
-    def test_memora_scheduler_in_get_stats(self):
+    def test_reminiscence_scheduler_in_get_stats(self):
         """Scheduler stats should appear in get_stats()."""
-        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
         stats = cache.get_stats()
         assert "scheduler" not in stats
@@ -320,9 +320,9 @@ class TestMemoraSchedulerIntegration:
 
         cache.stop_scheduler()
 
-    def test_memora_scheduler_in_health_check(self):
+    def test_reminiscence_scheduler_in_health_check(self):
         """Health check should include scheduler status."""
-        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
         health = cache.health_check()
         assert health["checks"]["scheduler"]["ok"] == True
@@ -336,25 +336,25 @@ class TestMemoraSchedulerIntegration:
 
         cache.stop_scheduler()
 
-    def test_memora_context_manager_stops_scheduler(self):
+    def test_reminiscence_context_manager_stops_scheduler(self):
         """Context manager should auto-stop scheduler."""
         config = CacheConfig(db_uri="memory://", log_level="WARNING")
 
-        with Memora(config) as cache:
+        with Reminiscence(config) as cache:
             cache.start_scheduler(interval_seconds=10)
             assert cache.scheduler.is_running()
 
         # Should auto-stop on exit
         assert not cache.scheduler.is_running()
 
-    def test_memora_scheduler_without_ttl_warning(self):
+    def test_reminiscence_scheduler_without_ttl_warning(self):
         """Starting scheduler without TTL should log warning."""
         config = CacheConfig(
             db_uri="memory://",
             ttl_seconds=None,  # No TTL
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # Should start but log warning
         cache.start_scheduler(interval_seconds=10)
@@ -363,9 +363,9 @@ class TestMemoraSchedulerIntegration:
 
         cache.stop_scheduler()
 
-    def test_memora_scheduler_already_running_warning(self):
+    def test_reminiscence_scheduler_already_running_warning(self):
         """Starting scheduler twice should log warning."""
-        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
         cache.start_scheduler(interval_seconds=10)
         cache.start_scheduler(interval_seconds=5)  # Should warn
@@ -374,14 +374,14 @@ class TestMemoraSchedulerIntegration:
 
         cache.stop_scheduler()
 
-    def test_memora_cleanup_actually_works(self):
+    def test_reminiscence_cleanup_actually_works(self):
         """Scheduler should actually delete expired entries."""
         config = CacheConfig(
             db_uri="memory://",
             ttl_seconds=0.5,
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # Store entries
         for i in range(10):

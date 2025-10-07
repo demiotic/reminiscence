@@ -1,7 +1,12 @@
-"""Tests for memora.decorators."""
+"""Tests for reminiscence.decorators."""
 
 import pytest
-from memora import create_cached_decorator, MemoraDecorator, Memora, CacheConfig
+from reminiscence import (
+    create_cached_decorator,
+    ReminiscenceDecorator,
+    Reminiscence,
+    CacheConfig,
+)
 
 
 # ============================================================================
@@ -10,22 +15,22 @@ from memora import create_cached_decorator, MemoraDecorator, Memora, CacheConfig
 
 
 @pytest.fixture(scope="module")
-def memora_session_local():
-    """Memora instance for this test module only."""
+def reminiscence_session_local():
+    """Reminiscence instance for this test module only."""
     config = CacheConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,
         log_level="WARNING",
     )
-    return Memora(config)
+    return Reminiscence(config)
 
 
 @pytest.fixture
-def memora_memory(memora_session_local):
-    """Clean Memora for each test."""
-    memora_session_local.clear()
-    yield memora_session_local
+def reminiscence_memory(reminiscence_session_local):
+    """Clean Reminiscence for each test."""
+    reminiscence_session_local.clear()
+    yield reminiscence_session_local
 
 
 # ============================================================================
@@ -36,24 +41,24 @@ def memora_memory(memora_session_local):
 class TestDecoratorBasics:
     """Basic decorator tests."""
 
-    def test_decorator_factory(self, memora_memory):
+    def test_decorator_factory(self, reminiscence_memory):
         """create_cached_decorator should return functional decorator."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
         assert callable(cached)
 
-    def test_decorator_class(self, memora_memory):
-        """MemoraDecorator should instantiate correctly."""
-        decorator = MemoraDecorator(memora_memory)
-        assert decorator.memora is memora_memory
+    def test_decorator_class(self, reminiscence_memory):
+        """ReminiscenceDecorator should instantiate correctly."""
+        decorator = ReminiscenceDecorator(reminiscence_memory)
+        assert decorator.reminiscence is reminiscence_memory
         assert hasattr(decorator, "cached")
 
 
 class TestSyncFunctions:
     """Tests with synchronous functions."""
 
-    def test_basic_caching(self, memora_memory):
+    def test_basic_caching(self, reminiscence_memory):
         """Decorator should cache sync function results."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -73,9 +78,9 @@ class TestSyncFunctions:
         assert call_count == 1
         assert result2 == result1
 
-    def test_different_queries_no_cache(self, memora_memory):
+    def test_different_queries_no_cache(self, reminiscence_memory):
         """Different queries should execute function."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -91,9 +96,9 @@ class TestSyncFunctions:
         assert call_count == 2
         assert result1 != result2
 
-    def test_strict_params(self, memora_memory):
+    def test_strict_params(self, reminiscence_memory):
         """strict_params should enforce exact matching."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -117,9 +122,9 @@ class TestSyncFunctions:
         assert call_count == 2  # New call due to different model
         assert result1 != result3
 
-    def test_auto_strict(self, memora_memory):
+    def test_auto_strict(self, reminiscence_memory):
         """auto_strict should detect non-string params."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -142,9 +147,9 @@ class TestSyncFunctions:
         assert call_count == 2
         assert result2 == result3
 
-    def test_custom_query_param(self, memora_memory):
+    def test_custom_query_param(self, reminiscence_memory):
         """Custom query_param should work."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -160,9 +165,9 @@ class TestSyncFunctions:
         assert result1 == result2
         assert call_count == 1  # Second call hit cache
 
-    def test_invalid_query_param(self, memora_memory):
+    def test_invalid_query_param(self, reminiscence_memory):
         """Invalid query_param should raise error."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         with pytest.raises(ValueError, match="not found"):
 
@@ -175,9 +180,9 @@ class TestAsyncFunctions:
     """Tests with asynchronous functions."""
 
     @pytest.mark.asyncio
-    async def test_async_basic_caching(self, memora_memory):
+    async def test_async_basic_caching(self, reminiscence_memory):
         """Decorator should cache async functions."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -197,9 +202,9 @@ class TestAsyncFunctions:
         assert result2 == result1
 
     @pytest.mark.asyncio
-    async def test_async_with_defaults(self, memora_memory):
+    async def test_async_with_defaults(self, reminiscence_memory):
         """Async with default values should work."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -219,9 +224,9 @@ class TestAsyncFunctions:
 class TestContextHandling:
     """Context handling tests."""
 
-    def test_static_context_only(self, memora_memory):
+    def test_static_context_only(self, reminiscence_memory):
         """Static context with no strict params - query is semantic key."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -240,9 +245,9 @@ class TestContextHandling:
         assert result1 == "Explain quantum computing-1"
         assert call_count == 1
 
-    def test_complex_strict_param(self, memora_memory):
+    def test_complex_strict_param(self, reminiscence_memory):
         """Complex types in strict_params should serialize correctly."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -270,9 +275,9 @@ class TestContextHandling:
         assert call_count == 2  # Cache miss - different order
         assert result1 != result3
 
-    def test_no_context_uses_function_name(self, memora_memory):
+    def test_no_context_uses_function_name(self, reminiscence_memory):
         """No context should use __function__ as default."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -292,9 +297,9 @@ class TestContextHandling:
 class TestComplexResults:
     """Tests with complex result types."""
 
-    def test_dict_result(self, memora_memory):
+    def test_dict_result(self, reminiscence_memory):
         """Dict results should be cached."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         @cached(static_context={"agent": "test"})
         def get_data(query: str):
@@ -306,9 +311,9 @@ class TestComplexResults:
         assert result1 == result2
         assert isinstance(result1, dict)
 
-    def test_list_result(self, memora_memory):
+    def test_list_result(self, reminiscence_memory):
         """List results should be cached."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         @cached(static_context={"agent": "test"})
         def get_items(query: str):
@@ -320,9 +325,9 @@ class TestComplexResults:
         assert result1 == result2
         assert isinstance(result1, list)
 
-    def test_nested_structures(self, memora_memory):
+    def test_nested_structures(self, reminiscence_memory):
         """Nested structures should be cached."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         @cached(static_context={"agent": "test"})
         def complex_data(query: str):
@@ -340,9 +345,9 @@ class TestComplexResults:
 class TestEdgeCases:
     """Edge case tests with decorators."""
 
-    def test_no_context(self, memora_memory):
+    def test_no_context(self, reminiscence_memory):
         """Decorator without context should work."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
@@ -358,9 +363,9 @@ class TestEdgeCases:
         assert result1 == result2
         assert call_count == 1
 
-    def test_function_metadata_preserved(self, memora_memory):
+    def test_function_metadata_preserved(self, reminiscence_memory):
         """Function metadata should be preserved (functools.wraps)."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         @cached(static_context={"agent": "test"})
         def my_function(query: str):
@@ -370,9 +375,9 @@ class TestEdgeCases:
         assert my_function.__name__ == "my_function"
         assert my_function.__doc__ == "My docstring."
 
-    def test_none_values_excluded(self, memora_memory):
+    def test_none_values_excluded(self, reminiscence_memory):
         """None values should be excluded from strict params."""
-        cached = create_cached_decorator(memora_memory)
+        cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 

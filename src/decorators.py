@@ -5,7 +5,7 @@ import inspect
 import json
 from typing import Any, Callable, Dict, Optional, TypeVar, List
 
-from .core import Memora
+from .core import Reminiscence
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -34,19 +34,19 @@ def _serialize_strict(value: Any) -> Any:
             return repr(value)
 
 
-def create_cached_decorator(memora: Memora) -> Callable:
+def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
     """
-    Create a caching decorator bound to a Memora instance.
+    Create a caching decorator bound to a Reminiscence instance.
 
     Args:
-        memora: Memora instance to use for caching
+        reminiscence: Reminiscence instance to use for caching
 
     Returns:
         Decorator function
 
     Example:
-        >>> memora = Memora()
-        >>> cached = create_cached_decorator(memora)
+        >>> reminiscence = Reminiscence()
+        >>> cached = create_cached_decorator(reminiscence)
         >>>
         >>> @cached(query_param="prompt", strict_params=["model"])
         >>> def call_llm(prompt: str, model: str):
@@ -148,7 +148,7 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     cache_context = {"__function__": func.__name__}
 
                 # Check cache
-                result = memora.lookup(query_value, cache_context)
+                result = reminiscence.lookup(query_value, cache_context)
 
                 if result.is_hit:
                     return result.result
@@ -157,7 +157,7 @@ def create_cached_decorator(memora: Memora) -> Callable:
                 output = func(*args, **kwargs)
 
                 # Store in cache
-                memora.store(query_value, cache_context, output)
+                reminiscence.store(query_value, cache_context, output)
 
                 return output
 
@@ -192,7 +192,7 @@ def create_cached_decorator(memora: Memora) -> Callable:
                         cache_context = {"__function__": func.__name__}
 
                     # Check cache
-                    result = memora.lookup(query_value, cache_context)
+                    result = reminiscence.lookup(query_value, cache_context)
 
                     if result.is_hit:
                         return result.result
@@ -201,7 +201,7 @@ def create_cached_decorator(memora: Memora) -> Callable:
                     output = await func(*args, **kwargs)
 
                     # Store in cache
-                    memora.store(query_value, cache_context, output)
+                    reminiscence.store(query_value, cache_context, output)
 
                     return output
 
@@ -214,14 +214,14 @@ def create_cached_decorator(memora: Memora) -> Callable:
     return decorator
 
 
-class MemoraDecorator:
+class ReminiscenceDecorator:
     """
-    Class-based decorator interface for Memora.
+    Class-based decorator interface for Reminiscence.
 
     Provides an alternative API for creating cached decorators.
 
     Example:
-        >>> decorator = MemoraDecorator(memora)
+        >>> decorator = ReminiscenceDecorator(reminiscence)
         >>> @decorator.cached(
         ...     query_param="prompt",
         ...     strict_params=["model", "agent_id"]
@@ -230,15 +230,15 @@ class MemoraDecorator:
         >>>     return expensive_computation(prompt, model, agent_id)
     """
 
-    def __init__(self, memora: Memora):
+    def __init__(self, reminiscence: Reminiscence):
         """
-        Initialize decorator with Memora instance.
+        Initialize decorator with Reminiscence instance.
 
         Args:
-            memora: Memora instance to use for caching
+            reminiscence: Reminiscence instance to use for caching
         """
-        self.memora = memora
-        self._cached_decorator = create_cached_decorator(memora)
+        self.reminiscence = reminiscence
+        self._cached_decorator = create_cached_decorator(reminiscence)
 
     def cached(
         self,

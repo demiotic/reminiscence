@@ -3,7 +3,7 @@
 import pytest
 import time
 
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 
 class TestEndToEnd:
@@ -17,7 +17,7 @@ class TestEndToEnd:
             enable_metrics=True,
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # 1. Empty cache
         stats = cache.get_stats()
@@ -49,7 +49,7 @@ class TestEndToEnd:
             similarity_threshold=0.70,
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # Store detailed query
         cache.store(
@@ -67,7 +67,7 @@ class TestEndToEnd:
 
     def test_multi_context_workflow(self):
         """Test with multiple contexts."""
-        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
         # Store with different contexts
         contexts = [
@@ -93,12 +93,12 @@ class TestEndToEnd:
 
         # First instance - store data
         config1 = CacheConfig(db_uri=db_path, log_level="WARNING")
-        cache1 = Memora(config1)
+        cache1 = Reminiscence(config1)
         cache1.store("persistent query", {"agent": "test"}, "persistent result")
 
         # Second instance - should find data
         config2 = CacheConfig(db_uri=db_path, log_level="WARNING")
-        cache2 = Memora(config2)
+        cache2 = Reminiscence(config2)
 
         result = cache2.lookup("persistent query", {"agent": "test"})
         assert result.is_hit
@@ -111,7 +111,7 @@ class TestEndToEnd:
             ttl_seconds=1,
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # Store entry
         cache.store("expiring query", {"agent": "test"}, "temporary result")
@@ -129,7 +129,7 @@ class TestEndToEnd:
 
     def test_decorator_workflow(self):
         """Test decorator integration."""
-        cache = Memora(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
         call_count = 0
 
@@ -156,7 +156,7 @@ class TestEndToEnd:
             eviction_policy="fifo",
             log_level="WARNING",
         )
-        cache = Memora(config)
+        cache = Reminiscence(config)
 
         # Store 4 entries
         for i in range(4):

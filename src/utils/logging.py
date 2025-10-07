@@ -1,4 +1,4 @@
-"""Structured logging configuration for Memora."""
+"""Structured logging configuration for Reminiscence."""
 
 import logging
 import structlog
@@ -84,7 +84,7 @@ def _clean_text_renderer(logger, name, event_dict):
 
 def configure_logging(log_level: str = "INFO", json_logs: bool = False) -> None:
     """
-    Configure structured logging for Memora.
+    Configure structured logging for Reminiscence.
 
     Args:
         log_level: Log level (DEBUG, INFO, WARNING, ERROR)

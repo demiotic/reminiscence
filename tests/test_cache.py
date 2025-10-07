@@ -3,12 +3,12 @@
 import time
 import pytest
 
-from memora import CacheConfig
-from memora.cache import CacheOperations
-from memora.embeddings import create_embedder
-from memora.storage import create_storage_backend
-from memora.eviction import create_eviction_policy
-from memora.metrics import CacheMetrics
+from reminiscence import CacheConfig
+from reminiscence.cache import CacheOperations
+from reminiscence.embeddings import create_embedder
+from reminiscence.storage import create_storage_backend
+from reminiscence.eviction import create_eviction_policy
+from reminiscence.metrics import CacheMetrics
 
 
 def create_ops(eviction_policy: str, max_entries: int = 3):

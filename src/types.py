@@ -1,4 +1,4 @@
-"""Data types for Memora."""
+"""Data types for Reminiscence."""
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional

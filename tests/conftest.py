@@ -1,4 +1,4 @@
-"""Shared fixtures for Memora tests."""
+"""Shared fixtures for Reminiscence tests."""
 
 import pytest
 import tempfile
@@ -7,12 +7,12 @@ import structlog
 import logging
 from pathlib import Path
 
-from memora import Memora, CacheConfig
-from memora.cache import CacheOperations
-from memora.embeddings import create_embedder
-from memora.storage import create_storage_backend
-from memora.eviction import create_eviction_policy
-from memora.metrics import CacheMetrics
+from reminiscence import Reminiscence, CacheConfig
+from reminiscence.cache import CacheOperations
+from reminiscence.embeddings import create_embedder
+from reminiscence.storage import create_storage_backend
+from reminiscence.eviction import create_eviction_policy
+from reminiscence.metrics import CacheMetrics
 
 
 # ============================================================================
@@ -23,7 +23,7 @@ from memora.metrics import CacheMetrics
 @pytest.fixture
 def reset_config():
     """Reset configuration singleton to force reload."""
-    from memora.config import CacheConfig
+    from reminiscence.config import CacheConfig
 
     if hasattr(CacheConfig, "_instance"):
         delattr(CacheConfig, "_instance")
@@ -68,7 +68,7 @@ def json_logging_env(reset_structlog, reset_config, monkeypatch):
     monkeypatch.setenv("MEMORA_LOG_LEVEL", "INFO")
 
     # Force configuration reload
-    from memora.utils.logging import configure_logging
+    from reminiscence.utils.logging import configure_logging
 
     configure_logging(log_level="INFO", json_logs=True)
 
@@ -87,7 +87,7 @@ def text_logging_env(reset_structlog, reset_config, monkeypatch):
     monkeypatch.setenv("MEMORA_LOG_LEVEL", "INFO")
 
     # Force configuration reload
-    from memora.utils.logging import configure_logging
+    from reminiscence.utils.logging import configure_logging
 
     configure_logging(log_level="INFO", json_logs=False)
 
@@ -142,9 +142,9 @@ def disk_config(temp_cache_dir):
 
 
 @pytest.fixture(scope="session")
-def memora_memory_session():
+def reminiscence_memory_session():
     """
-    Shared in-memory Memora instance (loaded once per session).
+    Shared in-memory Reminiscence instance (loaded once per session).
 
     Uses scope="session" to load the embeddings model only once
     and reuse it across all tests, improving performance.
@@ -156,26 +156,26 @@ def memora_memory_session():
         log_level="WARNING",
         ttl_seconds=None,
     )
-    return Memora(config)
+    return Reminiscence(config)
 
 
 @pytest.fixture
-def memora_memory(memora_memory_session):
+def reminiscence_memory(reminiscence_memory_session):
     """
-    Clean in-memory Memora instance for each test.
+    Clean in-memory Reminiscence instance for each test.
 
     Reuses the global session instance but clears cache and resets
     metrics before each test for speed.
     """
     # Clear cache and reset metrics before each test
-    memora_memory_session.clear()
-    yield memora_memory_session
+    reminiscence_memory_session.clear()
+    yield reminiscence_memory_session
 
 
 @pytest.fixture
-def memora_disk(disk_config):
-    """Disk-based Memora instance (new for each test)."""
-    return Memora(disk_config)
+def reminiscence_disk(disk_config):
+    """Disk-based Reminiscence instance (new for each test)."""
+    return Reminiscence(disk_config)
 
 
 # ============================================================================
@@ -188,7 +188,7 @@ def cache_ops_session():
     """
     Shared CacheOperations instance for entire test module.
 
-    More lightweight than Memora for testing core cache logic.
+    More lightweight than Reminiscence for testing core cache logic.
     The model is loaded once per module for performance.
 
     Use this when you need direct access to CacheOperations internals

@@ -1,6 +1,6 @@
 """Example: Using background cleanup scheduler."""
 
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 import time
 
 # Setup cache with TTL
@@ -12,7 +12,7 @@ config = CacheConfig(
     log_level="INFO",
 )
 
-cache = Memora(config)
+cache = Reminiscence(config)
 
 # Start background cleanup (runs every hour)
 cache.start_scheduler(

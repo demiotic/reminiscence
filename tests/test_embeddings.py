@@ -2,8 +2,8 @@
 
 import pytest
 
-from memora.embeddings import create_embedder, SentenceTransformerEmbedder
-from memora import CacheConfig
+from reminiscence.embeddings import create_embedder, SentenceTransformerEmbedder
+from reminiscence import CacheConfig
 
 
 class TestEmbedderFactory:

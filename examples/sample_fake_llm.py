@@ -1,5 +1,5 @@
 """
-Memora Demo with Fake LLM
+Reminiscence Demo with Fake LLM
 
 Demonstrates semantic caching without external dependencies.
 Uses a simulated LLM to show cache behavior.
@@ -7,7 +7,7 @@ Uses a simulated LLM to show cache behavior.
 
 import time
 import random
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 
 # ==============================================================================
@@ -48,7 +48,7 @@ class FakeLLM:
 
 
 # ==============================================================================
-# Setup Memora
+# Setup Reminiscence
 # ==============================================================================
 
 llm = FakeLLM(latency_seconds=2.0)
@@ -57,10 +57,10 @@ llm = FakeLLM(latency_seconds=2.0)
 config = CacheConfig.load()
 config.similarity_threshold = 0.82  # Demo-specific override
 # config.enable_metrics = True
-memora = Memora(config)
+reminiscence = Reminiscence(config)
 
 
-@memora.cached(query_param="query", static_context={"function": "ask_llm"})
+@reminiscence.cached(query_param="query", static_context={"function": "ask_llm"})
 def ask_llm(query: str) -> str:
     """Ask LLM with semantic caching."""
     return llm.generate(query)
@@ -114,8 +114,8 @@ def demo():
     print("📊 RESULTS")
     print("=" * 80)
 
-    if memora.metrics:
-        m = memora.metrics
+    if reminiscence.metrics:
+        m = reminiscence.metrics
         hit_rate = m.hit_rate * 100
 
         # Calculate avg latency

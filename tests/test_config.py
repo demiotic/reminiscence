@@ -1,7 +1,7 @@
-"""Tests for memora.config.CacheConfig."""
+"""Tests for reminiscence.config.CacheConfig."""
 
 import os
-from memora import CacheConfig
+from reminiscence import CacheConfig
 
 
 class TestConfigDefaults:

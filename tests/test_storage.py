@@ -5,9 +5,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from memora.storage import create_storage_backend, LanceDBBackend
-from memora.types import CacheEntry
-from memora import CacheConfig
+from reminiscence.storage import create_storage_backend, LanceDBBackend
+from reminiscence.types import CacheEntry
+from reminiscence import CacheConfig
 
 
 class TestStorageFactory:

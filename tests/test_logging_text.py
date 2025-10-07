@@ -5,7 +5,7 @@ import pytest
 
 def test_config_has_text_logging(text_logging_env):
     """Config should have json_logs=False."""
-    from memora import CacheConfig
+    from reminiscence import CacheConfig
 
     config = CacheConfig.load()
     assert config.json_logs is False
@@ -13,26 +13,29 @@ def test_config_has_text_logging(text_logging_env):
 
 def test_initialization_logs_text(text_logging_env, capsys):
     """Should log initialization in text format."""
-    from memora import Memora, CacheConfig
+    from reminiscence import Reminiscence, CacheConfig
 
     config = CacheConfig.load()
-    memora = Memora(config)
+    reminiscence = Reminiscence(config)
 
     captured = capsys.readouterr()
-    assert "initializing_memora" in captured.out or "memora_ready" in captured.out
+    assert (
+        "initializing_reminiscence" in captured.out
+        or "reminiscence_ready" in captured.out
+    )
 
 
 def test_cache_hit_logs_text(text_logging_env, capsys):
     """Should log cache hit in text format."""
-    from memora import Memora, CacheConfig
+    from reminiscence import Reminiscence, CacheConfig
 
     config = CacheConfig.load()
-    memora = Memora(config)
+    reminiscence = Reminiscence(config)
 
-    memora.store("test query", {"agent": "test"}, "test result")
+    reminiscence.store("test query", {"agent": "test"}, "test result")
     capsys.readouterr()
 
-    result = memora.lookup("test query", {"agent": "test"})
+    result = reminiscence.lookup("test query", {"agent": "test"})
     captured = capsys.readouterr()
 
     assert result.is_hit
@@ -41,33 +44,33 @@ def test_cache_hit_logs_text(text_logging_env, capsys):
 
 def test_eviction_logs_text(text_logging_env, monkeypatch, capsys):
     """Should log eviction in text format."""
-    from memora import Memora, CacheConfig
+    from reminiscence import Reminiscence, CacheConfig
 
     monkeypatch.setenv("MEMORA_MAX_ENTRIES", "2")
 
     config = CacheConfig.load()
-    memora = Memora(config)
+    reminiscence = Reminiscence(config)
 
-    memora.store("q1", {"agent": "test"}, "r1")
-    memora.store("q2", {"agent": "test"}, "r2")
+    reminiscence.store("q1", {"agent": "test"}, "r1")
+    reminiscence.store("q2", {"agent": "test"}, "r2")
     capsys.readouterr()
 
-    memora.store("q3", {"agent": "test"}, "r3")
+    reminiscence.store("q3", {"agent": "test"}, "r3")
     captured = capsys.readouterr()
 
-    assert memora.backend.count() == 2
+    assert reminiscence.backend.count() == 2
     assert "evict" in captured.out.lower()
 
 
 def test_operations_work_with_text_logging(text_logging_env):
     """All operations should work with text logging."""
-    from memora import Memora, CacheConfig
+    from reminiscence import Reminiscence, CacheConfig
 
     config = CacheConfig.load()
-    memora = Memora(config)
+    reminiscence = Reminiscence(config)
 
-    memora.store("test", {"agent": "test"}, "result")
-    result = memora.lookup("test", {"agent": "test"})
+    reminiscence.store("test", {"agent": "test"}, "result")
+    result = reminiscence.lookup("test", {"agent": "test"})
 
     assert result.is_hit
-    assert memora.backend.count() == 1
+    assert reminiscence.backend.count() == 1

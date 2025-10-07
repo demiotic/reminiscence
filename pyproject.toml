@@ -1,6 +1,6 @@
 [project]
-name = "memora-cache"
-version = "0.1.1" # Incrementa la versión
+name = "reminiscence"
+version = "0.1.0"
 description = "Semantic caching for LLMs"
 authors = [{ name = "Juan José de las Heras Herrera" }]
 readme = "README.md"

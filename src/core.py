@@ -1,4 +1,4 @@
-"""Main Memora class - Facade for all components."""
+"""Main Reminiscence class - Facade for all components."""
 
 import time
 from typing import Any, Dict, Optional
@@ -16,7 +16,7 @@ from .utils.logging import configure_logging, get_logger
 logger = get_logger(__name__)
 
 
-class Memora:
+class Reminiscence:
     """
     Semantic cache for LLMs and multi-agent systems.
 
@@ -36,7 +36,7 @@ class Memora:
     - stop_scheduler(): Stop background cleanup
 
     Example:
-        >>> cache = Memora()
+        >>> cache = Reminiscence()
         >>>
         >>> # Manual usage with context
         >>> result = cache.lookup("What is ML?", {"agent": "qa", "model": "gpt-4"})
@@ -59,7 +59,7 @@ class Memora:
 
     def __init__(self, config: Optional[CacheConfig] = None):
         """
-        Initialize Memora with all components.
+        Initialize Reminiscence with all components.
 
         Args:
             config: Cache configuration. If None, loads from environment variables.
@@ -70,7 +70,7 @@ class Memora:
         configure_logging(self.config.log_level, self.config.json_logs)
 
         logger.info(
-            "initializing_memora",
+            "initializing_reminiscence",
             model=self.config.model_name,
             db_uri=self.config.db_uri,
             eviction=self.config.eviction_policy,
@@ -95,7 +95,7 @@ class Memora:
         self.scheduler: Optional[CleanupScheduler] = None
 
         logger.info(
-            "memora_ready",
+            "reminiscence_ready",
             entries=self.backend.count(),
             max_entries=self.config.max_entries,
             embedding_dim=self.embedder.embedding_dim,
@@ -113,7 +113,7 @@ class Memora:
         Useful for testing or manual cache management.
 
         Example:
-            >>> cache = Memora()
+            >>> cache = Reminiscence()
             >>> cache.store("test", {}, "result")
             >>> cache.clear()
             >>> assert cache.backend.count() == 0
@@ -233,7 +233,7 @@ class Memora:
             initial_delay_seconds: Delay before first cleanup (default: 60)
 
         Example:
-            >>> cache = Memora()
+            >>> cache = Reminiscence()
             >>> cache.start_scheduler(interval_seconds=1800)  # Cleanup every 30 minutes
             >>> # ... use cache ...
             >>> cache.stop_scheduler()

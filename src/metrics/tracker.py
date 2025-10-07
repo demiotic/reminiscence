@@ -1,4 +1,4 @@
-"""Enhanced metrics for Memora."""
+"""Enhanced metrics for Reminiscence."""
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any

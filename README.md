@@ -1,13 +1,13 @@
-# Memora
+# Reminiscence
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 
 **Semantic cache for multi-agent systems and LLM applications**
 
-Memora is a production-ready semantic caching library built on LanceDB and sentence-transformers. It eliminates redundant computations in AI systems by matching queries semantically rather than by exact string comparison.
+Reminiscence is a production-ready semantic caching library built on LanceDB and sentence-transformers. It eliminates redundant computations in AI systems by matching queries semantically rather than by exact string comparison.
 
-## Why Memora?
+## Why Reminiscence?
 
 Traditional caching fails for AI systems because users express the same intent differently:
 
@@ -18,7 +18,7 @@ Traditional caching fails for AI systems because users express the same intent d
 "What were Q3 revenues?"
 ```
 
-Memora solves this with **semantic similarity matching** using embedding vectors, reducing costs and latency in multi-agent systems, RAG pipelines, and LLM applications.
+Reminiscence solves this with **semantic similarity matching** using embedding vectors, reducing costs and latency in multi-agent systems, RAG pipelines, and LLM applications.
 
 ## Features
 
@@ -36,10 +36,10 @@ Memora solves this with **semantic similarity matching** using embedding vectors
 - **Metrics Tracking** - Hit rate, latency percentiles (p50/p95/p99), error rates
 - **Zero-Config Decorators** - Drop-in function caching with `@cached`
 - **Vector Indexing** - IVF-PQ for fast search at scale (>1K entries)
+- **Background cleanup scheduler** - Scheduler to keep clean the cache
 
 ### 🚧 Roadmap (v0.2.0+)
 
-- [ ] Background cleanup scheduler
 - [ ] Prometheus metrics exporter
 - [ ] S3/GCS remote storage
 - [ ] Distributed caching (Redis-compatible protocol)
@@ -67,10 +67,10 @@ pip install pandas polars numpy  # For DataFrame/array caching
 ### Basic Usage
 
 ```python
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 # Initialize with defaults
-cache = Memora()
+cache = Reminiscence()
 
 # Check cache before expensive operation
 result = cache.lookup(
@@ -99,9 +99,9 @@ else:
 Automatic caching for any function:
 
 ```python
-from memora import Memora
+from reminiscence import Reminiscence
 
-cache = Memora()
+cache = Reminiscence()
 
 @cache.cached(
     query_param="prompt",
@@ -149,7 +149,7 @@ config = CacheConfig(
     log_level="DEBUG",
     eviction_policy="fifo"
 )
-cache = Memora(config)
+cache = Reminiscence(config)
 ```
 
 ### Production Setup
@@ -165,7 +165,7 @@ config = CacheConfig(
     auto_create_index=True,
     index_threshold_entries=1000
 )
-cache = Memora(config)
+cache = Reminiscence(config)
 ```
 
 ### Environment Variables
@@ -174,7 +174,7 @@ Docker/Kubernetes-friendly configuration:
 
 ```bash
 # .env or docker-compose.yml
-MEMORA_DB_URI=/var/cache/memora
+MEMORA_DB_URI=/var/cache/reminiscence
 MEMORA_JSON_LOGS=true
 MEMORA_LOG_LEVEL=INFO
 MEMORA_MAX_ENTRIES=100000
@@ -185,10 +185,10 @@ MEMORA_AUTO_CREATE_INDEX=true
 ```
 
 ```python
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 # Reads all config from environment
-cache = Memora(CacheConfig.load())
+cache = Reminiscence(CacheConfig.load())
 ```
 
 **Supported variables:**
@@ -208,7 +208,7 @@ cache = Memora(CacheConfig.load())
 
 ## Eviction Policies
 
-Memora supports three eviction policies for when `max_entries` is reached:
+Reminiscence supports three eviction policies for when `max_entries` is reached:
 
 ### FIFO (First In First Out)
 
@@ -279,7 +279,7 @@ config = CacheConfig(eviction_policy="lfu", max_entries=1000)
 
 ### Hybrid Matching: Semantic + Exact Context
 
-Memora combines semantic similarity with exact context matching:
+Reminiscence combines semantic similarity with exact context matching:
 
 ```python
 # These match semantically BUT different contexts
@@ -331,7 +331,7 @@ if health["status"] == "unhealthy":
 ```yaml
 livenessProbe:
   exec:
-    command: ["python", "-c", "from memora import Memora; import sys; sys.exit(0 if Memora().health_check()['status'] == 'healthy' else 1)"]
+    command: ["python", "-c", "from reminiscence import Reminiscence; import sys; sys.exit(0 if Reminiscence().health_check()['status'] == 'healthy' else 1)"]
   initialDelaySeconds: 30
   periodSeconds: 60
 ```
@@ -379,7 +379,7 @@ deleted = cache.cleanup_expired()
 Check if data is available without retrieving it:
 
 ```python
-from memora import AvailabilityCheck
+from reminiscence import AvailabilityCheck
 
 # Lightweight check (doesn't fetch full result)
 check = cache.check_availability(query, context)
@@ -397,7 +397,7 @@ else:
 For production workloads with >1K entries:
 
 ```python
-cache = Memora(CacheConfig(auto_create_index=True))
+cache = Reminiscence(CacheConfig(auto_create_index=True))
 
 # Add many entries...
 for i in range(10_000):
@@ -421,14 +421,14 @@ stats = cache.get_index_stats()
 
 Automatically clean expired entries in the background:
 ```python
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 config = CacheConfig(
     ttl_seconds=3600,  # 1 hour TTL
     cleanup_interval_seconds=1800  # Cleanup every 30 minutes
 )
 
-cache = Memora(config)
+cache = Reminiscence(config)
 
 # Start automatic cleanup
 cache.start_scheduler()
@@ -442,7 +442,7 @@ cache.stop_scheduler()
 
 ```python
 config = CacheConfig(enable_metrics=True, json_logs=True)
-cache = Memora(config)
+cache = Reminiscence(config)
 
 # ... use cache ...
 
@@ -475,7 +475,7 @@ print(f"Index created: {stats['index_created']}")
 
 ## Supported Data Types
 
-Memora handles Python primitives and scientific computing structures:
+Reminiscence handles Python primitives and scientific computing structures:
 
 | Type | Support | Notes |
 |------|---------|-------|
@@ -510,7 +510,7 @@ cache.store(query, ctx, np.array([1, 2, 3]))
                │
                ▼
       ┌────────────────┐
-      │     Memora     │
+      │     Reminiscence     │
       │   Core Logic   │
       │  + Eviction    │
       └────────┬───────┘
@@ -562,10 +562,10 @@ Complete runnable examples:
 ### Multi-Agent System
 
 ```python
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 # Shared cache across agents with context isolation
-cache = Memora(CacheConfig(
+cache = Reminiscence(CacheConfig(
     eviction_policy="lru",
     max_entries=10_000
 ))
@@ -618,7 +618,7 @@ pytest
 pytest tests/test_eviction_policies.py -v
 
 # Run with coverage
-pytest --cov=memora --cov-report=html
+pytest --cov=reminiscence --cov-report=html
 ```
 
 ## Contributing

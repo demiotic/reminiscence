@@ -1,13 +1,13 @@
 """
-Memora Semantic Cache Benchmark
+Reminiscence Semantic Cache Benchmark
 
-Demonstrates Memora's semantic caching capabilities with real LLM calls.
+Demonstrates Reminiscence's semantic caching capabilities with real LLM calls.
 """
 
 import os
 import time
 from anthropic import Anthropic
-from memora import Memora, CacheConfig
+from reminiscence import Reminiscence, CacheConfig
 
 
 # Configuration
@@ -26,10 +26,10 @@ QUERIES = [
 
 
 # ==============================================================================
-# Setup Memora
+# Setup Reminiscence
 # ==============================================================================
 
-memora = Memora(
+reminiscence = Reminiscence(
     CacheConfig(
         similarity_threshold=SIMILARITY_THRESHOLD,
         json_logs=False,
@@ -41,9 +41,9 @@ memora = Memora(
 anthropic_client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 
-@memora.cached()
+@reminiscence.cached()
 def ask_claude(query: str) -> str:
-    """Ask Claude with Memora semantic caching."""
+    """Ask Claude with Reminiscence semantic caching."""
     message = anthropic_client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
@@ -74,8 +74,8 @@ def main():
         return
 
     # Reset metrics
-    if memora.metrics:
-        memora.metrics.reset()
+    if reminiscence.metrics:
+        reminiscence.metrics.reset()
 
     total_time = 0
     cache_hits = 0
@@ -127,9 +127,9 @@ def main():
         print(f"   Saved by cache:    ${saved_cost:.4f}")
         print(f"   Total saved:       {(saved_cost / max_cost) * 100:.1f}%")
 
-        # Memora metrics
-        if memora.metrics:
-            m = memora.metrics
+        # Reminiscence metrics
+        if reminiscence.metrics:
+            m = reminiscence.metrics
             metric_hit_rate = m.hit_rate * 100
 
             # Calculate avg latency from lookup_latencies_ms list
@@ -139,7 +139,7 @@ def main():
                 else 0
             )
 
-            print("\n📈 Memora Metrics:")
+            print("\n📈 Reminiscence Metrics:")
             print(f"   Hits:              {m.hits}")
             print(f"   Misses:            {m.misses}")
             print(f"   Hit rate:          {metric_hit_rate:.1f}%")

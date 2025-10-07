@@ -18,6 +18,7 @@ def create_ops(eviction_policy: str, max_entries: int = 3):
         max_entries=max_entries,
         eviction_policy=eviction_policy,
         enable_metrics=True,
+        similarity_threshold=0.95,
         log_level="WARNING",
     )
 
@@ -399,21 +400,40 @@ class TestCacheOperationsLookup:
 
     def test_lookup_semantic_similarity(self):
         """Should match semantically similar queries."""
-        ops = create_ops("fifo")
+        config = CacheConfig(
+            db_uri="memory://",
+            eviction_policy="fifo",
+            max_entries=10,
+            similarity_threshold=0.80,
+            log_level="DEBUG",
+        )
 
-        # Use longer, more detailed queries for better semantic matching
+        embedder = create_embedder(config)
+        backend = create_storage_backend(config, embedder.embedding_dim)
+        eviction = create_eviction_policy("fifo")
+
+        ops = CacheOperations(
+            storage=backend,
+            embedder=embedder,
+            eviction=eviction,
+            config=config,
+            metrics=None,
+        )
+
         ops.store(
             "What is machine learning and how does it work?",
             {"agent": "test"},
             "ML explanation",
         )
 
+        # Query similar
         result = ops.lookup(
-            "Can you explain how machine learning works?", {"agent": "test"}
+            "Explain the concept of machine learning", {"agent": "test"}
         )
 
         assert result.is_hit
-        assert result.similarity > 0.75
+        assert result.similarity > 0.80
+        assert "ML explanation" in result.result
 
 
 class TestCacheOperationsStore:

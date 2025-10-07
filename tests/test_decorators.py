@@ -135,7 +135,7 @@ class TestSyncFunctions:
             return f"{prompt}|{temperature}|{max_tokens}"
 
         # First call
-        result1 = generate("hello world", temperature=0.7, max_tokens=100)
+        generate("hello world", temperature=0.7, max_tokens=100)
         assert call_count == 1
 
         # Same prompt, different params (cache miss - params are strict)

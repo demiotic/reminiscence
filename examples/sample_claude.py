@@ -60,7 +60,7 @@ def ask_claude(query: str) -> str:
 def main():
     """Run semantic cache benchmark."""
     print("\n" + "=" * 80)
-    print("📊 MEMORA SEMANTIC CACHE BENCHMARK")
+    print("📊 REMINISCENCE SEMANTIC CACHE BENCHMARK")
     print("=" * 80)
     print(f"Model:                {MODEL}")
     print(f"Similarity threshold: {SIMILARITY_THRESHOLD}")

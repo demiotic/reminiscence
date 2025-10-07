@@ -1,7 +1,6 @@
 """Tests for background cleanup scheduler."""
 
 import time
-import pytest
 from reminiscence import Reminiscence, CacheConfig
 from reminiscence.scheduler import CleanupScheduler, SchedulerManager
 
@@ -92,11 +91,11 @@ class TestCleanupScheduler:
 
         stats = scheduler.get_stats()
 
-        assert stats["running"] == False
-        assert stats["total_runs"] >= 3
-        assert stats["total_deleted"] == sum(deleted_per_run[: stats["total_runs"]])
-        assert stats["last_run_time"] is not None
-        assert stats["errors"] == 0
+        not stats["running"]
+        not stats["total_runs"] >= 3
+        not stats["total_deleted"] == sum(deleted_per_run[: stats["total_runs"]])
+        not stats["last_run_time"] is not None
+        not stats["errors"] == 0
 
     def test_scheduler_handles_errors(self):
         """Scheduler should continue running after cleanup errors."""
@@ -300,7 +299,7 @@ class TestReminiscenceSchedulerIntegration:
 
         stats = cache.get_scheduler_stats()
         assert stats is not None
-        assert stats["running"] == True
+        assert stats["running"]
         assert stats["total_runs"] >= 1
 
         cache.stop_scheduler()
@@ -316,7 +315,7 @@ class TestReminiscenceSchedulerIntegration:
 
         stats = cache.get_stats()
         assert "scheduler" in stats
-        assert stats["scheduler"]["running"] == True
+        assert stats["scheduler"]["running"]
 
         cache.stop_scheduler()
 
@@ -325,13 +324,13 @@ class TestReminiscenceSchedulerIntegration:
         cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
 
         health = cache.health_check()
-        assert health["checks"]["scheduler"]["ok"] == True
+        assert health["checks"]["scheduler"]["ok"]
         assert "Not running" in health["checks"]["scheduler"]["details"]
 
         cache.start_scheduler(interval_seconds=10)
 
         health = cache.health_check()
-        assert health["checks"]["scheduler"]["ok"] == True
+        assert health["checks"]["scheduler"]["ok"]
         assert "Running" in health["checks"]["scheduler"]["details"]
 
         cache.stop_scheduler()

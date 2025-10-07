@@ -1,6 +1,5 @@
 """Integration tests for end-to-end scenarios."""
 
-import pytest
 import time
 
 from reminiscence import Reminiscence, CacheConfig
@@ -13,8 +12,8 @@ class TestEndToEnd:
         """Test complete cache workflow with exact matches."""
         config = CacheConfig(
             db_uri="memory://",
-            similarity_threshold=0.75,
             enable_metrics=True,
+            similarity_threshold=0.95,
             log_level="WARNING",
         )
         cache = Reminiscence(config)
@@ -154,23 +153,32 @@ class TestEndToEnd:
             db_uri="memory://",
             max_entries=3,
             eviction_policy="fifo",
+            similarity_threshold=0.95,
             log_level="WARNING",
         )
         cache = Reminiscence(config)
 
-        # Store 4 entries
-        for i in range(4):
-            cache.store(f"query {i}", {"agent": "test"}, f"result {i}")
+        # Store 4 entries con queries MUY diferentes
+        queries = [
+            ("What is Python programming?", "Python explanation"),
+            ("How to cook Italian pasta?", "Pasta recipe"),
+            ("Explain quantum mechanics", "Quantum physics"),
+            ("Best travel destinations Europe", "Travel guide"),
+        ]
+
+        for query, result in queries:
+            cache.store(query, {"agent": "test"}, result)
             time.sleep(0.01)
 
         # Should have evicted oldest
         assert cache.backend.count() == 3
 
         # First entry should be gone
-        result = cache.lookup("query 0", {"agent": "test"})
+        result = cache.lookup("What is Python programming?", {"agent": "test"})
         assert result.is_miss
 
         # Newer entries should exist
-        for i in range(1, 4):
-            result = cache.lookup(f"query {i}", {"agent": "test"})
+        for query, expected_result in queries[1:]:
+            result = cache.lookup(query, {"agent": "test"})
             assert result.is_hit
+            assert result.result == expected_result

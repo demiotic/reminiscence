@@ -1,7 +1,5 @@
 """Tests for JSON logging (json_logs=True)."""
 
-import pytest
-
 
 def test_config_has_json_logging(json_logging_env):
     """Config should have json_logs=True."""
@@ -16,7 +14,7 @@ def test_initialization_logs_json(json_logging_env, capsys):
     from reminiscence import Reminiscence, CacheConfig
 
     config = CacheConfig.load()
-    reminiscence = Reminiscence(config)
+    _ = Reminiscence(config)
 
     captured = capsys.readouterr()
 
@@ -47,7 +45,7 @@ def test_eviction_logs_json(json_logging_env, monkeypatch, capsys):
     """Should log eviction in JSON format."""
     from reminiscence import Reminiscence, CacheConfig
 
-    monkeypatch.setenv("MEMORA_MAX_ENTRIES", "2")
+    monkeypatch.setenv("REMINISCENCE_MAX_ENTRIES", "2")
 
     config = CacheConfig.load()
     reminiscence = Reminiscence(config)

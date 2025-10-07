@@ -74,7 +74,7 @@ def ask_llm(query: str) -> str:
 def demo():
     """Demonstrate semantic cache behavior."""
     print("\n" + "=" * 80)
-    print("🚀 MEMORA SEMANTIC CACHE DEMO")
+    print("🚀 REMINISCENCE SEMANTIC CACHE DEMO")
     print("=" * 80)
     print("Simulated LLM latency: 2-2.5 seconds per call")
     print("Cache lookup latency:  ~15ms")

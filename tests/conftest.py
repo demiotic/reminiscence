@@ -61,11 +61,11 @@ def json_logging_env(reset_structlog, reset_config, monkeypatch):
     """
     Configure environment for JSON logging tests.
 
-    Sets MEMORA_JSON_LOGS=true and MEMORA_LOG_LEVEL=INFO
+    Sets REMINISCENCE_JSON_LOGS=true and REMINISCENCE_LOG_LEVEL=INFO
     before any code runs, ensuring proper structlog configuration.
     """
-    monkeypatch.setenv("MEMORA_JSON_LOGS", "true")
-    monkeypatch.setenv("MEMORA_LOG_LEVEL", "INFO")
+    monkeypatch.setenv("REMINISCENCE_JSON_LOGS", "true")
+    monkeypatch.setenv("REMINISCENCE_LOG_LEVEL", "INFO")
 
     # Force configuration reload
     from reminiscence.utils.logging import configure_logging
@@ -80,11 +80,11 @@ def text_logging_env(reset_structlog, reset_config, monkeypatch):
     """
     Configure environment for text logging tests.
 
-    Sets MEMORA_JSON_LOGS=false and MEMORA_LOG_LEVEL=INFO
+    Sets REMINISCENCE_JSON_LOGS=false and REMINISCENCE_LOG_LEVEL=INFO
     before any code runs, ensuring proper structlog configuration.
     """
-    monkeypatch.setenv("MEMORA_JSON_LOGS", "false")
-    monkeypatch.setenv("MEMORA_LOG_LEVEL", "INFO")
+    monkeypatch.setenv("REMINISCENCE_JSON_LOGS", "false")
+    monkeypatch.setenv("REMINISCENCE_LOG_LEVEL", "INFO")
 
     # Force configuration reload
     from reminiscence.utils.logging import configure_logging
@@ -137,7 +137,7 @@ def disk_config(temp_cache_dir):
 
 
 # ============================================================================
-# MEMORA FIXTURES - High-level API
+# REMINISCENCE FIXTURES - High-level API
 # ============================================================================
 
 

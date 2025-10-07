@@ -174,14 +174,14 @@ Docker/Kubernetes-friendly configuration:
 
 ```bash
 # .env or docker-compose.yml
-MEMORA_DB_URI=/var/cache/reminiscence
-MEMORA_JSON_LOGS=true
-MEMORA_LOG_LEVEL=INFO
-MEMORA_MAX_ENTRIES=100000
-MEMORA_TTL_SECONDS=3600
-MEMORA_SIMILARITY_THRESHOLD=0.85
-MEMORA_EVICTION_POLICY=lru
-MEMORA_AUTO_CREATE_INDEX=true
+REMINISCENCE_DB_URI=/var/cache/reminiscence
+REMINISCENCE_JSON_LOGS=true
+REMINISCENCE_LOG_LEVEL=INFO
+REMINISCENCE_MAX_ENTRIES=100000
+REMINISCENCE_TTL_SECONDS=3600
+REMINISCENCE_SIMILARITY_THRESHOLD=0.85
+REMINISCENCE_EVICTION_POLICY=lru
+REMINISCENCE_AUTO_CREATE_INDEX=true
 ```
 
 ```python
@@ -192,19 +192,22 @@ cache = Reminiscence(CacheConfig.load())
 ```
 
 **Supported variables:**
-- `MEMORA_MODEL_NAME` - Embedding model (default: paraphrase-multilingual-MiniLM-L12-v2)
-- `MEMORA_USE_ONNX` - Use ONNX backend (default: true)
-- `MEMORA_SIMILARITY_THRESHOLD` - Match threshold 0.0-1.0 (default: 0.85)
-- `MEMORA_DB_URI` - Storage path (default: memory://)
-- `MEMORA_TABLE_NAME` - Table name (default: semantic_cache)
-- `MEMORA_ENABLE_METRICS` - Track metrics (default: true)
-- `MEMORA_TTL_SECONDS` - Expiration time in seconds (default: None)
-- `MEMORA_LOG_LEVEL` - DEBUG/INFO/WARNING/ERROR (default: INFO)
-- `MEMORA_JSON_LOGS` - Enable JSON logging (default: false)
-- `MEMORA_MAX_ENTRIES` - Max cache size (default: 1000)
-- `MEMORA_EVICTION_POLICY` - fifo/lru/lfu (default: fifo)
-- `MEMORA_AUTO_CREATE_INDEX` - Auto-index (default: false)
-- `MEMORA_INDEX_THRESHOLD_ENTRIES` - Min entries for index (default: 256)
+- `REMINISCENCE_MODEL_NAME` - Embedding model (default: paraphrase-multilingual-MiniLM-L12-v2)
+- `REMINISCENCE_EMBEDDING_BACKEND` - Backend (fastembed or auto)
+- `REMINISCENCE_SIMILARITY_THRESHOLD` - Match threshold 0.0-1.0 (default: 0.85)
+- `REMINISCENCE_DB_URI` - Storage path (default: memory://)
+- `REMINISCENCE_TABLE_NAME` - Table name (default: semantic_cache)
+- `REMINISCENCE_ENABLE_METRICS` - Track metrics (default: true)
+- `REMINISCENCE_TTL_SECONDS` - Expiration time in seconds (default: None)
+- `REMINISCENCE_LOG_LEVEL` - DEBUG/INFO/WARNING/ERROR (default: INFO)
+- `REMINISCENCE_JSON_LOGS` - Enable JSON logging (default: false)
+- `REMINISCENCE_MAX_ENTRIES` - Max cache size (default: 1000)
+- `REMINISCENCE_EVICTION_POLICY` - fifo/lru/lfu (default: fifo)
+- `REMINISCENCE_AUTO_CREATE_INDEX` - Auto-index (default: false)
+- `REMINISCENCE_INDEX_THRESHOLD_ENTRIES` - Min entries for index (default: 256)
+- `REMINISCENCE_CLEANUP_INTERVAL_SECONDS` - Interval for background cleanup
+- `REMINISCENCE_INDEX_NUM_PARTITIONS`: IVF partitions
+
 
 ## Eviction Policies
 
@@ -510,7 +513,7 @@ cache.store(query, ctx, np.array([1, 2, 3]))
                │
                ▼
       ┌────────────────┐
-      │     Reminiscence     │
+      │  Reminiscence  │
       │   Core Logic   │
       │  + Eviction    │
       └────────┬───────┘
@@ -519,9 +522,9 @@ cache.store(query, ctx, np.array([1, 2, 3]))
      ▼                   ▼
 ┌──────────┐    ┌────────────────┐
 │Embeddings│    │   LanceDB      │
-│sentence- │    │  (Vector DB)   │
-│transform │    │  + Arrow IPC   │
-│ + ONNX   │    │                │
+│fastembed │    │  (Vector DB)   │
+│          │    │  + Arrow IPC   │
+│          │    │                │
 └──────────┘    └────────────────┘
                │
                ▼
@@ -533,7 +536,7 @@ cache.store(query, ctx, np.array([1, 2, 3]))
 
 **Components:**
 - **Core**: Cache logic, hybrid matching, TTL/eviction coordination
-- **Embeddings**: sentence-transformers with ONNX optimization
+- **Embeddings**: fastembed
 - **Storage**: LanceDB (vector database) + Arrow IPC (large payloads)
 - **Eviction**: Pluggable policies (FIFO/LRU/LFU) with in-memory tracking
 - **Serialization**: orjson (fast) + custom handlers (DataFrames, numpy)
@@ -544,13 +547,12 @@ Typical latencies on consumer hardware (M1/M2 Mac, AMD Ryzen):
 
 | Operation | No Index (<1K entries) | With Index (>10K entries) |
 |-----------|------------------------|---------------------------|
-| Lookup    | 10-50ms               | 5-15ms                    |
-| Store     | 5-10ms                | 8-12ms                    |
-| Embedding | 20-50ms (ONNX)        | 20-50ms (ONNX)            |
+| Lookup    | 10-50ms                | 5-15ms                    |
+| Store     | 5-10ms                 | 8-12ms                    |
+| Embedding | 20-50ms                | 20-50ms                   |
 
 **Optimization tips:**
 - Enable auto-indexing for >1K entries: `auto_create_index=True`
-- Use ONNX for faster embeddings: `use_onnx=True` (default)
 - Choose appropriate eviction policy (LRU for temporal, LFU for popularity)
 - Increase `similarity_threshold` to reduce false positives
 - Use persistent storage to avoid cold starts
@@ -640,7 +642,6 @@ Contributions welcome! Please:
 - [x] Structured logging (JSON)
 - [x] Environment configuration
 - [x] Decorator API with auto-strict mode
-- [x] ONNX optimization
 - [x] Background cleanup scheduler
 
 ### v0.2.0 (Planned)

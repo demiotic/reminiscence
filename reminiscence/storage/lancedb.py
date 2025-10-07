@@ -3,11 +3,10 @@
 import json
 import hashlib
 import base64
-import time
 from typing import List, Dict, Any, Tuple
 import lancedb
 import pyarrow as pa
-import pyarrow.compute as pc
+
 
 try:
     import orjson
@@ -257,7 +256,7 @@ class LanceDBBackend(StorageBackend):
         where_clause = f"context_hash = '{context_hash}'"
 
         # Vector search with hash filter
-        query = self.table.search(embedding).limit(limit)
+        query = self.table.search(embedding).metric("cosine").limit(limit)
         query = query.where(where_clause)
 
         try:

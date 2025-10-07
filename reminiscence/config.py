@@ -12,8 +12,7 @@ class CacheConfig:
 
     Environment variables:
     - REMINISCENCE_MODEL_NAME: Embedding model (optional, uses backend default)
-    - REMINISCENCE_EMBEDDING_BACKEND: Backend (auto/fastembed/sentence-transformers)
-    - REMINISCENCE_USE_ONNX: Use ONNX backend (true/false)
+    - REMINISCENCE_EMBEDDING_BACKEND: Backend (fastembed or auto)
     - REMINISCENCE_SIMILARITY_THRESHOLD: Similarity threshold (0.0-1.0)
     - REMINISCENCE_DB_URI: Database URI
     - REMINISCENCE_TABLE_NAME: Table name
@@ -29,14 +28,12 @@ class CacheConfig:
     - REMINISCENCE_CLEANUP_INTERVAL_SECONDS: Interval for background cleanup
     """
 
-    # Model - None means use backend's default from registry
+    # Model
     model_name: Optional[str] = None  # None = use backend default
-    embedding_backend: str = "fastembed"  # Default to fastembed
-    use_onnx: bool = True
-    onnx_model_file: str = "model.onnx"
+    embedding_backend: str = "fastembed"  # Only fastembed supported
 
     # Cache
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 0.80  # Adjusted for FastEmbed mean pooling
     db_uri: str = "memory://"
     table_name: str = "semantic_cache"
     enable_metrics: bool = True
@@ -80,16 +77,10 @@ class CacheConfig:
             return None if value.lower() in ("none", "") else value
 
         return cls(
-            # Model - None means use backend default
+            # Model
             model_name=parse_str_or_none(os.getenv("REMINISCENCE_MODEL_NAME", "none")),
             embedding_backend=os.getenv(
                 "REMINISCENCE_EMBEDDING_BACKEND", defaults.embedding_backend
-            ),
-            use_onnx=parse_bool(
-                os.getenv("REMINISCENCE_USE_ONNX", str(defaults.use_onnx).lower())
-            ),
-            onnx_model_file=os.getenv(
-                "REMINISCENCE_ONNX_MODEL_FILE", defaults.onnx_model_file
             ),
             # Cache
             similarity_threshold=float(

@@ -7,7 +7,7 @@ Demonstrates Reminiscence's semantic caching capabilities with real LLM calls.
 import os
 import time
 from anthropic import Anthropic
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 
 # Configuration
@@ -30,7 +30,7 @@ QUERIES = [
 # ==============================================================================
 
 reminiscence = Reminiscence(
-    CacheConfig(
+    ReminiscenceConfig(
         similarity_threshold=SIMILARITY_THRESHOLD,
         json_logs=False,
         enable_metrics=True,

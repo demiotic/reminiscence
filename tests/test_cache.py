@@ -3,7 +3,7 @@
 import time
 import pytest
 
-from reminiscence import CacheConfig
+from reminiscence import ReminiscenceConfig
 from reminiscence.cache import CacheOperations
 from reminiscence.embeddings import create_embedder
 from reminiscence.storage import create_storage_backend
@@ -13,7 +13,7 @@ from reminiscence.metrics import CacheMetrics
 
 def create_ops(eviction_policy: str, max_entries: int = 3):
     """Helper to create CacheOperations with specific eviction policy."""
-    config = CacheConfig(
+    config = ReminiscenceConfig(
         db_uri="memory://",
         max_entries=max_entries,
         eviction_policy=eviction_policy,
@@ -342,7 +342,7 @@ class TestEvictionEdgeCases:
     @pytest.mark.parametrize("policy", ["fifo", "lru", "lfu"])
     def test_eviction_state_syncs_on_init(self, policy):
         """Eviction policy should sync with existing entries on init."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             max_entries=3,
             eviction_policy=policy,
@@ -400,7 +400,7 @@ class TestCacheOperationsLookup:
 
     def test_lookup_semantic_similarity(self):
         """Should match semantically similar queries."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             eviction_policy="fifo",
             max_entries=10,
@@ -496,7 +496,7 @@ class TestCacheOperationsMaintenance:
 
     def test_cleanup_expired(self):
         """Cleanup should remove expired entries."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=0.5,
             enable_metrics=True,

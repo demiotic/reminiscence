@@ -3,17 +3,17 @@
 
 def test_config_has_text_logging(text_logging_env):
     """Config should have json_logs=False."""
-    from reminiscence import CacheConfig
+    from reminiscence import ReminiscenceConfig
 
-    config = CacheConfig.load()
+    config = ReminiscenceConfig.load()
     assert config.json_logs is False
 
 
 def test_initialization_logs_text(text_logging_env, capsys):
     """Should log initialization in text format."""
-    from reminiscence import Reminiscence, CacheConfig
+    from reminiscence import Reminiscence, ReminiscenceConfig
 
-    config = CacheConfig.load()
+    config = ReminiscenceConfig.load()
     _ = Reminiscence(config)
 
     captured = capsys.readouterr()
@@ -25,9 +25,9 @@ def test_initialization_logs_text(text_logging_env, capsys):
 
 def test_cache_hit_logs_text(text_logging_env, capsys):
     """Should log cache hit in text format."""
-    from reminiscence import Reminiscence, CacheConfig
+    from reminiscence import Reminiscence, ReminiscenceConfig
 
-    config = CacheConfig.load()
+    config = ReminiscenceConfig.load()
     reminiscence = Reminiscence(config)
 
     reminiscence.store("test query", {"agent": "test"}, "test result")
@@ -42,11 +42,11 @@ def test_cache_hit_logs_text(text_logging_env, capsys):
 
 def test_eviction_logs_text(text_logging_env, monkeypatch, capsys):
     """Should log eviction in text format."""
-    from reminiscence import Reminiscence, CacheConfig
+    from reminiscence import Reminiscence, ReminiscenceConfig
 
     monkeypatch.setenv("REMINISCENCE_MAX_ENTRIES", "2")
 
-    config = CacheConfig.load()
+    config = ReminiscenceConfig.load()
     reminiscence = Reminiscence(config)
 
     reminiscence.store("q1", {"agent": "test"}, "r1")
@@ -62,9 +62,9 @@ def test_eviction_logs_text(text_logging_env, monkeypatch, capsys):
 
 def test_operations_work_with_text_logging(text_logging_env):
     """All operations should work with text logging."""
-    from reminiscence import Reminiscence, CacheConfig
+    from reminiscence import Reminiscence, ReminiscenceConfig
 
-    config = CacheConfig.load()
+    config = ReminiscenceConfig.load()
     reminiscence = Reminiscence(config)
 
     reminiscence.store("test", {"agent": "test"}, "result")

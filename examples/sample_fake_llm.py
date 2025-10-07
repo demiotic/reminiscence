@@ -7,7 +7,7 @@ Uses a simulated LLM to show cache behavior.
 
 import time
 import random
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 
 # ==============================================================================
@@ -54,7 +54,7 @@ class FakeLLM:
 llm = FakeLLM(latency_seconds=2.0)
 
 # Load config from environment variables
-config = CacheConfig.load()
+config = ReminiscenceConfig.load()
 config.similarity_threshold = 0.82  # Demo-specific override
 # config.enable_metrics = True
 reminiscence = Reminiscence(config)

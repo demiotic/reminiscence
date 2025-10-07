@@ -1,7 +1,7 @@
-"""Tests for reminiscence.config.CacheConfig."""
+"""Tests for reminiscence.config.ReminiscenceConfig."""
 
 import os
-from reminiscence import CacheConfig
+from reminiscence import ReminiscenceConfig
 
 
 class TestConfigDefaults:
@@ -9,7 +9,7 @@ class TestConfigDefaults:
 
     def test_default_values(self):
         """Config should have sensible defaults."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
 
         assert config.model_name is None
         assert config.embedding_backend == "fastembed"
@@ -34,7 +34,7 @@ class TestConfigLoad:
             if key.startswith("REMINISCENCE_"):
                 monkeypatch.delenv(key, raising=False)
 
-        config = CacheConfig.load()
+        config = ReminiscenceConfig.load()
 
         assert config.model_name is None
         assert config.similarity_threshold == 0.80
@@ -53,7 +53,7 @@ class TestConfigLoad:
         monkeypatch.setenv("REMINISCENCE_JSON_LOGS", "true")
         monkeypatch.setenv("REMINISCENCE_LOG_LEVEL", "WARNING")
 
-        config = CacheConfig.load()
+        config = ReminiscenceConfig.load()
 
         assert config.json_logs is True
         assert config.log_level == "WARNING"
@@ -63,13 +63,13 @@ class TestConfigLoad:
         # Test "true" variants
         for value in ["true", "True", "TRUE", "1", "yes", "Yes", "on"]:
             monkeypatch.setenv("REMINISCENCE_JSON_LOGS", value)
-            config = CacheConfig.load()
+            config = ReminiscenceConfig.load()
             assert config.json_logs is True, f"Failed for value: {value}"
 
         # Test "false" variants
         for value in ["false", "False", "FALSE", "0", "no", "off", ""]:
             monkeypatch.setenv("REMINISCENCE_JSON_LOGS", value)
-            config = CacheConfig.load()
+            config = ReminiscenceConfig.load()
             assert config.json_logs is False, f"Failed for value: {value}"
 
     def test_load_optional_int_none(self, monkeypatch):
@@ -77,7 +77,7 @@ class TestConfigLoad:
         monkeypatch.setenv("REMINISCENCE_TTL_SECONDS", "none")
         monkeypatch.setenv("REMINISCENCE_MAX_ENTRIES", "None")
 
-        config = CacheConfig.load()
+        config = ReminiscenceConfig.load()
 
         assert config.ttl_seconds is None
         assert config.max_entries is None
@@ -92,7 +92,7 @@ class TestConfigLoad:
         # Only set one env var
         monkeypatch.setenv("REMINISCENCE_JSON_LOGS", "true")
 
-        config = CacheConfig.load()
+        config = ReminiscenceConfig.load()
 
         # This one should be changed
         assert config.json_logs is True

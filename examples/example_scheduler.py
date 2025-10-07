@@ -1,10 +1,10 @@
 """Example: Using background cleanup scheduler."""
 
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 import time
 
 # Setup cache with TTL
-config = CacheConfig(
+config = ReminiscenceConfig(
     db_uri="./cache_with_scheduler.lance",
     ttl_seconds=300,  # 5 minutes
     max_entries=10_000,

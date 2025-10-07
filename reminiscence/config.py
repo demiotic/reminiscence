@@ -6,7 +6,7 @@ from typing import Optional
 
 
 @dataclass
-class CacheConfig:
+class ReminiscenceConfig:
     """
     Configuration for Reminiscence semantic cache.
 
@@ -60,7 +60,7 @@ class CacheConfig:
     cleanup_initial_delay: int = 60
 
     @classmethod
-    def load(cls) -> "CacheConfig":
+    def load(cls) -> "ReminiscenceConfig":
         """Load configuration from environment variables."""
         defaults = cls()
 

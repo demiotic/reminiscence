@@ -7,7 +7,7 @@ import structlog
 import logging
 from pathlib import Path
 
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.cache import CacheOperations
 from reminiscence.embeddings import create_embedder
 from reminiscence.storage import create_storage_backend
@@ -23,10 +23,10 @@ from reminiscence.metrics import CacheMetrics
 @pytest.fixture
 def reset_config():
     """Reset configuration singleton to force reload."""
-    from reminiscence.config import CacheConfig
+    from reminiscence.config import ReminiscenceConfig
 
-    if hasattr(CacheConfig, "_instance"):
-        delattr(CacheConfig, "_instance")
+    if hasattr(ReminiscenceConfig, "_instance"):
+        delattr(ReminiscenceConfig, "_instance")
     yield
 
 
@@ -115,7 +115,7 @@ def temp_cache_dir():
 @pytest.fixture
 def memory_config():
     """Configuration for in-memory cache (fast for tests)."""
-    return CacheConfig(
+    return ReminiscenceConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,
@@ -127,7 +127,7 @@ def memory_config():
 @pytest.fixture
 def disk_config(temp_cache_dir):
     """Configuration for disk-based cache."""
-    return CacheConfig(
+    return ReminiscenceConfig(
         db_uri=str(Path(temp_cache_dir) / "test_cache.db"),
         similarity_threshold=0.75,
         enable_metrics=True,
@@ -149,7 +149,7 @@ def reminiscence_memory_session():
     Uses scope="session" to load the embeddings model only once
     and reuse it across all tests, improving performance.
     """
-    config = CacheConfig(
+    config = ReminiscenceConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,
@@ -194,7 +194,7 @@ def cache_ops_session():
     Use this when you need direct access to CacheOperations internals
     or want to test with custom configurations.
     """
-    config = CacheConfig(
+    config = ReminiscenceConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,

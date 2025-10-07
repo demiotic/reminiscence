@@ -2,7 +2,7 @@
 
 import pytest
 import time
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 
 # ============================================================================
@@ -13,7 +13,7 @@ from reminiscence import Reminiscence, CacheConfig
 @pytest.fixture(scope="module")
 def reminiscence_session():
     """Shared Reminiscence instance for entire test session (loads model once)."""
-    config = CacheConfig(
+    config = ReminiscenceConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,
@@ -46,7 +46,7 @@ class TestReminiscenceBasics:
         """Test initialization with disk backend."""
         from pathlib import Path
 
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri=str(Path(temp_cache_dir) / "test.db"), log_level="WARNING"
         )
         reminiscence_disk = Reminiscence(config)
@@ -221,7 +221,7 @@ class TestSizeLimitsAndEviction:
 
     def test_max_entries_triggers_eviction(self):
         """Storing beyond max_entries should evict oldest entry."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             max_entries=3,
             enable_metrics=True,
@@ -248,7 +248,7 @@ class TestTTLAndCleanup:
 
     def test_cleanup_expired_entries(self):
         """Cleanup should remove expired entries."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=1,
             enable_metrics=True,
@@ -266,7 +266,7 @@ class TestTTLAndCleanup:
 
     def test_lookup_respects_ttl(self):
         """Lookup should not return expired entries."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=0.5,
             enable_metrics=True,
@@ -341,7 +341,7 @@ class TestAvailabilityCheck:
 
     def test_check_availability_with_ttl(self):
         """Check availability should include TTL remaining."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=10,
             enable_metrics=True,

@@ -67,7 +67,7 @@ pip install pandas polars numpy  # For DataFrame/array caching
 ### Basic Usage
 
 ```python
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 # Initialize with defaults
 cache = Reminiscence()
@@ -142,7 +142,7 @@ def ask_llm(prompt: str, temperature: float, max_tokens: int):
 ### Development Setup
 
 ```python
-config = CacheConfig(
+config = ReminiscenceConfig(
     db_uri="memory://",  # In-memory (no persistence)
     ttl_seconds=300,  # 5 minutes
     max_entries=1000,
@@ -155,7 +155,7 @@ cache = Reminiscence(config)
 ### Production Setup
 
 ```python
-config = CacheConfig(
+config = ReminiscenceConfig(
     db_uri="./cache.lance",  # Persistent storage
     ttl_seconds=3600,  # 1 hour
     max_entries=50_000,
@@ -185,10 +185,10 @@ REMINISCENCE_AUTO_CREATE_INDEX=true
 ```
 
 ```python
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 # Reads all config from environment
-cache = Reminiscence(CacheConfig.load())
+cache = Reminiscence(ReminiscenceConfig.load())
 ```
 
 **Supported variables:**
@@ -216,7 +216,7 @@ Reminiscence supports three eviction policies for when `max_entries` is reached:
 ### FIFO (First In First Out)
 
 ```python
-config = CacheConfig(eviction_policy="fifo", max_entries=1000)
+config = ReminiscenceConfig(eviction_policy="fifo", max_entries=1000)
 ```
 
 **Behavior:** Evicts the oldest entry regardless of usage patterns.
@@ -233,7 +233,7 @@ config = CacheConfig(eviction_policy="fifo", max_entries=1000)
 ### LRU (Least Recently Used)
 
 ```python
-config = CacheConfig(eviction_policy="lru", max_entries=1000)
+config = ReminiscenceConfig(eviction_policy="lru", max_entries=1000)
 ```
 
 **Behavior:** Evicts entries that haven't been accessed recently.
@@ -250,7 +250,7 @@ config = CacheConfig(eviction_policy="lru", max_entries=1000)
 ### LFU (Least Frequently Used)
 
 ```python
-config = CacheConfig(eviction_policy="lfu", max_entries=1000)
+config = ReminiscenceConfig(eviction_policy="lfu", max_entries=1000)
 ```
 
 **Behavior:** Evicts entries with the lowest access count.
@@ -364,7 +364,7 @@ result = cache.lookup(query, context, similarity_threshold=0.75)
 
 ```python
 # Time-based expiration
-config = CacheConfig(ttl_seconds=3600)  # 1 hour
+config = ReminiscenceConfig(ttl_seconds=3600)  # 1 hour
 
 # Manual invalidation by context
 deleted = cache.invalidate(context={"agent": "sql", "db": "staging"})
@@ -400,7 +400,7 @@ else:
 For production workloads with >1K entries:
 
 ```python
-cache = Reminiscence(CacheConfig(auto_create_index=True))
+cache = Reminiscence(ReminiscenceConfig(auto_create_index=True))
 
 # Add many entries...
 for i in range(10_000):
@@ -424,9 +424,9 @@ stats = cache.get_index_stats()
 
 Automatically clean expired entries in the background:
 ```python
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
-config = CacheConfig(
+config = ReminiscenceConfig(
     ttl_seconds=3600,  # 1 hour TTL
     cleanup_interval_seconds=1800  # Cleanup every 30 minutes
 )
@@ -444,7 +444,7 @@ cache.stop_scheduler()
 ### Metrics and Observability
 
 ```python
-config = CacheConfig(enable_metrics=True, json_logs=True)
+config = ReminiscenceConfig(enable_metrics=True, json_logs=True)
 cache = Reminiscence(config)
 
 # ... use cache ...
@@ -564,10 +564,10 @@ Complete runnable examples:
 ### Multi-Agent System
 
 ```python
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 # Shared cache across agents with context isolation
-cache = Reminiscence(CacheConfig(
+cache = Reminiscence(ReminiscenceConfig(
     eviction_policy="lru",
     max_entries=10_000
 ))

@@ -2,7 +2,7 @@
 
 import time
 
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 
 class TestEndToEnd:
@@ -10,7 +10,7 @@ class TestEndToEnd:
 
     def test_complete_workflow(self):
         """Test complete cache workflow with exact matches."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             enable_metrics=True,
             similarity_threshold=0.95,
@@ -43,7 +43,7 @@ class TestEndToEnd:
 
     def test_semantic_similarity_workflow(self):
         """Test semantic similarity matching."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             similarity_threshold=0.70,
             log_level="WARNING",
@@ -66,7 +66,9 @@ class TestEndToEnd:
 
     def test_multi_context_workflow(self):
         """Test with multiple contexts."""
-        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(
+            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        )
 
         # Store with different contexts
         contexts = [
@@ -91,12 +93,12 @@ class TestEndToEnd:
         db_path = str(Path(temp_cache_dir) / "persist.db")
 
         # First instance - store data
-        config1 = CacheConfig(db_uri=db_path, log_level="WARNING")
+        config1 = ReminiscenceConfig(db_uri=db_path, log_level="WARNING")
         cache1 = Reminiscence(config1)
         cache1.store("persistent query", {"agent": "test"}, "persistent result")
 
         # Second instance - should find data
-        config2 = CacheConfig(db_uri=db_path, log_level="WARNING")
+        config2 = ReminiscenceConfig(db_uri=db_path, log_level="WARNING")
         cache2 = Reminiscence(config2)
 
         result = cache2.lookup("persistent query", {"agent": "test"})
@@ -105,7 +107,7 @@ class TestEndToEnd:
 
     def test_ttl_workflow(self):
         """Test TTL expiration workflow."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=1,
             log_level="WARNING",
@@ -128,7 +130,9 @@ class TestEndToEnd:
 
     def test_decorator_workflow(self):
         """Test decorator integration."""
-        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(
+            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        )
 
         call_count = 0
 
@@ -149,7 +153,7 @@ class TestEndToEnd:
 
     def test_eviction_workflow(self):
         """Test eviction policy workflow."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             max_entries=3,
             eviction_policy="fifo",

@@ -1,7 +1,7 @@
 """Tests for background cleanup scheduler."""
 
 import time
-from reminiscence import Reminiscence, CacheConfig
+from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.scheduler import CleanupScheduler, SchedulerManager
 
 
@@ -252,7 +252,7 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_start_stop_scheduler(self):
         """Reminiscence should start and stop scheduler."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=1,
             log_level="WARNING",
@@ -282,7 +282,7 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_scheduler_stats(self):
         """Reminiscence should expose scheduler stats."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=0.5,
             log_level="WARNING",
@@ -306,7 +306,9 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_scheduler_in_get_stats(self):
         """Scheduler stats should appear in get_stats()."""
-        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(
+            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        )
 
         stats = cache.get_stats()
         assert "scheduler" not in stats
@@ -321,7 +323,9 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_scheduler_in_health_check(self):
         """Health check should include scheduler status."""
-        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(
+            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        )
 
         health = cache.health_check()
         assert health["checks"]["scheduler"]["ok"]
@@ -337,7 +341,7 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_context_manager_stops_scheduler(self):
         """Context manager should auto-stop scheduler."""
-        config = CacheConfig(db_uri="memory://", log_level="WARNING")
+        config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
 
         with Reminiscence(config) as cache:
             cache.start_scheduler(interval_seconds=10)
@@ -348,7 +352,7 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_scheduler_without_ttl_warning(self):
         """Starting scheduler without TTL should log warning."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=None,  # No TTL
             log_level="WARNING",
@@ -364,7 +368,9 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_scheduler_already_running_warning(self):
         """Starting scheduler twice should log warning."""
-        cache = Reminiscence(CacheConfig(db_uri="memory://", log_level="WARNING"))
+        cache = Reminiscence(
+            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        )
 
         cache.start_scheduler(interval_seconds=10)
         cache.start_scheduler(interval_seconds=5)  # Should warn
@@ -375,7 +381,7 @@ class TestReminiscenceSchedulerIntegration:
 
     def test_reminiscence_cleanup_actually_works(self):
         """Scheduler should actually delete expired entries."""
-        config = CacheConfig(
+        config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=0.5,
             log_level="WARNING",

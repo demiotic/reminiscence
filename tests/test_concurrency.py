@@ -13,13 +13,13 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def worker_store_many(db_path: str, worker_id: int, num_stores: int):
     """Worker that performs many stores."""
     # Imports inside worker (after spawn)
-    from reminiscence import Reminiscence, CacheConfig
+    from reminiscence import Reminiscence, ReminiscenceConfig
     import os
 
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print(f"[Worker {worker_id}] Starting...", flush=True)
 
-    config = CacheConfig(
+    config = ReminiscenceConfig(
         db_uri=db_path,
         max_entries=100,
         enable_metrics=True,
@@ -98,9 +98,9 @@ class TestConcurrentStores:
         print(f"Failure rate: {total_failed / total_attempted * 100:.2f}%")
 
         # Verify final state
-        from reminiscence import Reminiscence, CacheConfig
+        from reminiscence import Reminiscence, ReminiscenceConfig
 
-        config = CacheConfig(db_uri=db_path, log_level="ERROR")
+        config = ReminiscenceConfig(db_uri=db_path, log_level="ERROR")
         reminiscence = Reminiscence(config)
         final_count = reminiscence.backend.count()  # ✅ .backend.count()
 
@@ -150,9 +150,9 @@ class TestConcurrentStores:
         print(f"Failure rate: {total_failed / total_attempted * 100:.2f}%")
 
         # Verify final state
-        from reminiscence import Reminiscence, CacheConfig
+        from reminiscence import Reminiscence, ReminiscenceConfig
 
-        config = CacheConfig(db_uri=db_path, log_level="ERROR")
+        config = ReminiscenceConfig(db_uri=db_path, log_level="ERROR")
         reminiscence = Reminiscence(config)
         final_count = reminiscence.backend.count()  # ✅ .backend.count()
 

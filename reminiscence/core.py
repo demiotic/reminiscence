@@ -3,7 +3,7 @@
 import time
 from typing import Any, Dict, Optional
 
-from .config import CacheConfig
+from .config import ReminiscenceConfig
 from .types import LookupResult, AvailabilityCheck
 from .embeddings import create_embedder
 from .storage import create_storage_backend
@@ -57,14 +57,14 @@ class Reminiscence:
         ...     return expensive_llm_call(question, model)
     """
 
-    def __init__(self, config: Optional[CacheConfig] = None):
+    def __init__(self, config: Optional[ReminiscenceConfig] = None):
         """
         Initialize Reminiscence with all components.
 
         Args:
             config: Cache configuration. If None, loads from environment variables.
         """
-        self.config = config or CacheConfig.load()
+        self.config = config or ReminiscenceConfig.load()
 
         # Setup logging
         configure_logging(self.config.log_level, self.config.json_logs)

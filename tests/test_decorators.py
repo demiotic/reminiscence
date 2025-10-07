@@ -5,7 +5,7 @@ from reminiscence import (
     create_cached_decorator,
     ReminiscenceDecorator,
     Reminiscence,
-    CacheConfig,
+    ReminiscenceConfig,
 )
 
 
@@ -17,7 +17,7 @@ from reminiscence import (
 @pytest.fixture(scope="module")
 def reminiscence_session_local():
     """Reminiscence instance for this test module only."""
-    config = CacheConfig(
+    config = ReminiscenceConfig(
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,

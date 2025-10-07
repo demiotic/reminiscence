@@ -4,7 +4,7 @@ import pytest
 
 from reminiscence.embeddings import create_embedder
 from reminiscence.embeddings.fastembed import FastEmbedEmbedder
-from reminiscence import CacheConfig
+from reminiscence import ReminiscenceConfig
 
 
 class TestEmbedderFactory:
@@ -12,7 +12,7 @@ class TestEmbedderFactory:
 
     def test_create_embedder_default(self):
         """Should create default embedder (FastEmbed)."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
         embedder = create_embedder(config)
 
         assert isinstance(embedder, FastEmbedEmbedder)
@@ -20,21 +20,21 @@ class TestEmbedderFactory:
 
     def test_create_embedder_explicit_fastembed(self):
         """Should create FastEmbed when specified."""
-        config = CacheConfig(embedding_backend="fastembed")
+        config = ReminiscenceConfig(embedding_backend="fastembed")
         embedder = create_embedder(config)
 
         assert isinstance(embedder, FastEmbedEmbedder)
 
     def test_create_embedder_auto(self):
         """Should create FastEmbed with 'auto' backend."""
-        config = CacheConfig(embedding_backend="auto")
+        config = ReminiscenceConfig(embedding_backend="auto")
         embedder = create_embedder(config)
 
         assert isinstance(embedder, FastEmbedEmbedder)
 
     def test_create_embedder_invalid_backend(self):
         """Should raise on invalid backend."""
-        config = CacheConfig(embedding_backend="invalid")
+        config = ReminiscenceConfig(embedding_backend="invalid")
 
         with pytest.raises(ValueError, match="Unknown embedding_backend"):
             create_embedder(config)
@@ -45,7 +45,7 @@ class TestFastEmbedEmbedder:
 
     def test_embed_basic(self):
         """Should generate embeddings."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
         embedder = FastEmbedEmbedder(config)
 
         embedding = embedder.embed("test text")
@@ -56,7 +56,7 @@ class TestFastEmbedEmbedder:
 
     def test_embed_deterministic(self):
         """Same text should produce same embedding."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
         embedder = FastEmbedEmbedder(config)
 
         emb1 = embedder.embed("test")
@@ -66,7 +66,7 @@ class TestFastEmbedEmbedder:
 
     def test_embedding_dim(self):
         """Should detect correct embedding dimension."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
         embedder = FastEmbedEmbedder(config)
 
         # Default model is 384 dims
@@ -74,7 +74,7 @@ class TestFastEmbedEmbedder:
 
     def test_custom_model(self):
         """Should accept custom model name."""
-        config = CacheConfig(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        config = ReminiscenceConfig(model_name="sentence-transformers/all-MiniLM-L6-v2")
         embedder = FastEmbedEmbedder(config)
 
         embedding = embedder.embed("test")
@@ -82,7 +82,7 @@ class TestFastEmbedEmbedder:
 
     def test_embed_empty_string(self):
         """Should handle empty string."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
         embedder = FastEmbedEmbedder(config)
 
         embedding = embedder.embed("")
@@ -92,7 +92,7 @@ class TestFastEmbedEmbedder:
 
     def test_embed_multilingual(self):
         """Should handle multilingual text."""
-        config = CacheConfig()
+        config = ReminiscenceConfig()
         embedder = FastEmbedEmbedder(config)
 
         # Test different languages

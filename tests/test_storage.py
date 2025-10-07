@@ -7,7 +7,7 @@ from pathlib import Path
 
 from reminiscence.storage import create_storage_backend, LanceDBBackend
 from reminiscence.types import CacheEntry
-from reminiscence import CacheConfig
+from reminiscence import ReminiscenceConfig
 
 
 class TestStorageFactory:
@@ -15,7 +15,7 @@ class TestStorageFactory:
 
     def test_create_storage_memory(self):
         """Should create memory storage."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = create_storage_backend(config, embedding_dim=384)
 
         assert isinstance(storage, LanceDBBackend)
@@ -24,7 +24,7 @@ class TestStorageFactory:
     def test_create_storage_disk(self):
         """Should create disk storage."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = CacheConfig(db_uri=str(Path(tmpdir) / "test.db"))
+            config = ReminiscenceConfig(db_uri=str(Path(tmpdir) / "test.db"))
             storage = create_storage_backend(config, embedding_dim=384)
 
             assert isinstance(storage, LanceDBBackend)
@@ -36,14 +36,14 @@ class TestLanceDBBackend:
 
     def test_count_empty(self):
         """Count on empty storage should be 0."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         assert storage.count() == 0
 
     def test_add_entry(self):
         """Should add entries."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
@@ -61,7 +61,7 @@ class TestLanceDBBackend:
 
     def test_search(self):
         """Should search by embedding and context."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         # Add entry
@@ -88,7 +88,7 @@ class TestLanceDBBackend:
 
     def test_search_different_context_returns_empty(self):
         """Search with different context should return empty."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         # Add entry with context A
@@ -114,7 +114,7 @@ class TestLanceDBBackend:
 
     def test_to_arrow(self):
         """Should convert to Arrow table."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
@@ -137,7 +137,7 @@ class TestLanceDBBackend:
 
     def test_add_multiple_entries(self):
         """Should add multiple entries at once."""
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entries = [
@@ -163,7 +163,7 @@ class TestLanceDBBackend:
         except ImportError:
             pytest.skip("Pandas not installed")
 
-        config = CacheConfig(db_uri="memory://")
+        config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
         df = pd.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})

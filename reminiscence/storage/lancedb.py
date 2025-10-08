@@ -27,15 +27,10 @@ class LanceDBBackend(StorageBackend):
     """LanceDB implementation with safe multi-format serialization (Singleton per db_uri)."""
 
     _instances: Dict[str, "LanceDBBackend"] = {}
-    _lock = None  # Add if using threads
+    _lock = None
 
     def __new__(cls, config, embedding_dim: int, metrics=None):
-        """
-        Create or return existing instance for the same db_uri.
-
-        Multiple Reminiscence instances with the same db_uri will share
-        the same storage backend, enabling cache pooling.
-        """
+        """Create or return existing instance for the same db_uri."""
         db_uri = config.db_uri
 
         if db_uri not in cls._instances:
@@ -49,15 +44,7 @@ class LanceDBBackend(StorageBackend):
         return cls._instances[db_uri]
 
     def __init__(self, config, embedding_dim: int, metrics=None):
-        """
-        Initialize LanceDB backend (only runs once per db_uri).
-
-        Args:
-            config: Configuration object
-            embedding_dim: Dimension of embeddings
-            metrics: Optional CacheMetrics instance for tracking
-        """
-        # Skip if already initialized
+        """Initialize LanceDB backend (only runs once per db_uri)."""
         if self._initialized:
             return
 
@@ -78,7 +65,7 @@ class LanceDBBackend(StorageBackend):
         )
 
     def _create_schema(self) -> pa.Schema:
-        """Create PyArrow schema with both JSON and hash."""
+        """Create PyArrow schema with fixed-size embedding for vector search."""
         return pa.schema(
             [
                 pa.field("id", pa.string()),
@@ -113,22 +100,14 @@ class LanceDBBackend(StorageBackend):
 
     def _is_special_type(self, value: Any) -> bool:
         """Check if value is a DataFrame, array, or other special type."""
-        # Pandas DataFrame
         if hasattr(value, "to_dict") and hasattr(value, "columns"):
             return True
-
-        # Polars DataFrame
         if hasattr(value, "to_arrow"):
             return True
-
-        # PyArrow Table
         if hasattr(value, "__class__") and value.__class__.__name__ == "Table":
             return True
-
-        # NumPy array
         if hasattr(value, "dtype") and hasattr(value, "shape"):
             return True
-
         return False
 
     def _serialize_nested_dict(self, result: dict) -> Tuple[str, str]:
@@ -137,14 +116,11 @@ class LanceDBBackend(StorageBackend):
         special_types = {}
 
         for key, value in result.items():
-            # Check if value is a special type (DataFrame, array, etc.)
             if self._is_special_type(value):
-                # Serialize it separately
                 serialized_value, value_type = self._serialize_result(value)
                 serialized_dict[key] = f"__special__{key}"
                 special_types[key] = {"data": serialized_value, "type": value_type}
             elif isinstance(value, (dict, list, tuple)):
-                # Recursively serialize nested structures
                 nested_serialized, nested_type = self._serialize_result(value)
                 if nested_type.startswith("nested_"):
                     serialized_dict[key] = f"__special__{key}"
@@ -157,7 +133,6 @@ class LanceDBBackend(StorageBackend):
             else:
                 serialized_dict[key] = value
 
-        # Package everything together
         final_data = {"base": serialized_dict, "special": special_types}
 
         if HAS_ORJSON:
@@ -196,32 +171,13 @@ class LanceDBBackend(StorageBackend):
             return json.dumps(final_data), "nested_list"
 
     def _serialize_result(self, result: Any) -> Tuple[str, str]:
-        """
-        Serialize result with optimal format selection.
-        Supports nested structures (dict/list) containing DataFrames/arrays.
-
-        Priority:
-        1. Nested dict/list (may contain DataFrames)
-        2. Arrow IPC for tabular data (Arrow, Pandas, Polars)
-        3. NumPy arrays
-        4. orjson for JSON-serializable objects (if available)
-        5. Fallback to stdlib json
-
-        Raises:
-            TypeError: If result is not serializable
-
-        Returns:
-            (serialized_data, type_indicator)
-        """
-
-        # Handle nested structures first
+        """Serialize result with optimal format selection."""
         if isinstance(result, dict):
             return self._serialize_nested_dict(result)
 
         if isinstance(result, (list, tuple)):
             return self._serialize_nested_list(result)
 
-        # PyArrow Table - use IPC (most efficient)
         if hasattr(result, "__class__") and result.__class__.__name__ == "Table":
             try:
                 sink = pa.BufferOutputStream()
@@ -235,7 +191,6 @@ class LanceDBBackend(StorageBackend):
             except Exception as e:
                 logger.warning("arrow_serialization_failed", error=str(e))
 
-        # Pandas DataFrame - convert to Arrow IPC
         if hasattr(result, "to_dict") and hasattr(result, "columns"):
             try:
                 arrow_table = pa.Table.from_pandas(result)
@@ -250,7 +205,6 @@ class LanceDBBackend(StorageBackend):
             except Exception as e:
                 logger.warning("pandas_serialization_failed", error=str(e))
 
-        # Polars DataFrame - convert to Arrow IPC
         if hasattr(result, "to_arrow"):
             try:
                 arrow_table = result.to_arrow()
@@ -265,13 +219,11 @@ class LanceDBBackend(StorageBackend):
             except Exception as e:
                 logger.warning("polars_serialization_failed", error=str(e))
 
-        # NumPy array
         if hasattr(result, "dtype") and hasattr(result, "shape"):
             try:
                 import numpy as np
 
                 if isinstance(result, np.ndarray):
-                    # Serialize as Arrow array
                     arrow_array = pa.array(result.flatten())
                     arrow_table = pa.Table.from_arrays([arrow_array], names=["values"])
                     sink = pa.BufferOutputStream()
@@ -279,9 +231,7 @@ class LanceDBBackend(StorageBackend):
                         writer.write_table(arrow_table)
                     buffer = sink.getvalue()
 
-                    # Store shape and dtype as metadata
                     metadata = {"shape": list(result.shape), "dtype": str(result.dtype)}
-
                     encoded = base64.b64encode(buffer.to_pybytes()).decode("utf-8")
                     final_data = {"data": encoded, "metadata": metadata}
 
@@ -292,7 +242,6 @@ class LanceDBBackend(StorageBackend):
             except Exception as e:
                 logger.warning("numpy_serialization_failed", error=str(e))
 
-        # Everything else - JSON only (no repr fallback)
         try:
             if HAS_ORJSON:
                 serialized = orjson.dumps(result).decode("utf-8")
@@ -300,7 +249,6 @@ class LanceDBBackend(StorageBackend):
             else:
                 return json.dumps(result), "json"
         except (TypeError, ValueError) as e:
-            # Raise error instead of falling back to repr
             logger.error(
                 "json_serialization_failed", error=str(e), type=type(result).__name__
             )
@@ -323,7 +271,6 @@ class LanceDBBackend(StorageBackend):
         result = {}
         for key, value in base_dict.items():
             if isinstance(value, str) and value.startswith("__special__"):
-                # Deserialize special type
                 special_key = value.replace("__special__", "")
                 special_data = special_types[special_key]["data"]
                 special_type = special_types[special_key]["type"]
@@ -346,7 +293,6 @@ class LanceDBBackend(StorageBackend):
         result = []
         for idx, value in enumerate(base_list):
             if isinstance(value, str) and value.startswith("__special__"):
-                # Deserialize special type
                 special_key = str(idx)
                 special_data = special_types[special_key]["data"]
                 special_type = special_types[special_key]["type"]
@@ -368,33 +314,19 @@ class LanceDBBackend(StorageBackend):
         encoded_data = parsed["data"]
         metadata = parsed["metadata"]
 
-        # Deserialize Arrow
         buffer = base64.b64decode(encoded_data.encode("utf-8"))
         reader = pa.ipc.open_stream(buffer)
         arrow_table = reader.read_all()
 
-        # Convert back to numpy
         flat_array = arrow_table["values"].to_numpy()
 
-        # Reshape
         shape = tuple(metadata["shape"])
         dtype = np.dtype(metadata["dtype"])
 
         return flat_array.reshape(shape).astype(dtype)
 
     def _deserialize_result(self, data: str, result_type: str) -> Any:
-        """
-        Deserialize result from string based on type indicator.
-
-        Args:
-            data: Serialized data
-            result_type: Type indicator from serialization
-
-        Returns:
-            Deserialized object
-        """
-
-        # Handle nested structures
+        """Deserialize result from string based on type indicator."""
         if result_type == "nested_dict":
             return self._deserialize_nested_dict(data)
 
@@ -404,7 +336,6 @@ class LanceDBBackend(StorageBackend):
         if result_type == "numpy_arrow":
             return self._deserialize_numpy(data)
 
-        # Existing deserialization
         if result_type == "arrow_ipc":
             buffer = base64.b64decode(data.encode("utf-8"))
             reader = pa.ipc.open_stream(buffer)
@@ -438,7 +369,6 @@ class LanceDBBackend(StorageBackend):
             return json.loads(data)
 
         elif result_type == "repr":
-            # Legacy support for old repr entries
             obj = json.loads(data)
             return obj.get("__repr__")
 
@@ -477,7 +407,6 @@ class LanceDBBackend(StorageBackend):
                     }
                 )
             except TypeError as e:
-                # Skip unserializable entries
                 logger.error(
                     "entry_skipped_unserializable", error=str(e), query=entry.query_text
                 )
@@ -504,7 +433,6 @@ class LanceDBBackend(StorageBackend):
             try:
                 self.table.add(data)
 
-                # Track metrics
                 elapsed_ms = (time.perf_counter() - start) * 1000
 
                 if self.metrics:
@@ -516,7 +444,6 @@ class LanceDBBackend(StorageBackend):
                         self.metrics.storage_add_latencies_ms = []
                     self.metrics.storage_add_latencies_ms.append(elapsed_ms)
 
-                    # Keep only last 1000 samples
                     if len(self.metrics.storage_add_latencies_ms) > 1000:
                         self.metrics.storage_add_latencies_ms = (
                             self.metrics.storage_add_latencies_ms[-1000:]
@@ -545,29 +472,21 @@ class LanceDBBackend(StorageBackend):
         limit: int = 50,
         similarity_threshold: float = 0.85,
     ) -> List[CacheEntry]:
-        """
-        Hybrid search: hash-based context filter + semantic similarity.
-
-        Uses context_hash for O(1) exact matching, then vector similarity.
-        """
+        """Hybrid search: hash-based context filter + semantic similarity."""
         start = time.perf_counter()
 
-        # Generate hash for fast filtering
         context_hash = (
             create_fingerprint(context) if context else create_fingerprint({})
         )
 
-        # Build SQL filter using hash (O(1) lookup)
         where_clause = f"context_hash = '{context_hash}'"
 
-        # Vector search with hash filter
         query = self.table.search(embedding).metric("cosine").limit(limit)
         query = query.where(where_clause)
 
         try:
             results = query.to_arrow()
 
-            # Track search metrics
             elapsed_ms = (time.perf_counter() - start) * 1000
 
             if self.metrics:
@@ -579,7 +498,6 @@ class LanceDBBackend(StorageBackend):
                     self.metrics.storage_search_latencies_ms = []
                 self.metrics.storage_search_latencies_ms.append(elapsed_ms)
 
-                # Keep only last 1000 samples
                 if len(self.metrics.storage_search_latencies_ms) > 1000:
                     self.metrics.storage_search_latencies_ms = (
                         self.metrics.storage_search_latencies_ms[-1000:]
@@ -607,19 +525,15 @@ class LanceDBBackend(StorageBackend):
 
             return []
 
-        # Convert to CacheEntry with deserialization
         entries = []
         for i in range(len(results)):
             try:
-                # Calculate similarity from distance
                 distance = results["_distance"][i].as_py()
                 similarity = 1.0 - distance
 
-                # Filter by threshold
                 if similarity < similarity_threshold:
                     continue
 
-                # Deserialize
                 context_dict = json.loads(results["context"][i].as_py())
                 result_data = results["result"][i].as_py()
                 result_type = results["result_type"][i].as_py()
@@ -635,7 +549,7 @@ class LanceDBBackend(StorageBackend):
                 entry = CacheEntry(
                     query_text=results["query_text"][i].as_py(),
                     context=context_dict,
-                    embedding=results["embedding"][i],
+                    embedding=list(results["embedding"][i]),
                     result=result_obj,
                     timestamp=results["timestamp"][i].as_py(),
                     similarity=similarity,
@@ -647,7 +561,6 @@ class LanceDBBackend(StorageBackend):
                 logger.error("deserialization_failed", index=i, error=str(e))
                 continue
 
-        # Sort by similarity descending
         entries.sort(key=lambda x: x.similarity or 0, reverse=True)
 
         return entries
@@ -697,7 +610,7 @@ class LanceDBBackend(StorageBackend):
         return self._index_created
 
     def create_index(self, num_partitions: int, num_sub_vectors: int):
-        """Create IVF-PQ index."""
+        """Create IVF-PQ index for vector search."""
         logger.info(
             "creating_index",
             partitions=num_partitions,

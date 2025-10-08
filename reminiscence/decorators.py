@@ -48,120 +48,99 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
         >>> reminiscence = Reminiscence()
         >>> cached = create_cached_decorator(reminiscence)
         >>>
-        >>> @cached(query_param="prompt", strict_params=["model"])
+        >>> @cached(query="prompt", query_mode="semantic", context_params=["model"])
         >>> def call_llm(prompt: str, model: str):
         >>>     return expensive_llm_call(prompt, model)
     """
 
     def decorator(
-        query_param: str = "query",
-        strict_params: Optional[List[str]] = None,
+        query: str = "query",
+        query_mode: str = "semantic",
+        context_params: Optional[List[str]] = None,
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
+        similarity_threshold: Optional[float] = None,
     ) -> Callable[[F], F]:
         """
         Decorator to cache function results with hybrid matching.
 
         Args:
-            query_param: Name of the query parameter for semantic search
-            strict_params: Parameters that must match exactly (agent_id, tools, model, etc)
-            static_context: Static context dict (merged with extracted params)
-            auto_strict: If True, auto-detect non-string params as strict
-
-        Returns:
-            Decorated function
-
-        Example:
-            >>> # Semantic query + exact model/tools matching
-            >>> @cached(
-            ...     query_param="user_input",
-            ...     strict_params=["agent_id", "tools"],
-            ...     static_context={"model": "gpt-4"}
-            ... )
-            >>> def call_agent(user_input: str, agent_id: str, tools: List[Dict]):
-            ...     return expensive_call(user_input, agent_id, tools)
-            >>>
-            >>> # Auto-detect: non-strings become strict
-            >>> @cached(query_param="prompt", auto_strict=True)
-            >>> def ask_llm(prompt: str, temperature: float, max_tokens: int):
-            ...     # temperature and max_tokens auto-detected as strict
-            ...     return llm_call(prompt, temperature, max_tokens)
+            query: Name of the query parameter (renamed from query_param)
+            query_mode: Query matching strategy ("semantic", "exact", "auto")
+            context_params: Parameters for exact context matching
+            static_context: Static context dict
+            auto_strict: Auto-detect non-string params as context
+            similarity_threshold: Minimum similarity score (overrides config)  # ← AÑADIR DOC
         """
 
         def decorator_func(func: F) -> F:
             sig = inspect.signature(func)
             params = list(sig.parameters.keys())
 
-            # Validate query_param exists
-            if query_param not in params:
+            if query not in params:
                 raise ValueError(
-                    f"Parameter '{query_param}' not found in {func.__name__}. "
+                    f"Parameter '{query}' not found in {func.__name__}. "
                     f"Available parameters: {params}"
                 )
 
-            # Determine strict params with correct precedence
-            if strict_params is not None:
-                # Explicit strict_params takes precedence
-                strict_list = strict_params
+            if context_params is not None:
+                context_list = context_params
             elif auto_strict:
-                # Auto-detect non-string params as strict
-                detected_strict = []
+                detected_context = []
                 for name, param in sig.parameters.items():
-                    if name in {query_param, "self", "cls"}:
+                    if name in {query, "self", "cls"}:
                         continue
                     ann = param.annotation
                     if ann not in {str, "str", inspect.Parameter.empty}:
-                        detected_strict.append(name)
-                strict_list = detected_strict
+                        detected_context.append(name)
+                context_list = detected_context
             else:
-                # No strict params - pure semantic matching
-                strict_list = []
+                context_list = []
 
             @functools.wraps(func)
             def wrapper(*args, **kwargs) -> Any:
                 bound = sig.bind(*args, **kwargs)
                 bound.apply_defaults()
 
-                # Extract query value
-                query_value = bound.arguments.get(query_param)
+                query_value = bound.arguments.get(query)
                 if query_value is None:
                     raise ValueError(
-                        f"Parameter '{query_param}' is None. "
-                        f"Must provide a value for '{query_param}'."
+                        f"Parameter '{query}' is None. "
+                        f"Must provide a value for '{query}'."
                     )
 
-                # Build cache context (exact matching)
                 cache_context = {}
 
-                # Add static context first
                 if static_context is not None:
                     cache_context.update(static_context)
 
-                # Extract strict params
-                for param in strict_list:
+                for param in context_list:
                     value = bound.arguments.get(param)
                     if value is not None:
                         cache_context[param] = _serialize_strict(value)
 
-                # If no context at all, add function name for disambiguation
                 if not cache_context:
                     cache_context = {"__function__": func.__name__}
 
-                # Check cache
-                result = reminiscence.lookup(query_value, cache_context)
+                # Pass similarity_threshold to lookup
+                result = reminiscence.lookup(
+                    query_value,
+                    cache_context,
+                    similarity_threshold=similarity_threshold,
+                    query_mode=query_mode,
+                )
 
                 if result.is_hit:
                     return result.result
 
-                # Cache miss - execute function
                 output = func(*args, **kwargs)
 
-                # Store in cache
-                reminiscence.store(query_value, cache_context, output)
+                reminiscence.store(
+                    query_value, cache_context, output, query_mode=query_mode
+                )
 
                 return output
 
-            # Handle async functions
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
@@ -169,21 +148,19 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
 
-                    # Extract query value
-                    query_value = bound.arguments.get(query_param)
+                    query_value = bound.arguments.get(query)
                     if query_value is None:
                         raise ValueError(
-                            f"Parameter '{query_param}' is None. "
-                            f"Must provide a value for '{query_param}'."
+                            f"Parameter '{query}' is None. "
+                            f"Must provide a value for '{query}'."
                         )
 
-                    # Build cache context (same logic as sync)
                     cache_context = {}
 
                     if static_context is not None:
                         cache_context.update(static_context)
 
-                    for param in strict_list:
+                    for param in context_list:
                         value = bound.arguments.get(param)
                         if value is not None:
                             cache_context[param] = _serialize_strict(value)
@@ -191,17 +168,22 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     if not cache_context:
                         cache_context = {"__function__": func.__name__}
 
-                    # Check cache
-                    result = reminiscence.lookup(query_value, cache_context)
+                    # Pass similarity_threshold to lookup
+                    result = reminiscence.lookup(
+                        query_value,
+                        cache_context,
+                        similarity_threshold=similarity_threshold,
+                        query_mode=query_mode,
+                    )
 
                     if result.is_hit:
                         return result.result
 
-                    # Cache miss - execute async function
                     output = await func(*args, **kwargs)
 
-                    # Store in cache
-                    reminiscence.store(query_value, cache_context, output)
+                    reminiscence.store(
+                        query_value, cache_context, output, query_mode=query_mode
+                    )
 
                     return output
 
@@ -223,8 +205,9 @@ class ReminiscenceDecorator:
     Example:
         >>> decorator = ReminiscenceDecorator(reminiscence)
         >>> @decorator.cached(
-        ...     query_param="prompt",
-        ...     strict_params=["model", "agent_id"]
+        ...     query="prompt",
+        ...     query_mode="semantic",
+        ...     context_params=["model", "agent_id"]
         ... )
         >>> def my_function(prompt: str, model: str, agent_id: str):
         >>>     return expensive_computation(prompt, model, agent_id)
@@ -242,8 +225,9 @@ class ReminiscenceDecorator:
 
     def cached(
         self,
-        query_param: str = "query",
-        strict_params: Optional[List[str]] = None,
+        query: str = "query",  # ← Renombrado
+        query_mode: str = "semantic",  # ← NUEVO
+        context_params: Optional[List[str]] = None,  # ← Renombrado
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
     ) -> Callable[[F], F]:
@@ -251,17 +235,19 @@ class ReminiscenceDecorator:
         Create a cached decorator with hybrid matching.
 
         Args:
-            query_param: Name of the query parameter for semantic search
-            strict_params: Parameters that must match exactly
+            query: Name of the query parameter (renamed from query_param)
+            query_mode: Query matching strategy ("semantic", "exact", "auto")
+            context_params: Parameters for exact context matching (renamed from strict_params)
             static_context: Static context dict
-            auto_strict: Auto-detect non-string params as strict
+            auto_strict: Auto-detect non-string params as context
 
         Returns:
             Decorator function
         """
         return self._cached_decorator(
-            query_param=query_param,
-            strict_params=strict_params,
+            query=query,
+            query_mode=query_mode,
+            context_params=context_params,
             static_context=static_context,
             auto_strict=auto_strict,
         )

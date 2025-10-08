@@ -8,7 +8,6 @@ from reminiscence import (
     ReminiscenceConfig,
 )
 
-
 # ============================================================================
 # LOCAL SESSION FIXTURES (solo para este archivo)
 # ============================================================================
@@ -96,13 +95,13 @@ class TestSyncFunctions:
         assert call_count == 2
         assert result1 != result2
 
-    def test_strict_params(self, reminiscence_memory):
-        """strict_params should enforce exact matching."""
+    def test_context_params(self, reminiscence_memory):
+        """context_params should enforce exact matching."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(static_context={"agent": "test"}, strict_params=["model"])
+        @cached(static_context={"agent": "test"}, context_params=["model"])  # ← CHANGED
         def compute(query: str, model: str, temperature: float):
             nonlocal call_count
             call_count += 1
@@ -114,7 +113,7 @@ class TestSyncFunctions:
 
         # Second call with same query and model (cache hit)
         result2 = compute("hello world", model="gpt-4", temperature=0.9)
-        assert call_count == 1  # Cache hit (temperature not strict)
+        assert call_count == 1  # Cache hit (temperature not in context)
         assert result1 == result2
 
         # Third call with different model (cache miss)
@@ -123,12 +122,14 @@ class TestSyncFunctions:
         assert result1 != result3
 
     def test_auto_strict(self, reminiscence_memory):
-        """auto_strict should detect non-string params."""
+        """auto_strict should detect non-string params as context."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(query_param="prompt", auto_strict=True)
+        @cached(
+            query="prompt", auto_strict=True
+        )  # ← CHANGED: query instead of query_param
         def generate(prompt: str, temperature: float, max_tokens: int):
             nonlocal call_count
             call_count += 1
@@ -138,7 +139,7 @@ class TestSyncFunctions:
         generate("hello world", temperature=0.7, max_tokens=100)
         assert call_count == 1
 
-        # Same prompt, different params (cache miss - params are strict)
+        # Same prompt, different params (cache miss - params are context)
         result2 = generate("hello world", temperature=0.8, max_tokens=100)
         assert call_count == 2
 
@@ -148,12 +149,12 @@ class TestSyncFunctions:
         assert result2 == result3
 
     def test_custom_query_param(self, reminiscence_memory):
-        """Custom query_param should work."""
+        """Custom query parameter name should work."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(static_context={"agent": "test"}, query_param="prompt")
+        @cached(static_context={"agent": "test"}, query="prompt")  # ← CHANGED
         def generate(prompt: str, style: str):
             nonlocal call_count
             call_count += 1
@@ -166,12 +167,12 @@ class TestSyncFunctions:
         assert call_count == 1  # Second call hit cache
 
     def test_invalid_query_param(self, reminiscence_memory):
-        """Invalid query_param should raise error."""
+        """Invalid query parameter should raise error."""
         cached = create_cached_decorator(reminiscence_memory)
 
         with pytest.raises(ValueError, match="not found"):
 
-            @cached(static_context={"agent": "test"}, query_param="nonexistent")
+            @cached(static_context={"agent": "test"}, query="nonexistent")  # ← CHANGED
             def compute(query: str):
                 return "result"
 
@@ -225,7 +226,7 @@ class TestContextHandling:
     """Context handling tests."""
 
     def test_static_context_only(self, reminiscence_memory):
-        """Static context with no strict params - query is semantic key."""
+        """Static context with no context params - query is semantic key."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
@@ -245,13 +246,13 @@ class TestContextHandling:
         assert result1 == "Explain quantum computing-1"
         assert call_count == 1
 
-    def test_complex_strict_param(self, reminiscence_memory):
-        """Complex types in strict_params should serialize correctly."""
+    def test_complex_context_param(self, reminiscence_memory):
+        """Complex types in context_params should serialize correctly."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(strict_params=["tools"])
+        @cached(context_params=["tools"])  # ← CHANGED
         def call_agent(query: str, tools: list):
             nonlocal call_count
             call_count += 1
@@ -376,12 +377,12 @@ class TestEdgeCases:
         assert my_function.__doc__ == "My docstring."
 
     def test_none_values_excluded(self, reminiscence_memory):
-        """None values should be excluded from strict params."""
+        """None values should be excluded from context params."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(strict_params=["optional"])
+        @cached(context_params=["optional"])  # ← CHANGED
         def compute(query: str, optional: str = None):
             nonlocal call_count
             call_count += 1
@@ -393,3 +394,84 @@ class TestEdgeCases:
         # Should hit cache (both have optional=None)
         assert result1 == result2
         assert call_count == 1
+
+
+# ============================================================================
+# NUEVOS TESTS PARA QUERY_MODE
+# ============================================================================
+
+
+class TestDecoratorQueryModes:
+    """Tests for query_mode parameter in decorator."""
+
+    def test_semantic_mode_decorator(self, reminiscence_memory):
+        """Decorator with semantic mode should cache semantically."""
+        cached = create_cached_decorator(reminiscence_memory)
+
+        call_count = 0
+
+        @cached(query="question", query_mode="semantic", context_params=["user"])
+        def ask_llm(question: str, user: str):
+            nonlocal call_count
+            call_count += 1
+            return f"Answer for {user}: {question}"
+
+        # First call
+        result1 = ask_llm("What is Python?", "alice")
+        assert call_count == 1
+
+        # Similar question - should hit via semantic
+        result2 = ask_llm("Explain Python", "alice")
+        assert call_count == 1  # Cache hit
+        assert result1 == result2
+
+    def test_exact_mode_decorator(self, reminiscence_memory):
+        """Decorator with exact mode should only hit on exact match."""
+        cached = create_cached_decorator(reminiscence_memory)
+
+        call_count = 0
+
+        @cached(query="sql", query_mode="exact", context_params=["database"])
+        def run_query(sql: str, database: str):
+            nonlocal call_count
+            call_count += 1
+            return f"Results from {database}: {sql}"
+
+        # First call
+        result1 = run_query("SELECT * FROM users", "prod")
+        assert call_count == 1
+
+        # Exact same - should hit
+        result2 = run_query("SELECT * FROM users", "prod")
+        assert call_count == 1  # Cache hit
+        assert result1 == result2
+
+        # Different SQL - should miss
+        result3 = run_query("SELECT * FROM orders", "prod")
+        assert call_count == 2  # Cache miss
+        assert result3 != result1
+
+    def test_auto_mode_decorator(self, reminiscence_memory):
+        """Decorator with auto mode should try exact then semantic."""
+        cached = create_cached_decorator(reminiscence_memory)
+
+        call_count = 0
+
+        @cached(query="prompt", query_mode="auto")
+        def generate_text(prompt: str):
+            nonlocal call_count
+            call_count += 1
+            return f"Generated: {prompt} (call {call_count})"
+
+        # First call
+        result1 = generate_text("Hello world")
+        assert call_count == 1
+
+        # Exact same - should hit via exact
+        result2 = generate_text("Hello world")
+        assert call_count == 1
+        assert result1 == result2
+
+        # Similar - should hit via semantic
+        _ = generate_text("Hello there world")
+        assert call_count == 1  # Still cached (semantic match)

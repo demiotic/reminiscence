@@ -22,13 +22,6 @@ def reminiscence_session():
     return Reminiscence(config)
 
 
-@pytest.fixture
-def reminiscence_memory(reminiscence_session):
-    """Clean Reminiscence for each test (reuses instance, only resets state)."""
-    reminiscence_session.clear()
-    yield reminiscence_session
-
-
 # ============================================================================
 # TESTS
 # ============================================================================
@@ -37,10 +30,10 @@ def reminiscence_memory(reminiscence_session):
 class TestReminiscenceBasics:
     """Basic initialization and operation tests."""
 
-    def test_init_memory(self, reminiscence_memory):
+    def test_init_memory(self, reminiscence):
         """Test initialization with memory backend."""
-        assert reminiscence_memory is not None
-        assert reminiscence_memory.backend.count() == 0
+        assert reminiscence is not None
+        assert reminiscence.backend.count() == 0
 
     def test_init_disk(self, temp_cache_dir):
         """Test initialization with disk backend."""
@@ -53,9 +46,9 @@ class TestReminiscenceBasics:
         assert reminiscence_disk is not None
         assert reminiscence_disk.config.db_uri != "memory://"
 
-    def test_get_stats_empty(self, reminiscence_memory):
+    def test_get_stats_empty(self, reminiscence):
         """Test statistics with empty cache."""
-        stats = reminiscence_memory.get_stats()
+        stats = reminiscence.get_stats()
         assert stats["total_entries"] == 0
         assert stats["hits"] == 0
         assert stats["misses"] == 0
@@ -64,22 +57,22 @@ class TestReminiscenceBasics:
 class TestErrorHandling:
     """Graceful error handling tests."""
 
-    def test_lookup_handles_embedding_failure(self, reminiscence_memory, monkeypatch):
+    def test_lookup_handles_embedding_failure(self, reminiscence, monkeypatch):
         """Lookup should return MISS if embedding fails."""
-        reminiscence_memory.store("dummy query", {"agent": "test"}, "dummy result")
+        reminiscence.store("dummy query", {"agent": "test"}, "dummy result")
 
         def failing_embed(text):
             raise RuntimeError("Embedding model crashed")
 
-        monkeypatch.setattr(reminiscence_memory.embedder, "embed", failing_embed)
+        monkeypatch.setattr(reminiscence.embedder, "embed", failing_embed)
 
-        result = reminiscence_memory.lookup("test query", {"agent": "test"})
+        result = reminiscence.lookup("test query", {"agent": "test"})
 
         assert result.is_miss
         assert result.result is None
-        assert reminiscence_memory.metrics.lookup_errors >= 1
+        assert reminiscence.metrics.lookup_errors >= 1
 
-    def test_store_handles_unserializable_types(self, reminiscence_memory):
+    def test_store_handles_unserializable_types(self, reminiscence):
         """Storage should handle unserializable types gracefully."""
         import threading
 
@@ -87,114 +80,108 @@ class TestErrorHandling:
         unserializable = threading.Lock()
 
         # No debería crashear, solo loggear error
-        reminiscence_memory.store(
+        reminiscence.store(
             query="test with unserializable",
             context={"agent": "test"},
             result=unserializable,
         )
 
         # El entry no debería haberse guardado
-        result = reminiscence_memory.lookup(
-            "test with unserializable", {"agent": "test"}
-        )
+        result = reminiscence.lookup("test with unserializable", {"agent": "test"})
         assert not result.is_hit
 
 
 class TestLookupAndStore:
     """Lookup and store operation tests."""
 
-    def test_lookup_miss_empty_cache(self, reminiscence_memory):
+    def test_lookup_miss_empty_cache(self, reminiscence):
         """Lookup on empty cache should return miss."""
-        result = reminiscence_memory.lookup("test query", {"agent": "test"})
+        result = reminiscence.lookup("test query", {"agent": "test"})
 
         assert result.is_miss
         assert result.result is None
         assert result.similarity is None
 
-    def test_store_and_lookup_exact(self, reminiscence_memory):
+    def test_store_and_lookup_exact(self, reminiscence):
         """Store followed by exact lookup should HIT."""
         query = "What is Python?"
         context = {"agent": "llm"}
         expected = "Python is a programming language"
 
-        reminiscence_memory.store(query, context, expected)
-        assert reminiscence_memory.backend.count() == 1
+        reminiscence.store(query, context, expected)
+        assert reminiscence.backend.count() == 1
 
-        result = reminiscence_memory.lookup(query, context)
+        result = reminiscence.lookup(query, context)
 
         assert result.is_hit
         assert result.result == expected
         assert result.similarity >= 0.99
         assert result.matched_query == query
 
-    def test_store_and_lookup_semantic(self, reminiscence_memory):
+    def test_store_and_lookup_semantic(self, reminiscence):
         """Semantic similar query should HIT."""
-        reminiscence_memory.store(
+        reminiscence.store(
             "What is machine learning?",
             {"agent": "test"},
             "Machine learning explanation",
         )
 
-        result = reminiscence_memory.lookup(
-            "Explain machine learning", {"agent": "test"}
-        )
+        result = reminiscence.lookup("Explain machine learning", {"agent": "test"})
 
         assert result.is_hit
         assert result.result == "Machine learning explanation"
         assert result.similarity > 0.75
 
-    def test_lookup_different_context_miss(self, reminiscence_memory):
+    def test_lookup_different_context_miss(self, reminiscence):
         """Different context should cause MISS."""
-        reminiscence_memory.store("test", {"agent": "A"}, "result A")
-        result = reminiscence_memory.lookup("test", {"agent": "B"})
+        reminiscence.store("test", {"agent": "A"}, "result A")
+        result = reminiscence.lookup("test", {"agent": "B"})
 
         assert result.is_miss
 
-    def test_store_dict_result(self, reminiscence_memory):
+    def test_store_dict_result(self, reminiscence):
         """Store and retrieve dict data."""
         data = {"key": "value", "number": 42}
 
-        reminiscence_memory.store("query", {"agent": "test"}, data)
-        result = reminiscence_memory.lookup("query", {"agent": "test"})
+        reminiscence.store("query", {"agent": "test"}, data)
+        result = reminiscence.lookup("query", {"agent": "test"})
 
         assert result.is_hit
         assert result.result == data
 
-    def test_store_list_result(self, reminiscence_memory):
+    def test_store_list_result(self, reminiscence):
         """Store and retrieve list data."""
         data = [1, 2, 3, "text", {"nested": "dict"}]
 
-        reminiscence_memory.store("query", {"agent": "test"}, data)
-        result = reminiscence_memory.lookup("query", {"agent": "test"})
+        reminiscence.store("query", {"agent": "test"}, data)
+        result = reminiscence.lookup("query", {"agent": "test"})
 
         assert result.is_hit
         assert result.result == data
 
-    def test_lookup_below_threshold(self, reminiscence_memory):
+    def test_lookup_below_threshold(self, reminiscence):
         """Query below similarity threshold should MISS."""
-        reminiscence_memory.store(
-            "What is Python?", {"agent": "test"}, "Python explanation"
-        )
+        reminiscence.store("What is Python?", {"agent": "test"}, "Python explanation")
 
-        result = reminiscence_memory.lookup("What is the weather?", {"agent": "test"})
+        result = reminiscence.lookup("What is the weather?", {"agent": "test"})
 
         assert result.is_miss
 
-    def test_lookup_custom_threshold(self, reminiscence_memory):
+    def test_lookup_custom_threshold(self, reminiscence):
         """Custom threshold should be respected."""
-        reminiscence_memory.store(
+        reminiscence.store(
             "What is machine learning?",
             {"agent": "test"},
             "Machine learning explanation",
         )
 
-        result = reminiscence_memory.lookup(
+        result = reminiscence.lookup(
             "Explain machine learning", {"agent": "test"}, similarity_threshold=0.6
         )
 
         assert result.is_hit
 
-    def test_store_large_dataframe(self, reminiscence_memory):
+    def test_store_large_dataframe(self, reminiscence):
         """Storage should handle large DataFrames with Arrow IPC."""
         try:
             import pandas as pd
@@ -205,12 +192,12 @@ class TestLookupAndStore:
         large_df = pd.DataFrame({"col1": range(10000), "col2": ["text" * 10] * 10000})
 
         # Debería guardarse sin problemas
-        reminiscence_memory.store(
+        reminiscence.store(
             query="Get large dataset", context={"agent": "test"}, result=large_df
         )
 
         # Debería recuperarse correctamente
-        result = reminiscence_memory.lookup("Get large dataset", {"agent": "test"})
+        result = reminiscence.lookup("Get large dataset", {"agent": "test"})
         assert result.is_hit
         assert isinstance(result.result, pd.DataFrame)
         assert len(result.result) == 10000
@@ -288,52 +275,52 @@ class TestTTLAndCleanup:
 class TestInvalidation:
     """Invalidation tests."""
 
-    def test_invalidate_by_context(self, reminiscence_memory):
+    def test_invalidate_by_context(self, reminiscence):
         """Invalidate by context should remove matching entries."""
-        reminiscence_memory.store("q1", {"agent": "A"}, "r1")
-        reminiscence_memory.store("q2", {"agent": "B"}, "r2")
-        reminiscence_memory.store("q3", {"agent": "A"}, "r3")
+        reminiscence.store("q1", {"agent": "A"}, "r1")
+        reminiscence.store("q2", {"agent": "B"}, "r2")
+        reminiscence.store("q3", {"agent": "A"}, "r3")
 
-        deleted = reminiscence_memory.invalidate(context={"agent": "A"})
+        deleted = reminiscence.invalidate(context={"agent": "A"})
 
         assert deleted == 2
-        assert reminiscence_memory.backend.count() == 1
+        assert reminiscence.backend.count() == 1
 
-    def test_invalidate_by_age(self, reminiscence_memory):
+    def test_invalidate_by_age(self, reminiscence):
         """Invalidate by age should remove old entries."""
-        reminiscence_memory.store("old query", {"agent": "test"}, "old result")
+        reminiscence.store("old query", {"agent": "test"}, "old result")
 
         time.sleep(0.1)
 
-        deleted = reminiscence_memory.invalidate(older_than_seconds=0.05)
+        deleted = reminiscence.invalidate(older_than_seconds=0.05)
 
         assert deleted == 1
-        assert reminiscence_memory.backend.count() == 0
+        assert reminiscence.backend.count() == 0
 
-    def test_invalidate_without_criteria(self, reminiscence_memory):
+    def test_invalidate_without_criteria(self, reminiscence):
         """Invalidate without criteria should do nothing."""
-        reminiscence_memory.store("test", {"agent": "test"}, "result")
+        reminiscence.store("test", {"agent": "test"}, "result")
 
-        deleted = reminiscence_memory.invalidate()
+        deleted = reminiscence.invalidate()
 
         assert deleted == 0
-        assert reminiscence_memory.backend.count() == 1
+        assert reminiscence.backend.count() == 1
 
 
 class TestAvailabilityCheck:
     """Availability check tests."""
 
-    def test_check_availability_miss(self, reminiscence_memory):
+    def test_check_availability_miss(self, reminiscence):
         """Check availability for missing entry should return unavailable."""
-        check = reminiscence_memory.check_availability("test", {"agent": "test"})
+        check = reminiscence.check_availability("test", {"agent": "test"})
 
         assert not check.available
 
-    def test_check_availability_hit(self, reminiscence_memory):
+    def test_check_availability_hit(self, reminiscence):
         """Check availability for existing entry should return available."""
-        reminiscence_memory.store("test", {"agent": "test"}, "result")
+        reminiscence.store("test", {"agent": "test"}, "result")
 
-        check = reminiscence_memory.check_availability("test", {"agent": "test"})
+        check = reminiscence.check_availability("test", {"agent": "test"})
 
         assert check.available
         assert check.age_seconds is not None
@@ -361,28 +348,28 @@ class TestAvailabilityCheck:
 class TestStatistics:
     """Statistics and metrics tests."""
 
-    def test_get_stats_with_data(self, reminiscence_memory):
+    def test_get_stats_with_data(self, reminiscence):
         """Stats should include hits and misses."""
-        reminiscence_memory.store(
+        reminiscence.store(
             "What is Python programming?", {"agent": "test"}, "it's something cool"
         )
-        reminiscence_memory.store("How to bake a cake?", {"agent": "test"}, "With love")
-        reminiscence_memory.lookup("Explain me what's python about", {"agent": "test"})
-        reminiscence_memory.lookup("What is the weather in Almeria?", {"agent": "test"})
+        reminiscence.store("How to bake a cake?", {"agent": "test"}, "With love")
+        reminiscence.lookup("Explain me what's python about", {"agent": "test"})
+        reminiscence.lookup("What is the weather in Almeria?", {"agent": "test"})
 
-        stats = reminiscence_memory.get_stats()
+        stats = reminiscence.get_stats()
 
         assert stats["total_entries"] == 2
         assert stats["hits"] == 1
         assert stats["misses"] == 1
         assert stats["hit_rate"] == "50.00%"
 
-    def test_metrics_track_latency(self, reminiscence_memory):
+    def test_metrics_track_latency(self, reminiscence):
         """Metrics should track lookup latency."""
-        reminiscence_memory.store("test", {"agent": "test"}, "result")
-        reminiscence_memory.lookup("test", {"agent": "test"})
+        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.lookup("test", {"agent": "test"})
 
-        stats = reminiscence_memory.get_stats()
+        stats = reminiscence.get_stats()
 
         assert "lookup_latency_ms" in stats
         assert stats["lookup_latency_ms"]["samples"] >= 1
@@ -391,21 +378,21 @@ class TestStatistics:
 class TestHealthCheck:
     """Health check tests."""
 
-    def test_health_check_healthy(self, reminiscence_memory):
+    def test_health_check_healthy(self, reminiscence):
         """Health check should report healthy status."""
-        health = reminiscence_memory.health_check()
+        health = reminiscence.health_check()
 
         assert health["status"] == "healthy"
         assert health["checks"]["embedding"]["ok"]
         assert health["checks"]["database"]["ok"]
         assert "timestamp" in health
 
-    def test_health_check_includes_metrics(self, reminiscence_memory):
+    def test_health_check_includes_metrics(self, reminiscence):
         """Health check should include metrics."""
-        reminiscence_memory.store("test", {"agent": "test"}, "result")
-        reminiscence_memory.lookup("test", {"agent": "test"})
+        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.lookup("test", {"agent": "test"})
 
-        health = reminiscence_memory.health_check()
+        health = reminiscence.health_check()
 
         assert "metrics" in health
         assert health["metrics"]["total_entries"] == 1
@@ -415,15 +402,15 @@ class TestHealthCheck:
 class TestIndex:
     """Vector index tests."""
 
-    def test_create_index_insufficient_entries(self, reminiscence_memory):
+    def test_create_index_insufficient_entries(self, reminiscence):
         """Should warn if insufficient entries for index."""
-        reminiscence_memory.create_index()
+        reminiscence.create_index()
 
-        assert not reminiscence_memory.backend.has_index()
+        assert not reminiscence.backend.has_index()
 
-    def test_get_index_stats(self, reminiscence_memory):
+    def test_get_index_stats(self, reminiscence):
         """Should return index stats."""
-        stats = reminiscence_memory.get_index_stats()
+        stats = reminiscence.get_index_stats()
 
         assert "has_index" in stats
         assert "total_entries" in stats

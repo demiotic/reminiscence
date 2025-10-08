@@ -30,7 +30,6 @@ from reminiscence import Reminiscence
 
 cache = Reminiscence()
 
-# Check cache before expensive operation
 result = cache.lookup(
     query="Analyze Q3 2024 sales",
     context={"agent": "analyst", "db": "prod"}
@@ -40,9 +39,13 @@ if result.is_hit:
     print(f"Cache hit! Similarity: {result.similarity:.2f}")
     data = result.result
 else:
-    # Execute and cache
-    data = expensive_operation()
-    cache.store(query, context, data)
+    # Execute and cache - repite query y context
+    data = "expensive operation"
+    cache.store(
+        query="Analyze Q3 2024 sales",
+        context={"agent": "analyst", "db": "prod"},
+        result=data
+    )
 ```
 
 ### Decorator API
@@ -50,27 +53,21 @@ else:
 Automatic caching with hybrid matching (semantic + exact params):
 
 ```python
-@cache.cached(query_param="prompt", strict_params=["model"])
+from reminiscence import Reminiscence
+
+cache = Reminiscence()
+
+@cache.cached(query="prompt", context_params=["model"])
 def call_llm(prompt: str, model: str):
     return expensive_llm_call(prompt, model)
 
 # Similar prompts with same model hit cache
-call_llm("Explain quantum physics", "gpt-4")      # Executes
+call_llm("Explain quantum physics", "gpt-4")
 call_llm("Can you explain quantum mechanics?", "gpt-4")  # Cache hit ✓
 
 # Different model = cache miss
-call_llm("Explain quantum physics", "claude-3")   # Executes (different context)
-```
+call_llm("Explain quantum physics", "claude-3")  # Executes
 
-### Auto-strict mode
-
-Non-string parameters are automatically treated as strict:
-
-```python
-@cache.cached(query_param="prompt", auto_strict=True)
-def ask_llm(prompt: str, temperature: float, max_tokens: int):
-    # temperature and max_tokens auto-detected as strict
-    return llm_call(prompt, temperature, max_tokens)
 ```
 
 ## Key Features
@@ -93,7 +90,7 @@ cache = Reminiscence()
 
 # Production (persistent, optimized)
 config = ReminiscenceConfig(
-    db_uri="./cache.lance",
+    db_uri="./cache.db",
     ttl_seconds=3600,
     eviction_policy="lru",
     max_entries=50_000,

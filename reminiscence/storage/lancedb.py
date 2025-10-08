@@ -1,4 +1,4 @@
-"""LanceDB storage backend - Safe multi-format serialization."""
+"""LanceDB storage backend - Safe multi-format serialization with nested structure support."""
 
 import json
 import hashlib
@@ -27,7 +27,7 @@ class LanceDBBackend(StorageBackend):
     """LanceDB implementation with safe multi-format serialization (Singleton per db_uri)."""
 
     _instances: Dict[str, "LanceDBBackend"] = {}
-    _lock = None  # Añadir si usas threads
+    _lock = None  # Add if using threads
 
     def __new__(cls, config, embedding_dim: int, metrics=None):
         """
@@ -111,14 +111,101 @@ class LanceDBBackend(StorageBackend):
         """Clear all singleton instances (for testing only)."""
         cls._instances.clear()
 
+    def _is_special_type(self, value: Any) -> bool:
+        """Check if value is a DataFrame, array, or other special type."""
+        # Pandas DataFrame
+        if hasattr(value, "to_dict") and hasattr(value, "columns"):
+            return True
+
+        # Polars DataFrame
+        if hasattr(value, "to_arrow"):
+            return True
+
+        # PyArrow Table
+        if hasattr(value, "__class__") and value.__class__.__name__ == "Table":
+            return True
+
+        # NumPy array
+        if hasattr(value, "dtype") and hasattr(value, "shape"):
+            return True
+
+        return False
+
+    def _serialize_nested_dict(self, result: dict) -> Tuple[str, str]:
+        """Serialize dict that may contain DataFrames/arrays."""
+        serialized_dict = {}
+        special_types = {}
+
+        for key, value in result.items():
+            # Check if value is a special type (DataFrame, array, etc.)
+            if self._is_special_type(value):
+                # Serialize it separately
+                serialized_value, value_type = self._serialize_result(value)
+                serialized_dict[key] = f"__special__{key}"
+                special_types[key] = {"data": serialized_value, "type": value_type}
+            elif isinstance(value, (dict, list, tuple)):
+                # Recursively serialize nested structures
+                nested_serialized, nested_type = self._serialize_result(value)
+                if nested_type.startswith("nested_"):
+                    serialized_dict[key] = f"__special__{key}"
+                    special_types[key] = {
+                        "data": nested_serialized,
+                        "type": nested_type,
+                    }
+                else:
+                    serialized_dict[key] = value
+            else:
+                serialized_dict[key] = value
+
+        # Package everything together
+        final_data = {"base": serialized_dict, "special": special_types}
+
+        if HAS_ORJSON:
+            return orjson.dumps(final_data).decode("utf-8"), "nested_dict"
+        else:
+            return json.dumps(final_data), "nested_dict"
+
+    def _serialize_nested_list(self, result: list) -> Tuple[str, str]:
+        """Serialize list that may contain DataFrames/arrays."""
+        serialized_list = []
+        special_types = {}
+
+        for idx, value in enumerate(result):
+            if self._is_special_type(value):
+                serialized_value, value_type = self._serialize_result(value)
+                serialized_list.append(f"__special__{idx}")
+                special_types[str(idx)] = {"data": serialized_value, "type": value_type}
+            elif isinstance(value, (dict, list, tuple)):
+                nested_serialized, nested_type = self._serialize_result(value)
+                if nested_type.startswith("nested_"):
+                    serialized_list.append(f"__special__{idx}")
+                    special_types[str(idx)] = {
+                        "data": nested_serialized,
+                        "type": nested_type,
+                    }
+                else:
+                    serialized_list.append(value)
+            else:
+                serialized_list.append(value)
+
+        final_data = {"base": serialized_list, "special": special_types}
+
+        if HAS_ORJSON:
+            return orjson.dumps(final_data).decode("utf-8"), "nested_list"
+        else:
+            return json.dumps(final_data), "nested_list"
+
     def _serialize_result(self, result: Any) -> Tuple[str, str]:
         """
         Serialize result with optimal format selection.
+        Supports nested structures (dict/list) containing DataFrames/arrays.
 
         Priority:
-        1. Arrow IPC for tabular data (Arrow, Pandas, Polars)
-        2. orjson for JSON-serializable objects (if available)
-        3. Fallback to stdlib json
+        1. Nested dict/list (may contain DataFrames)
+        2. Arrow IPC for tabular data (Arrow, Pandas, Polars)
+        3. NumPy arrays
+        4. orjson for JSON-serializable objects (if available)
+        5. Fallback to stdlib json
 
         Raises:
             TypeError: If result is not serializable
@@ -127,6 +214,13 @@ class LanceDBBackend(StorageBackend):
             (serialized_data, type_indicator)
         """
 
+        # Handle nested structures first
+        if isinstance(result, dict):
+            return self._serialize_nested_dict(result)
+
+        if isinstance(result, (list, tuple)):
+            return self._serialize_nested_list(result)
+
         # PyArrow Table - use IPC (most efficient)
         if hasattr(result, "__class__") and result.__class__.__name__ == "Table":
             try:
@@ -134,9 +228,10 @@ class LanceDBBackend(StorageBackend):
                 with pa.ipc.new_stream(sink, result.schema) as writer:
                     writer.write_table(result)
                 buffer = sink.getvalue()
-                return base64.b64encode(buffer.to_pybytes()).decode(
-                    "utf-8"
-                ), "arrow_ipc"
+                return (
+                    base64.b64encode(buffer.to_pybytes()).decode("utf-8"),
+                    "arrow_ipc",
+                )
             except Exception as e:
                 logger.warning("arrow_serialization_failed", error=str(e))
 
@@ -148,9 +243,10 @@ class LanceDBBackend(StorageBackend):
                 with pa.ipc.new_stream(sink, arrow_table.schema) as writer:
                     writer.write_table(arrow_table)
                 buffer = sink.getvalue()
-                return base64.b64encode(buffer.to_pybytes()).decode(
-                    "utf-8"
-                ), "pandas_arrow"
+                return (
+                    base64.b64encode(buffer.to_pybytes()).decode("utf-8"),
+                    "pandas_arrow",
+                )
             except Exception as e:
                 logger.warning("pandas_serialization_failed", error=str(e))
 
@@ -162,11 +258,39 @@ class LanceDBBackend(StorageBackend):
                 with pa.ipc.new_stream(sink, arrow_table.schema) as writer:
                     writer.write_table(arrow_table)
                 buffer = sink.getvalue()
-                return base64.b64encode(buffer.to_pybytes()).decode(
-                    "utf-8"
-                ), "polars_arrow"
+                return (
+                    base64.b64encode(buffer.to_pybytes()).decode("utf-8"),
+                    "polars_arrow",
+                )
             except Exception as e:
                 logger.warning("polars_serialization_failed", error=str(e))
+
+        # NumPy array
+        if hasattr(result, "dtype") and hasattr(result, "shape"):
+            try:
+                import numpy as np
+
+                if isinstance(result, np.ndarray):
+                    # Serialize as Arrow array
+                    arrow_array = pa.array(result.flatten())
+                    arrow_table = pa.Table.from_arrays([arrow_array], names=["values"])
+                    sink = pa.BufferOutputStream()
+                    with pa.ipc.new_stream(sink, arrow_table.schema) as writer:
+                        writer.write_table(arrow_table)
+                    buffer = sink.getvalue()
+
+                    # Store shape and dtype as metadata
+                    metadata = {"shape": list(result.shape), "dtype": str(result.dtype)}
+
+                    encoded = base64.b64encode(buffer.to_pybytes()).decode("utf-8")
+                    final_data = {"data": encoded, "metadata": metadata}
+
+                    if HAS_ORJSON:
+                        return orjson.dumps(final_data).decode("utf-8"), "numpy_arrow"
+                    else:
+                        return json.dumps(final_data), "numpy_arrow"
+            except Exception as e:
+                logger.warning("numpy_serialization_failed", error=str(e))
 
         # Everything else - JSON only (no repr fallback)
         try:
@@ -183,8 +307,80 @@ class LanceDBBackend(StorageBackend):
             raise TypeError(
                 f"Type {type(result).__name__} is not serializable. "
                 f"Supported types: dict, list, str, int, float, bool, None, "
-                f"pandas.DataFrame, polars.DataFrame, pyarrow.Table"
+                f"pandas.DataFrame, polars.DataFrame, pyarrow.Table, numpy.ndarray"
             )
+
+    def _deserialize_nested_dict(self, data: str) -> dict:
+        """Deserialize nested dict with special types."""
+        if HAS_ORJSON:
+            parsed = orjson.loads(data.encode("utf-8"))
+        else:
+            parsed = json.loads(data)
+
+        base_dict = parsed["base"]
+        special_types = parsed["special"]
+
+        result = {}
+        for key, value in base_dict.items():
+            if isinstance(value, str) and value.startswith("__special__"):
+                # Deserialize special type
+                special_key = value.replace("__special__", "")
+                special_data = special_types[special_key]["data"]
+                special_type = special_types[special_key]["type"]
+                result[key] = self._deserialize_result(special_data, special_type)
+            else:
+                result[key] = value
+
+        return result
+
+    def _deserialize_nested_list(self, data: str) -> list:
+        """Deserialize nested list with special types."""
+        if HAS_ORJSON:
+            parsed = orjson.loads(data.encode("utf-8"))
+        else:
+            parsed = json.loads(data)
+
+        base_list = parsed["base"]
+        special_types = parsed["special"]
+
+        result = []
+        for idx, value in enumerate(base_list):
+            if isinstance(value, str) and value.startswith("__special__"):
+                # Deserialize special type
+                special_key = str(idx)
+                special_data = special_types[special_key]["data"]
+                special_type = special_types[special_key]["type"]
+                result.append(self._deserialize_result(special_data, special_type))
+            else:
+                result.append(value)
+
+        return result
+
+    def _deserialize_numpy(self, data: str) -> Any:
+        """Deserialize numpy array."""
+        import numpy as np
+
+        if HAS_ORJSON:
+            parsed = orjson.loads(data.encode("utf-8"))
+        else:
+            parsed = json.loads(data)
+
+        encoded_data = parsed["data"]
+        metadata = parsed["metadata"]
+
+        # Deserialize Arrow
+        buffer = base64.b64decode(encoded_data.encode("utf-8"))
+        reader = pa.ipc.open_stream(buffer)
+        arrow_table = reader.read_all()
+
+        # Convert back to numpy
+        flat_array = arrow_table["values"].to_numpy()
+
+        # Reshape
+        shape = tuple(metadata["shape"])
+        dtype = np.dtype(metadata["dtype"])
+
+        return flat_array.reshape(shape).astype(dtype)
 
     def _deserialize_result(self, data: str, result_type: str) -> Any:
         """
@@ -198,6 +394,17 @@ class LanceDBBackend(StorageBackend):
             Deserialized object
         """
 
+        # Handle nested structures
+        if result_type == "nested_dict":
+            return self._deserialize_nested_dict(data)
+
+        if result_type == "nested_list":
+            return self._deserialize_nested_list(data)
+
+        if result_type == "numpy_arrow":
+            return self._deserialize_numpy(data)
+
+        # Existing deserialization
         if result_type == "arrow_ipc":
             buffer = base64.b64decode(data.encode("utf-8"))
             reader = pa.ipc.open_stream(buffer)

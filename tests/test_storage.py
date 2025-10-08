@@ -228,3 +228,306 @@ class TestLanceDBBackend:
         assert len(results) == 1
         assert isinstance(results[0].result, pd.DataFrame)
         assert results[0].result.equals(df)
+
+    def test_serialization_nested_dict_with_dataframe(self):
+        """Should serialize and deserialize nested dict containing DataFrame."""
+        try:
+            import pandas as pd
+        except ImportError:
+            pytest.skip("Pandas not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df = pd.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
+
+        # Nested structure with DataFrame
+        nested_result = {
+            "data": df,
+            "status": "success",
+            "rows": 3,
+            "metadata": {"source": "test"},
+        }
+
+        entry = CacheEntry(
+            query_text="get nested result",
+            context={"agent": "test"},
+            embedding=[0.1] * 384,
+            result=nested_result,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.1] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0].result, dict)
+        assert "data" in results[0].result
+        assert isinstance(results[0].result["data"], pd.DataFrame)
+        assert results[0].result["data"].equals(df)
+        assert results[0].result["status"] == "success"
+        assert results[0].result["rows"] == 3
+        assert results[0].result["metadata"]["source"] == "test"
+
+    def test_serialization_list_with_dataframes(self):
+        """Should serialize and deserialize list containing DataFrames."""
+        try:
+            import pandas as pd
+        except ImportError:
+            pytest.skip("Pandas not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df1 = pd.DataFrame({"a": [1, 2]})
+        df2 = pd.DataFrame({"b": [3, 4]})
+
+        # List with DataFrames
+        list_result = [df1, df2, "some string", 123]
+
+        entry = CacheEntry(
+            query_text="get list of dataframes",
+            context={"agent": "test"},
+            embedding=[0.2] * 384,
+            result=list_result,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.2] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0].result, list)
+        assert len(results[0].result) == 4
+        assert isinstance(results[0].result[0], pd.DataFrame)
+        assert isinstance(results[0].result[1], pd.DataFrame)
+        assert results[0].result[0].equals(df1)
+        assert results[0].result[1].equals(df2)
+        assert results[0].result[2] == "some string"
+        assert results[0].result[3] == 123
+
+    def test_serialization_deeply_nested_structures(self):
+        """Should serialize and deserialize deeply nested structures."""
+        try:
+            import pandas as pd
+        except ImportError:
+            pytest.skip("Pandas not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df = pd.DataFrame({"x": [1, 2, 3]})
+
+        # Deeply nested structure
+        nested = {
+            "level1": {"level2": {"data": df, "count": 3}, "other": "value"},
+            "results": [{"df": df, "name": "first"}, {"df": df, "name": "second"}],
+        }
+
+        entry = CacheEntry(
+            query_text="deeply nested",
+            context={"agent": "test"},
+            embedding=[0.3] * 384,
+            result=nested,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.3] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        result = results[0].result
+
+        # Check nested dict structure
+        assert isinstance(result["level1"]["level2"]["data"], pd.DataFrame)
+        assert result["level1"]["level2"]["data"].equals(df)
+        assert result["level1"]["level2"]["count"] == 3
+        assert result["level1"]["other"] == "value"
+
+        # Check nested list structure
+        assert len(result["results"]) == 2
+        assert isinstance(result["results"][0]["df"], pd.DataFrame)
+        assert result["results"][0]["df"].equals(df)
+        assert result["results"][0]["name"] == "first"
+
+    def test_serialization_numpy_array(self):
+        """Should serialize and deserialize NumPy arrays."""
+        try:
+            import numpy as np
+        except ImportError:
+            pytest.skip("NumPy not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        arr = np.array([[1, 2, 3], [4, 5, 6]])
+
+        entry = CacheEntry(
+            query_text="get numpy array",
+            context={"agent": "test"},
+            embedding=[0.4] * 384,
+            result=arr,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.4] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0].result, np.ndarray)
+        assert np.array_equal(results[0].result, arr)
+        assert results[0].result.shape == arr.shape
+        assert results[0].result.dtype == arr.dtype
+
+    def test_serialization_dict_with_numpy_and_dataframe(self):
+        """Should serialize dict containing both NumPy arrays and DataFrames."""
+        try:
+            import pandas as pd
+            import numpy as np
+        except ImportError:
+            pytest.skip("Pandas or NumPy not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df = pd.DataFrame({"col": [1, 2, 3]})
+        arr = np.array([10, 20, 30])
+
+        mixed_result = {"dataframe": df, "array": arr, "scalar": 42, "text": "hello"}
+
+        entry = CacheEntry(
+            query_text="mixed types",
+            context={"agent": "test"},
+            embedding=[0.5] * 384,
+            result=mixed_result,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.5] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        result = results[0].result
+
+        assert isinstance(result["dataframe"], pd.DataFrame)
+        assert result["dataframe"].equals(df)
+        assert isinstance(result["array"], np.ndarray)
+        assert np.array_equal(result["array"], arr)
+        assert result["scalar"] == 42
+        assert result["text"] == "hello"
+
+    def test_serialization_polars_dataframe(self):
+        """Should serialize and deserialize Polars DataFrames."""
+        try:
+            import polars as pl
+        except ImportError:
+            pytest.skip("Polars not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df = pl.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
+
+        entry = CacheEntry(
+            query_text="get polars dataframe",
+            context={"agent": "test"},
+            embedding=[0.6] * 384,
+            result=df,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.6] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0].result, pl.DataFrame)
+        assert results[0].result.equals(df)
+
+    def test_serialization_mixed_list_with_multiple_types(self):
+        """Should serialize list with mixed types (primitives, DataFrames, arrays)."""
+        try:
+            import pandas as pd
+            import numpy as np
+        except ImportError:
+            pytest.skip("Pandas or NumPy not installed")
+
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df = pd.DataFrame({"x": [1, 2]})
+        arr = np.array([3, 4, 5])
+
+        mixed_list = [df, arr, "string", 123, {"nested": "dict"}, [1, 2, 3], None]
+
+        entry = CacheEntry(
+            query_text="mixed list",
+            context={"agent": "test"},
+            embedding=[0.7] * 384,
+            result=mixed_list,
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        # Search and retrieve
+        results = storage.search(
+            embedding=[0.7] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+
+        assert len(results) == 1
+        result = results[0].result
+
+        assert isinstance(result[0], pd.DataFrame)
+        assert result[0].equals(df)
+        assert isinstance(result[1], np.ndarray)
+        assert np.array_equal(result[1], arr)
+        assert result[2] == "string"
+        assert result[3] == 123
+        assert result[4] == {"nested": "dict"}
+        assert result[5] == [1, 2, 3]
+        assert result[6] is None

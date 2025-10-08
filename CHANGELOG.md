@@ -15,7 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `exact`: Near-exact matching with threshold 0.9999 for SQL/API caching
   - `auto`: Intelligent mode that tries exact match first, falls back to semantic
   - Added `query_mode` parameter to `lookup()`, `store()`, and `cached()` decorator
-
+- **OpenTelemetry metrics integration**
+  - OTLP HTTP protocol support for metrics export
+  - Export to Grafana, Prometheus, Jaeger, SigNoz, any OTLP-compatible backend
+  - Metrics: cache hits/misses, hit rate, lookup/store errors, latency percentiles
+  - Configurable export intervals and authentication headers
+  - Automatic delta calculation for counter metrics
+  - Global singleton pattern per process to prevent duplicate exports
+  - Background scheduler for automatic periodic export
+  
 ### Changed
 - **Always-on embeddings architecture** - Simplified caching approach
   - Embeddings now generated for all query modes (semantic, exact, auto)

@@ -1,4 +1,4 @@
-"""Main Reminiscence class - Facade for all components."""
+"""Core Reminiscence class - Facade for all components."""
 
 import time
 from typing import Any, Dict, Optional
@@ -22,6 +22,11 @@ class Reminiscence:
     Semantic cache for LLMs and multi-agent systems.
 
     Hybrid matching: semantic similarity + exact context matching.
+
+    Query modes:
+    - semantic: Normal semantic search (configurable threshold)
+    - exact: Very high threshold (0.9999) for near-exact matches
+    - auto: Try exact first, fallback to semantic
 
     Main API:
     - lookup(): Search for existing result
@@ -47,13 +52,19 @@ class Reminiscence:
         ...     data = expensive_llm_call()
         ...     cache.store("What is ML?", {"agent": "qa", "model": "gpt-4"}, data)
         >>>
+        >>> # Exact mode for SQL caching
+        >>> result = cache.lookup("SELECT * FROM users", {"db": "prod"}, query_mode="exact")
+        >>>
+        >>> # Auto mode (exact then semantic)
+        >>> result = cache.lookup("What is Python?", {"agent": "qa"}, query_mode="auto")
+        >>>
         >>> # With automatic background tasks
-        >>> cache.start_scheduler()  # Auto-starts cleanup and metrics export
+        >>> cache.start_scheduler()
         >>> # ... use cache ...
         >>> cache.stop_scheduler()
         >>>
         >>> # Decorator usage
-        >>> @cache.cached(query_param="question", strict_params=["model"])
+        >>> @cache.cached(query="question", context_params=["model"], query_mode="semantic")
         >>> def ask_llm(question: str, model: str):
         ...     return expensive_llm_call(question, model)
     """
@@ -67,7 +78,6 @@ class Reminiscence:
         """
         self.config = config or ReminiscenceConfig.load()
 
-        # Setup logging
         configure_logging(self.config.log_level, self.config.json_logs)
 
         logger.info(
@@ -77,13 +87,11 @@ class Reminiscence:
             eviction=self.config.eviction_policy,
         )
 
-        # Initialize components
         self.embedder = create_embedder(self.config)
         self.backend = create_storage_backend(self.config, self.embedder.embedding_dim)
         self.eviction = create_eviction_policy(self.config.eviction_policy)
         self.metrics = CacheMetrics() if self.config.enable_metrics else None
 
-        # Initialize OpenTelemetry exporter if enabled
         self.otel_exporter: Optional[OpenTelemetryExporter] = None
         if self.config.otel_enabled and self.metrics:
             try:
@@ -109,7 +117,6 @@ class Reminiscence:
                 reason="Metrics are disabled (REMINISCENCE_ENABLE_METRICS=false)",
             )
 
-        # Single operations handler (lookup, store, maintenance)
         self.ops = CacheOperations(
             storage=self.backend,
             embedder=self.embedder,
@@ -118,7 +125,6 @@ class Reminiscence:
             metrics=self.metrics,
         )
 
-        # Unified scheduler manager for all background tasks
         self.scheduler_manager = None
 
         logger.info(
@@ -129,22 +135,8 @@ class Reminiscence:
             threshold=self.config.similarity_threshold,
         )
 
-    # ====================
-    # PUBLIC API - Delegate to ops
-    # ====================
-
     def clear(self):
-        """
-        Clear all cache entries and reset metrics.
-
-        Useful for testing or manual cache management.
-
-        Example:
-            >>> cache = Reminiscence()
-            >>> cache.store("test", {}, "result")
-            >>> cache.clear()
-            >>> assert cache.backend.count() == 0
-        """
+        """Clear all cache entries and reset metrics."""
         self.backend.clear()
         if self.metrics:
             self.metrics.reset()
@@ -154,6 +146,7 @@ class Reminiscence:
         query: str,
         context: Optional[Dict[str, Any]] = None,
         similarity_threshold: Optional[float] = None,
+        query_mode: str = "semantic",
         _track_metrics: Optional[bool] = True,
     ) -> LookupResult:
         """
@@ -163,12 +156,15 @@ class Reminiscence:
             query: Query text to search
             context: Context dict for exact matching (agent_id, tools, model, etc)
             similarity_threshold: Minimum similarity score (0-1)
+            query_mode: Matching strategy ("semantic", "exact", "auto")
             _track_metrics: Internal flag to control metrics tracking
 
         Returns:
             LookupResult with hit status and cached data
         """
-        return self.ops.lookup(query, context, similarity_threshold, _track_metrics)
+        return self.ops.lookup(
+            query, context, similarity_threshold, query_mode, _track_metrics
+        )
 
     def store(
         self,
@@ -176,6 +172,7 @@ class Reminiscence:
         context: Dict[str, Any],
         result: Any,
         metadata: Optional[Dict[str, Any]] = None,
+        query_mode: str = "semantic",
     ):
         """
         Store result in cache.
@@ -185,8 +182,9 @@ class Reminiscence:
             context: Context dict (will be matched exactly in future lookups)
             result: Result to cache (supports JSON, Arrow, Pandas, Polars)
             metadata: Optional metadata
+            query_mode: For tracking purposes (all modes generate embeddings)
         """
-        self.ops.store(query, context, result, metadata)
+        self.ops.store(query, context, result, metadata, query_mode)
 
     def invalidate(
         self,
@@ -221,13 +219,23 @@ class Reminiscence:
         query: str,
         context: Dict[str, Any],
         similarity_threshold: Optional[float] = None,
+        query_mode: str = "semantic",
     ) -> AvailabilityCheck:
         """
         Verify availability without retrieving full data.
 
-        Useful for schedulers and pre-checks.
+        Args:
+            query: Query text
+            context: Context dict
+            similarity_threshold: Minimum similarity score
+            query_mode: Matching strategy
+
+        Returns:
+            AvailabilityCheck with availability info
         """
-        result = self.lookup(query, context, similarity_threshold, _track_metrics=False)
+        result = self.lookup(
+            query, context, similarity_threshold, query_mode, _track_metrics=False
+        )
 
         if not result.is_hit:
             return AvailabilityCheck(available=False)
@@ -243,13 +251,9 @@ class Reminiscence:
             similarity=result.similarity,
         )
 
-    # ====================
-    # SCHEDULER MANAGEMENT
-    # ====================
-
     def start_scheduler(
         self,
-        interval_seconds: Optional[int] = None,  # ← Nombre más simple
+        interval_seconds: Optional[int] = None,
         initial_delay_seconds: int = 60,
         metrics_export_interval_seconds: Optional[int] = None,
         metrics_initial_delay_seconds: int = 0,
@@ -258,13 +262,13 @@ class Reminiscence:
         Start background schedulers for cleanup and metrics export.
 
         Args:
-            interval_seconds: Interval for cache cleanup (default: 3600). Alias for cleanup_interval_seconds.
+            interval_seconds: Interval for cache cleanup (default: 3600)
             initial_delay_seconds: Initial delay before first cleanup run (default: 60)
             metrics_export_interval_seconds: Interval for metrics export (default: from config)
+            metrics_initial_delay_seconds: Initial delay before first metrics export (default: 0)
 
         Example:
             >>> cache = Reminiscence()
-            >>> # Start cleanup every 30 minutes, metrics every 10s
             >>> cache.start_scheduler(
             ...     interval_seconds=1800,
             ...     metrics_export_interval_seconds=10
@@ -275,10 +279,8 @@ class Reminiscence:
             logger.warning("schedulers_already_running")
             return
 
-        # Create scheduler manager
         self.scheduler_manager = SchedulerManager(metrics=self.metrics)
 
-        # 1. Add cache cleanup scheduler (if TTL is configured)
         if self.config.ttl_seconds is not None:
             cleanup_interval = interval_seconds or 3600
 
@@ -300,9 +302,7 @@ class Reminiscence:
                 reason="No TTL configured (REMINISCENCE_TTL_SECONDS not set)",
             )
 
-        # 2. Add metrics export scheduler (if OpenTelemetry is enabled)
         if self.otel_exporter and self.metrics:
-            # Convert milliseconds to seconds
             default_interval = self.config.otel_export_interval_ms // 1000
             metrics_interval = metrics_export_interval_seconds or default_interval
 
@@ -339,7 +339,6 @@ class Reminiscence:
                 endpoint=self.config.otel_endpoint,
             )
 
-        # Start all configured schedulers
         if self.scheduler_manager.schedulers:
             self.scheduler_manager.start_all()
             logger.info(
@@ -366,7 +365,6 @@ class Reminiscence:
             logger.warning("schedulers_not_initialized")
             return
 
-        # Stop each scheduler individually with timeout
         for name, scheduler in self.scheduler_manager.schedulers.items():
             logger.debug("stopping_scheduler", name=name)
             scheduler.stop(timeout=timeout)
@@ -390,10 +388,6 @@ class Reminiscence:
             return None
 
         return self.scheduler_manager.get_stats()
-
-    # ====================
-    # INDEX & STATS
-    # ====================
 
     def create_index(
         self,
@@ -439,7 +433,6 @@ class Reminiscence:
         if self.metrics:
             stats.update(self.metrics.report())
 
-        # Add scheduler stats if available
         if self.scheduler_manager:
             stats["schedulers"] = self.scheduler_manager.get_stats()
 
@@ -453,10 +446,6 @@ class Reminiscence:
             "note": "LanceDB doesn't expose detailed index metrics",
         }
 
-    # ====================
-    # HEALTH CHECK
-    # ====================
-
     def health_check(self) -> Dict[str, Any]:
         """Perform health check on cache components."""
         checks = {
@@ -467,7 +456,6 @@ class Reminiscence:
             "opentelemetry": {"ok": True, "details": "Disabled"},
         }
 
-        # Test embedding
         try:
             test_embedding = self.embedder.embed("health check test")
             if len(test_embedding) != self.embedder.embedding_dim:
@@ -480,7 +468,6 @@ class Reminiscence:
             checks["embedding"]["error"] = str(e)
             logger.error("health_check_embedding_failed", error=str(e), exc_info=True)
 
-        # Test database
         try:
             entry_count = self.backend.count()
             if entry_count > 0:
@@ -490,7 +477,6 @@ class Reminiscence:
             checks["database"]["error"] = str(e)
             logger.error("health_check_database_failed", error=str(e), exc_info=True)
 
-        # Check error rates
         if self.metrics:
             total_requests = self.metrics.total_requests
             lookup_errors = self.metrics.lookup_errors
@@ -517,7 +503,6 @@ class Reminiscence:
                     f"Insufficient data: {total_requests} requests"
                 )
 
-        # Check schedulers
         if self.scheduler_manager and self.scheduler_manager.schedulers:
             all_stats = self.scheduler_manager.get_stats()
             running_count = sum(1 for s in all_stats.values() if s["running"])
@@ -534,7 +519,6 @@ class Reminiscence:
                     f"{running_count}/{len(all_stats)} schedulers running"
                 )
 
-        # Check OpenTelemetry
         if self.otel_exporter:
             checks["opentelemetry"]["ok"] = True
             checks["opentelemetry"]["details"] = (
@@ -547,7 +531,6 @@ class Reminiscence:
                 "Enabled but exporter failed to initialize"
             )
 
-        # Overall status
         all_checks_ok = all(check["ok"] for check in checks.values())
         status = "healthy" if all_checks_ok else "unhealthy"
 
@@ -573,31 +556,37 @@ class Reminiscence:
 
         return response
 
-    # ====================
-    # DECORATOR
-    # ====================
-
     def cached(
         self,
-        query_param: str = "query",
-        strict_params: Optional[list] = None,
+        query: str = "query",
+        context_params: Optional[list] = None,
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
+        query_mode: str = "semantic",
+        similarity_threshold: Optional[float] = None,
     ):
-        """Decorator to cache function results with hybrid matching."""
+        """
+        Decorator to cache function results with hybrid matching.
+
+        Args:
+            query: Name of parameter to use as query text (default: "query")
+            context_params: Parameter names to include in context
+            static_context: Static context dict
+            auto_strict: Auto-detect non-string params as context
+            query_mode: Matching strategy ("semantic", "exact", "auto")
+            similarity_threshold: Minimum similarity score
+        """
         from .decorators import create_cached_decorator
 
         decorator_factory = create_cached_decorator(self)
         return decorator_factory(
-            query_param=query_param,
-            strict_params=strict_params,
+            query=query,
+            context_params=context_params,
             static_context=static_context,
             auto_strict=auto_strict,
+            query_mode=query_mode,
+            similarity_threshold=similarity_threshold,
         )
-
-    # ====================
-    # CONTEXT MANAGER
-    # ====================
 
     def __enter__(self):
         """Context manager support."""
@@ -608,3 +597,11 @@ class Reminiscence:
         if self.scheduler_manager and self.scheduler_manager.schedulers:
             self.stop_scheduler()
         return False
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return (
+            f"Reminiscence(entries={self.backend.count()}, "
+            f"dim={self.embedder.embedding_dim}, "
+            f"threshold={self.config.similarity_threshold})"
+        )

@@ -3,10 +3,10 @@
 import json
 import hashlib
 import base64
+import time
 from typing import List, Dict, Any, Tuple
 import lancedb
 import pyarrow as pa
-
 
 try:
     import orjson
@@ -24,15 +24,58 @@ logger = get_logger(__name__)
 
 
 class LanceDBBackend(StorageBackend):
-    """LanceDB implementation with safe multi-format serialization."""
+    """LanceDB implementation with safe multi-format serialization (Singleton per db_uri)."""
 
-    def __init__(self, config, embedding_dim: int):
+    _instances: Dict[str, "LanceDBBackend"] = {}
+    _lock = None  # Añadir si usas threads
+
+    def __new__(cls, config, embedding_dim: int, metrics=None):
+        """
+        Create or return existing instance for the same db_uri.
+
+        Multiple Reminiscence instances with the same db_uri will share
+        the same storage backend, enabling cache pooling.
+        """
+        db_uri = config.db_uri
+
+        if db_uri not in cls._instances:
+            instance = super().__new__(cls)
+            instance._initialized = False
+            cls._instances[db_uri] = instance
+            logger.debug("storage_backend_created", db_uri=db_uri)
+        else:
+            logger.debug("storage_backend_reused", db_uri=db_uri)
+
+        return cls._instances[db_uri]
+
+    def __init__(self, config, embedding_dim: int, metrics=None):
+        """
+        Initialize LanceDB backend (only runs once per db_uri).
+
+        Args:
+            config: Configuration object
+            embedding_dim: Dimension of embeddings
+            metrics: Optional CacheMetrics instance for tracking
+        """
+        # Skip if already initialized
+        if self._initialized:
+            return
+
         self.config = config
         self.embedding_dim = embedding_dim
+        self.metrics = metrics
         self.db = lancedb.connect(config.db_uri)
         self.schema = self._create_schema()
         self.table = self._init_table()
         self._index_created = False
+        self._initialized = True
+
+        logger.info(
+            "storage_backend_initialized",
+            db_uri=config.db_uri,
+            table=config.table_name,
+            embedding_dim=embedding_dim,
+        )
 
     def _create_schema(self) -> pa.Schema:
         """Create PyArrow schema with both JSON and hash."""
@@ -62,6 +105,11 @@ class LanceDBBackend(StorageBackend):
             )
             logger.debug("table_created", name=self.config.table_name)
             return table
+
+    @classmethod
+    def _clear_instances(cls):
+        """Clear all singleton instances (for testing only)."""
+        cls._instances.clear()
 
     def _serialize_result(self, result: Any) -> Tuple[str, str]:
         """
@@ -197,6 +245,8 @@ class LanceDBBackend(StorageBackend):
 
     def add(self, entries: List[CacheEntry]):
         """Add cache entries with context hash for fast lookup."""
+        start = time.perf_counter()
+
         data = []
         for entry in entries:
             try:
@@ -224,15 +274,62 @@ class LanceDBBackend(StorageBackend):
                 logger.error(
                     "entry_skipped_unserializable", error=str(e), query=entry.query_text
                 )
+
+                if self.metrics:
+                    if not hasattr(self.metrics, "storage_add_errors"):
+                        self.metrics.storage_add_errors = 0
+                    self.metrics.storage_add_errors += 1
+
                 continue
             except Exception as e:
                 logger.error(
                     "serialization_failed", error=str(e), entry_query=entry.query_text
                 )
+
+                if self.metrics:
+                    if not hasattr(self.metrics, "storage_add_errors"):
+                        self.metrics.storage_add_errors = 0
+                    self.metrics.storage_add_errors += 1
+
                 continue
 
         if data:
-            self.table.add(data)
+            try:
+                self.table.add(data)
+
+                # Track metrics
+                elapsed_ms = (time.perf_counter() - start) * 1000
+
+                if self.metrics:
+                    if not hasattr(self.metrics, "storage_adds"):
+                        self.metrics.storage_adds = 0
+                    self.metrics.storage_adds += len(data)
+
+                    if not hasattr(self.metrics, "storage_add_latencies_ms"):
+                        self.metrics.storage_add_latencies_ms = []
+                    self.metrics.storage_add_latencies_ms.append(elapsed_ms)
+
+                    # Keep only last 1000 samples
+                    if len(self.metrics.storage_add_latencies_ms) > 1000:
+                        self.metrics.storage_add_latencies_ms = (
+                            self.metrics.storage_add_latencies_ms[-1000:]
+                        )
+
+                logger.debug(
+                    "storage_add",
+                    entries_count=len(data),
+                    latency_ms=round(elapsed_ms, 2),
+                )
+
+            except Exception as e:
+                logger.error("storage_add_failed", error=str(e))
+
+                if self.metrics:
+                    if not hasattr(self.metrics, "storage_add_errors"):
+                        self.metrics.storage_add_errors = 0
+                    self.metrics.storage_add_errors += 1
+
+                raise
 
     def search(
         self,
@@ -246,6 +343,7 @@ class LanceDBBackend(StorageBackend):
 
         Uses context_hash for O(1) exact matching, then vector similarity.
         """
+        start = time.perf_counter()
 
         # Generate hash for fast filtering
         context_hash = (
@@ -261,8 +359,45 @@ class LanceDBBackend(StorageBackend):
 
         try:
             results = query.to_arrow()
+
+            # Track search metrics
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            if self.metrics:
+                if not hasattr(self.metrics, "storage_searches"):
+                    self.metrics.storage_searches = 0
+                self.metrics.storage_searches += 1
+
+                if not hasattr(self.metrics, "storage_search_latencies_ms"):
+                    self.metrics.storage_search_latencies_ms = []
+                self.metrics.storage_search_latencies_ms.append(elapsed_ms)
+
+                # Keep only last 1000 samples
+                if len(self.metrics.storage_search_latencies_ms) > 1000:
+                    self.metrics.storage_search_latencies_ms = (
+                        self.metrics.storage_search_latencies_ms[-1000:]
+                    )
+
+            logger.debug(
+                "storage_search",
+                results_count=len(results),
+                latency_ms=round(elapsed_ms, 2),
+            )
+
         except Exception as e:
-            logger.error("search_failed", error=str(e), exc_info=True)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.error(
+                "search_failed",
+                error=str(e),
+                latency_ms=round(elapsed_ms, 2),
+                exc_info=True,
+            )
+
+            if self.metrics:
+                if not hasattr(self.metrics, "storage_search_errors"):
+                    self.metrics.storage_search_errors = 0
+                self.metrics.storage_search_errors += 1
+
             return []
 
         # Convert to CacheEntry with deserialization
@@ -380,6 +515,30 @@ class LanceDBBackend(StorageBackend):
             logger.info("auto_creating_index", count=count, threshold=threshold)
             num_sub_vectors = max(1, self.embedding_dim // 4)
             self.create_index(num_partitions, num_sub_vectors)
+
+    def get_storage_stats(self) -> dict:
+        """Get storage-specific statistics."""
+        if not self.metrics:
+            return {}
+
+        search_latencies = getattr(self.metrics, "storage_search_latencies_ms", [])
+        add_latencies = getattr(self.metrics, "storage_add_latencies_ms", [])
+
+        avg_search = (
+            sum(search_latencies) / len(search_latencies) if search_latencies else 0
+        )
+        avg_add = sum(add_latencies) / len(add_latencies) if add_latencies else 0
+
+        return {
+            "total_entries": self.count(),
+            "total_searches": getattr(self.metrics, "storage_searches", 0),
+            "total_adds": getattr(self.metrics, "storage_adds", 0),
+            "avg_search_latency_ms": round(avg_search, 2),
+            "avg_add_latency_ms": round(avg_add, 2),
+            "search_errors": getattr(self.metrics, "storage_search_errors", 0),
+            "add_errors": getattr(self.metrics, "storage_add_errors", 0),
+            "index_created": self._index_created,
+        }
 
     def _generate_id(self, entry: CacheEntry) -> str:
         """Generate unique ID for entry using full SHA256 hash."""

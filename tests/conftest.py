@@ -16,6 +16,32 @@ from reminiscence.metrics import CacheMetrics
 
 
 # ============================================================================
+# SINGLETON CLEANUP FIXTURES
+# ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def clear_singletons():
+    """
+    Clear singleton instances between tests for isolation.
+
+    This ensures each test starts with a clean slate for:
+    - Storage backends (LanceDBBackend)
+    - OpenTelemetry exporters
+
+    autouse=True means this runs automatically for every test.
+    """
+    yield
+
+    # Cleanup after each test
+    from reminiscence.storage.lancedb import LanceDBBackend
+    from reminiscence.metrics.exporters import OpenTelemetryExporter
+
+    LanceDBBackend._clear_instances()
+    OpenTelemetryExporter._clear_instances()
+
+
+# ============================================================================
 # STRUCTLOG RESET FIXTURES
 # ============================================================================
 

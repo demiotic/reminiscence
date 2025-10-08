@@ -26,6 +26,11 @@ class ReminiscenceConfig:
     - REMINISCENCE_MAX_ENTRIES: Max cache entries
     - REMINISCENCE_EVICTION_POLICY: Eviction policy (fifo/lru/lfu)
     - REMINISCENCE_CLEANUP_INTERVAL_SECONDS: Interval for background cleanup
+    - REMINISCENCE_OTEL_ENABLED: Enable OpenTelemetry export (true/false)
+    - REMINISCENCE_OTEL_ENDPOINT: OTLP endpoint URL
+    - REMINISCENCE_OTEL_HEADERS: OTLP headers (key1=value1,key2=value2)
+    - REMINISCENCE_OTEL_SERVICE_NAME: Service name for telemetry
+    - REMINISCENCE_OTEL_EXPORT_INTERVAL_MS: Export interval in milliseconds
     """
 
     # Model
@@ -58,6 +63,13 @@ class ReminiscenceConfig:
     # Scheduler
     cleanup_interval_seconds: Optional[int] = None
     cleanup_initial_delay: int = 60
+
+    # OpenTelemetry
+    otel_enabled: bool = False
+    otel_endpoint: str = "http://localhost:4318/v1/metrics"
+    otel_headers: Optional[str] = None  # Format: "key1=value1,key2=value2"
+    otel_service_name: str = "reminiscence"
+    otel_export_interval_ms: int = 60000  # Export every 60 seconds by default
 
     @classmethod
     def load(cls) -> "ReminiscenceConfig":
@@ -149,6 +161,30 @@ class ReminiscenceConfig:
                 os.getenv(
                     "REMINISCENCE_CLEANUP_INITIAL_DELAY",
                     str(defaults.cleanup_initial_delay),
+                )
+            ),
+            # OpenTelemetry
+            otel_enabled=parse_bool(
+                os.getenv(
+                    "REMINISCENCE_OTEL_ENABLED",
+                    str(defaults.otel_enabled).lower(),
+                )
+            ),
+            otel_endpoint=os.getenv(
+                "REMINISCENCE_OTEL_ENDPOINT",
+                defaults.otel_endpoint,
+            ),
+            otel_headers=parse_str_or_none(
+                os.getenv("REMINISCENCE_OTEL_HEADERS", "none")
+            ),
+            otel_service_name=os.getenv(
+                "REMINISCENCE_OTEL_SERVICE_NAME",
+                defaults.otel_service_name,
+            ),
+            otel_export_interval_ms=int(
+                os.getenv(
+                    "REMINISCENCE_OTEL_EXPORT_INTERVAL_MS",
+                    str(defaults.otel_export_interval_ms),
                 )
             ),
         )

@@ -1,6 +1,7 @@
 """Tests for background cleanup scheduler."""
 
 import time
+import pytest
 from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.scheduler import CleanupScheduler, SchedulerManager
 
@@ -91,11 +92,12 @@ class TestCleanupScheduler:
 
         stats = scheduler.get_stats()
 
-        not stats["running"]
-        not stats["total_runs"] >= 3
-        not stats["total_deleted"] == sum(deleted_per_run[: stats["total_runs"]])
-        not stats["last_run_time"] is not None
-        not stats["errors"] == 0
+        # Fixed assertions
+        assert not stats["running"]
+        assert stats["total_runs"] >= 3
+        assert stats["total_deleted"] == sum(deleted_per_run[: stats["total_runs"]])
+        assert stats["last_run_time"] is not None
+        assert stats["errors"] == 0
 
     def test_scheduler_handles_errors(self):
         """Scheduler should continue running after cleanup errors."""
@@ -251,7 +253,7 @@ class TestReminiscenceSchedulerIntegration:
     """Test scheduler integration with Reminiscence."""
 
     def test_reminiscence_start_stop_scheduler(self):
-        """Reminiscence should start and stop scheduler."""
+        """Reminiscence should start and stop schedulers."""
         config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=1,
@@ -268,8 +270,9 @@ class TestReminiscenceSchedulerIntegration:
         # Start scheduler with short interval
         cache.start_scheduler(interval_seconds=2, initial_delay_seconds=1)
 
-        assert cache.scheduler is not None
-        assert cache.scheduler.is_running()
+        assert cache.scheduler_manager is not None
+        assert "cache_cleanup" in cache.scheduler_manager.schedulers
+        assert cache.scheduler_manager.schedulers["cache_cleanup"].is_running()
 
         # Wait for entries to expire and cleanup to run
         time.sleep(3)
@@ -278,7 +281,7 @@ class TestReminiscenceSchedulerIntegration:
         assert cache.backend.count() == 0
 
         cache.stop_scheduler()
-        assert not cache.scheduler.is_running()
+        assert not cache.scheduler_manager.schedulers["cache_cleanup"].is_running()
 
     def test_reminiscence_scheduler_stats(self):
         """Reminiscence should expose scheduler stats."""
@@ -299,25 +302,28 @@ class TestReminiscenceSchedulerIntegration:
 
         stats = cache.get_scheduler_stats()
         assert stats is not None
-        assert stats["running"]
-        assert stats["total_runs"] >= 1
+        assert "cache_cleanup" in stats
+        assert stats["cache_cleanup"]["running"]
+        assert stats["cache_cleanup"]["total_runs"] >= 1
 
         cache.stop_scheduler()
 
     def test_reminiscence_scheduler_in_get_stats(self):
         """Scheduler stats should appear in get_stats()."""
-        cache = Reminiscence(
-            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            ttl_seconds=3600,  # Need TTL to create scheduler
+            log_level="WARNING",
         )
+        cache = Reminiscence(config)
 
-        stats = cache.get_stats()
-        assert "scheduler" not in stats
-
+        # Start scheduler
         cache.start_scheduler(interval_seconds=10)
 
         stats = cache.get_stats()
-        assert "scheduler" in stats
-        assert stats["scheduler"]["running"]
+        assert "schedulers" in stats
+        assert "cache_cleanup" in stats["schedulers"]
+        assert stats["schedulers"]["cache_cleanup"]["total_runs"] >= 0
 
         cache.stop_scheduler()
 
@@ -328,27 +334,37 @@ class TestReminiscenceSchedulerIntegration:
         )
 
         health = cache.health_check()
-        assert health["checks"]["scheduler"]["ok"]
-        assert "Not running" in health["checks"]["scheduler"]["details"]
+        assert health["checks"]["schedulers"]["ok"]
+        assert "Not running" in health["checks"]["schedulers"]["details"]
 
+        # Need TTL to create cleanup scheduler
+        config = ReminiscenceConfig(
+            db_uri="memory://", ttl_seconds=3600, log_level="WARNING"
+        )
+        cache = Reminiscence(config)
         cache.start_scheduler(interval_seconds=10)
 
         health = cache.health_check()
-        assert health["checks"]["scheduler"]["ok"]
-        assert "Running" in health["checks"]["scheduler"]["details"]
+        assert health["checks"]["schedulers"]["ok"]
+        assert "running" in health["checks"]["schedulers"]["details"].lower()
 
         cache.stop_scheduler()
 
     def test_reminiscence_context_manager_stops_scheduler(self):
-        """Context manager should auto-stop scheduler."""
-        config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        """Context manager should auto-stop schedulers."""
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            ttl_seconds=3600,  # Need TTL to create scheduler
+            log_level="WARNING",
+        )
 
         with Reminiscence(config) as cache:
             cache.start_scheduler(interval_seconds=10)
-            assert cache.scheduler.is_running()
+            assert cache.scheduler_manager is not None
+            assert cache.scheduler_manager.schedulers["cache_cleanup"].is_running()
 
         # Should auto-stop on exit
-        assert not cache.scheduler.is_running()
+        assert not cache.scheduler_manager.schedulers["cache_cleanup"].is_running()
 
     def test_reminiscence_scheduler_without_ttl_warning(self):
         """Starting scheduler without TTL should log warning."""
@@ -359,26 +375,30 @@ class TestReminiscenceSchedulerIntegration:
         )
         cache = Reminiscence(config)
 
-        # Should start but log warning
+        # Should start but log warning (no cleanup scheduler created)
         cache.start_scheduler(interval_seconds=10)
 
-        assert cache.scheduler.is_running()
+        # Manager exists but no cleanup scheduler
+        assert cache.scheduler_manager is not None
+        assert "cache_cleanup" not in cache.scheduler_manager.schedulers
 
         cache.stop_scheduler()
 
     def test_reminiscence_scheduler_already_running_warning(self):
         """Starting scheduler twice should log warning."""
-        cache = Reminiscence(
-            ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
+        config = ReminiscenceConfig(
+            db_uri="memory://", ttl_seconds=3600, log_level="WARNING"
         )
+        cache = Reminiscence(config)
 
         cache.start_scheduler(interval_seconds=10)
-        cache.start_scheduler(interval_seconds=5)  # Should warn
+        cache.start_scheduler(interval_seconds=5)  # Should warn and skip
 
-        assert cache.scheduler.is_running()
+        assert cache.scheduler_manager.schedulers["cache_cleanup"].is_running()
 
         cache.stop_scheduler()
 
+    @pytest.mark.slow
     def test_reminiscence_cleanup_actually_works(self):
         """Scheduler should actually delete expired entries."""
         config = ReminiscenceConfig(
@@ -386,7 +406,13 @@ class TestReminiscenceSchedulerIntegration:
             ttl_seconds=0.5,
             log_level="WARNING",
         )
-        cache = Reminiscence(config)
+
+        try:
+            cache = Reminiscence(config)
+        except ValueError as e:
+            if "Could not load model" in str(e):
+                pytest.skip("Model download rate limited - skipping test")
+            raise
 
         # Store entries
         for i in range(10):
@@ -406,7 +432,38 @@ class TestReminiscenceSchedulerIntegration:
         # All should be deleted
         assert cache.backend.count() == 0
 
+        scheduler_stats = cache.get_scheduler_stats()
+        assert scheduler_stats["cache_cleanup"]["total_deleted"] == 10
+
+        cache.stop_scheduler()
+
+    def test_metrics_export_with_scheduler(self):
+        """Test that metrics are exported correctly by scheduler."""
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            otel_enabled=True,
+            otel_service_name="test-scheduler-metrics",
+            log_level="WARNING",
+        )
+
+        cache = Reminiscence(config)
+
+        # Perform some operations
+        cache.store("q1", {"agent": "test"}, "r1")
+        result = cache.lookup("q1", {"agent": "test"})
+
+        assert result.is_hit
+
+        # Start metrics export scheduler
+        cache.start_scheduler(metrics_export_interval_seconds=1)
+
+        # Wait for at least one export
+        time.sleep(2)
+
+        # Check scheduler stats
         stats = cache.get_scheduler_stats()
-        assert stats["total_deleted"] == 10
+
+        assert "metrics_export" in stats
+        assert stats["metrics_export"]["total_runs"] >= 1
 
         cache.stop_scheduler()

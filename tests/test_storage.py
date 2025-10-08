@@ -34,6 +34,45 @@ class TestStorageFactory:
 class TestLanceDBBackend:
     """Test LanceDB implementation."""
 
+    def test_storage_singleton_per_uri(self):
+        """Test that storage backend is singleton per db_uri."""
+        from reminiscence.storage.lancedb import LanceDBBackend
+        from reminiscence.config import ReminiscenceConfig
+
+        config1 = ReminiscenceConfig(db_uri="memory://shared")
+        config2 = ReminiscenceConfig(db_uri="memory://shared")
+        config3 = ReminiscenceConfig(db_uri="memory://other")
+
+        # Same URI → same instance
+        backend1 = LanceDBBackend(config1, embedding_dim=384)
+        backend2 = LanceDBBackend(config2, embedding_dim=384)
+
+        assert backend1 is backend2
+
+        # Different URI → different instance
+        backend3 = LanceDBBackend(config3, embedding_dim=384)
+
+        assert backend1 is not backend3
+        assert backend2 is not backend3
+
+    def test_storage_shared_between_caches(self):
+        """Test that multiple caches can share the same storage."""
+        from reminiscence import Reminiscence, ReminiscenceConfig
+
+        config = ReminiscenceConfig(db_uri="memory://test_shared", log_level="WARNING")
+
+        cache1 = Reminiscence(config)
+        cache2 = Reminiscence(config)
+
+        # Same storage backend
+        assert cache1.backend is cache2.backend
+
+        # Store in cache1
+        cache1.store("query1", {"agent": "test"}, "result1")
+
+        # Should be visible in cache2 (shared storage)
+        assert cache2.backend.count() == 1
+
     def test_count_empty(self):
         """Count on empty storage should be 0."""
         config = ReminiscenceConfig(db_uri="memory://")

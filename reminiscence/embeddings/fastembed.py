@@ -1,5 +1,6 @@
 """FastEmbed implementation (lightweight, ONNX-optimized)."""
 
+import time
 from typing import List
 from functools import cached_property
 
@@ -20,7 +21,14 @@ logger = get_logger(__name__)
 class FastEmbedEmbedder(EmbeddingModel):
     """Embedder using FastEmbed library."""
 
-    def __init__(self, config):
+    def __init__(self, config, metrics=None):
+        """
+        Initialize FastEmbed embedder.
+
+        Args:
+            config: Configuration object
+            metrics: Optional CacheMetrics instance for tracking
+        """
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
                 "fastembed not installed. Install with: "
@@ -28,6 +36,7 @@ class FastEmbedEmbedder(EmbeddingModel):
             )
 
         self.config = config
+        self.metrics = metrics
 
         # Use backend default if no model specified
         if config.model_name is None:
@@ -77,11 +86,67 @@ class FastEmbedEmbedder(EmbeddingModel):
 
     def embed(self, text: str) -> List[float]:
         """Generate normalized embedding."""
+        start = time.perf_counter()
+
         try:
             embeddings = list(self._model.embed([text]))
-            return embeddings[0].tolist()
+            embedding = embeddings[0].tolist()
+
+            # Track embedding generation metrics
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            if self.metrics:
+                if not hasattr(self.metrics, "embedding_generations"):
+                    self.metrics.embedding_generations = 0
+                self.metrics.embedding_generations += 1
+
+                if not hasattr(self.metrics, "embedding_latencies_ms"):
+                    self.metrics.embedding_latencies_ms = []
+                self.metrics.embedding_latencies_ms.append(elapsed_ms)
+
+                # Keep only last 1000 samples
+                if len(self.metrics.embedding_latencies_ms) > 1000:
+                    self.metrics.embedding_latencies_ms = (
+                        self.metrics.embedding_latencies_ms[-1000:]
+                    )
+
+            logger.debug(
+                "embedding_generated",
+                latency_ms=round(elapsed_ms, 2),
+                text_length=len(text),
+            )
+
+            return embedding
+
         except Exception as e:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            if self.metrics:
+                if not hasattr(self.metrics, "embedding_errors"):
+                    self.metrics.embedding_errors = 0
+                self.metrics.embedding_errors += 1
+
             logger.error(
-                "embedding_failed", error=str(e), text_preview=text[:50], exc_info=True
+                "embedding_failed",
+                error=str(e),
+                text_preview=text[:50],
+                latency_ms=round(elapsed_ms, 2),
+                exc_info=True,
             )
             raise
+
+    def get_embedding_stats(self) -> dict:
+        """Get embedding-specific statistics."""
+        if not self.metrics:
+            return {}
+
+        latencies = getattr(self.metrics, "embedding_latencies_ms", [])
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+
+        return {
+            "model_name": self.model_name,
+            "embedding_dim": self.embedding_dim,
+            "total_generations": getattr(self.metrics, "embedding_generations", 0),
+            "avg_latency_ms": round(avg_latency, 2),
+            "errors": getattr(self.metrics, "embedding_errors", 0),
+        }

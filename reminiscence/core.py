@@ -10,7 +10,8 @@ from .storage import create_storage_backend
 from .eviction import create_eviction_policy
 from .cache import CacheOperations
 from .metrics import CacheMetrics
-from .scheduler import CleanupScheduler
+from .metrics.exporters import OpenTelemetryExporter
+from .scheduler import SchedulerManager
 from .utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -32,8 +33,8 @@ class Reminiscence:
     - get_stats(): Return cache statistics
     - health_check(): Perform health checks
     - cached(): Decorator for automatic caching
-    - start_scheduler(): Start background cleanup
-    - stop_scheduler(): Stop background cleanup
+    - start_scheduler(): Start background cleanup and metrics export
+    - stop_scheduler(): Stop background schedulers
 
     Example:
         >>> cache = Reminiscence()
@@ -46,8 +47,8 @@ class Reminiscence:
         ...     data = expensive_llm_call()
         ...     cache.store("What is ML?", {"agent": "qa", "model": "gpt-4"}, data)
         >>>
-        >>> # With automatic background cleanup
-        >>> cache.start_scheduler(interval_seconds=3600)  # Cleanup every hour
+        >>> # With automatic background tasks
+        >>> cache.start_scheduler()  # Auto-starts cleanup and metrics export
         >>> # ... use cache ...
         >>> cache.stop_scheduler()
         >>>
@@ -82,6 +83,32 @@ class Reminiscence:
         self.eviction = create_eviction_policy(self.config.eviction_policy)
         self.metrics = CacheMetrics() if self.config.enable_metrics else None
 
+        # Initialize OpenTelemetry exporter if enabled
+        self.otel_exporter: Optional[OpenTelemetryExporter] = None
+        if self.config.otel_enabled and self.metrics:
+            try:
+                self.otel_exporter = OpenTelemetryExporter.from_config(self.config)
+                if self.otel_exporter:
+                    logger.info(
+                        "opentelemetry_enabled",
+                        endpoint=self.config.otel_endpoint,
+                        service=self.config.otel_service_name,
+                        interval_ms=self.config.otel_export_interval_ms,
+                    )
+                else:
+                    logger.warning("opentelemetry_exporter_disabled")
+            except Exception as e:
+                logger.error(
+                    "opentelemetry_init_failed",
+                    error=str(e),
+                    exc_info=True,
+                )
+        elif self.config.otel_enabled and not self.metrics:
+            logger.warning(
+                "opentelemetry_disabled",
+                reason="Metrics are disabled (REMINISCENCE_ENABLE_METRICS=false)",
+            )
+
         # Single operations handler (lookup, store, maintenance)
         self.ops = CacheOperations(
             storage=self.backend,
@@ -91,8 +118,8 @@ class Reminiscence:
             metrics=self.metrics,
         )
 
-        # Background scheduler (optional)
-        self.scheduler: Optional[CleanupScheduler] = None
+        # Unified scheduler manager for all background tasks
+        self.scheduler_manager = None
 
         logger.info(
             "reminiscence_ready",
@@ -217,90 +244,152 @@ class Reminiscence:
         )
 
     # ====================
-    # SCHEDULER
+    # SCHEDULER MANAGEMENT
     # ====================
 
     def start_scheduler(
         self,
-        interval_seconds: Optional[int] = None,
+        interval_seconds: Optional[int] = None,  # ← Nombre más simple
         initial_delay_seconds: int = 60,
+        metrics_export_interval_seconds: Optional[int] = None,
+        metrics_initial_delay_seconds: int = 0,
     ):
         """
-        Start background cleanup scheduler.
+        Start background schedulers for cleanup and metrics export.
 
         Args:
-            interval_seconds: Time between cleanup runs (default: from config or 3600)
-            initial_delay_seconds: Delay before first cleanup (default: 60)
+            interval_seconds: Interval for cache cleanup (default: 3600). Alias for cleanup_interval_seconds.
+            initial_delay_seconds: Initial delay before first cleanup run (default: 60)
+            metrics_export_interval_seconds: Interval for metrics export (default: from config)
 
         Example:
             >>> cache = Reminiscence()
-            >>> cache.start_scheduler(interval_seconds=1800)  # Cleanup every 30 minutes
-            >>> # ... use cache ...
+            >>> # Start cleanup every 30 minutes, metrics every 10s
+            >>> cache.start_scheduler(
+            ...     interval_seconds=1800,
+            ...     metrics_export_interval_seconds=10
+            ... )
             >>> cache.stop_scheduler()
         """
-        if self.scheduler and self.scheduler.is_running():
-            logger.warning("scheduler_already_running")
+        if self.scheduler_manager and self.scheduler_manager.schedulers:
+            logger.warning("schedulers_already_running")
             return
 
-        if self.config.ttl_seconds is None:
-            logger.warning(
-                "scheduler_started_without_ttl",
-                message="Scheduler will run but no TTL configured - nothing to cleanup",
+        # Create scheduler manager
+        self.scheduler_manager = SchedulerManager(metrics=self.metrics)
+
+        # 1. Add cache cleanup scheduler (if TTL is configured)
+        if self.config.ttl_seconds is not None:
+            cleanup_interval = interval_seconds or 3600
+
+            self.scheduler_manager.add_scheduler(
+                name="cache_cleanup",
+                cleanup_func=self.cleanup_expired,
+                interval_seconds=cleanup_interval,
+                initial_delay_seconds=initial_delay_seconds,
             )
 
-        # Use config value or provided value
-        interval = interval_seconds or getattr(
-            self.config, "cleanup_interval_seconds", 3600
-        )
+            logger.info(
+                "cleanup_scheduler_configured",
+                interval_seconds=cleanup_interval,
+                ttl_seconds=self.config.ttl_seconds,
+            )
+        else:
+            logger.warning(
+                "cleanup_scheduler_skipped",
+                reason="No TTL configured (REMINISCENCE_TTL_SECONDS not set)",
+            )
 
-        self.scheduler = CleanupScheduler(
-            cleanup_func=self.cleanup_expired,
-            interval_seconds=interval,
-            initial_delay_seconds=initial_delay_seconds,
-        )
+        # 2. Add metrics export scheduler (if OpenTelemetry is enabled)
+        if self.otel_exporter and self.metrics:
+            # Convert milliseconds to seconds
+            default_interval = self.config.otel_export_interval_ms // 1000
+            metrics_interval = metrics_export_interval_seconds or default_interval
 
-        self.scheduler.start()
+            def export_metrics() -> int:
+                """Export current metrics to OpenTelemetry."""
+                try:
+                    metrics_data = self.metrics.report()
+                    self.otel_exporter.export(metrics_data)
+                    logger.debug(
+                        "metrics_exported",
+                        hits=metrics_data["hits"],
+                        misses=metrics_data["misses"],
+                        hit_rate=metrics_data["hit_rate"],
+                    )
+                    return 0
+                except Exception as e:
+                    logger.error(
+                        "metrics_export_failed",
+                        error=str(e),
+                        exc_info=True,
+                    )
+                    return 0
 
-        logger.info(
-            "scheduler_started",
-            interval_seconds=interval,
-            initial_delay_seconds=initial_delay_seconds,
-            ttl_seconds=self.config.ttl_seconds,
-        )
+            self.scheduler_manager.add_scheduler(
+                name="metrics_export",
+                cleanup_func=export_metrics,
+                interval_seconds=metrics_interval,
+                initial_delay_seconds=metrics_initial_delay_seconds,
+            )
+
+            logger.info(
+                "metrics_export_scheduler_configured",
+                interval_seconds=metrics_interval,
+                endpoint=self.config.otel_endpoint,
+            )
+
+        # Start all configured schedulers
+        if self.scheduler_manager.schedulers:
+            self.scheduler_manager.start_all()
+            logger.info(
+                "schedulers_started",
+                active_schedulers=list(self.scheduler_manager.schedulers.keys()),
+            )
+        else:
+            logger.warning(
+                "no_schedulers_configured",
+                reason="Neither TTL nor OpenTelemetry are enabled",
+            )
 
     def stop_scheduler(self, timeout: float = 5.0):
         """
-        Stop background cleanup scheduler.
+        Stop all background schedulers.
 
         Args:
-            timeout: Maximum time to wait for scheduler to stop (seconds)
+            timeout: Maximum time to wait for schedulers to stop (seconds)
 
         Example:
             >>> cache.stop_scheduler()
         """
-        if self.scheduler is None:
-            logger.warning("scheduler_not_initialized")
+        if self.scheduler_manager is None:
+            logger.warning("schedulers_not_initialized")
             return
 
-        self.scheduler.stop(timeout=timeout)
+        # Stop each scheduler individually with timeout
+        for name, scheduler in self.scheduler_manager.schedulers.items():
+            logger.debug("stopping_scheduler", name=name)
+            scheduler.stop(timeout=timeout)
+
+        logger.info("schedulers_stopped")
 
     def get_scheduler_stats(self) -> Optional[Dict[str, Any]]:
         """
-        Get scheduler statistics.
+        Get statistics for all schedulers.
 
         Returns:
-            Dict with scheduler stats or None if scheduler not started
+            Dict with stats for each scheduler or None if no schedulers
 
         Example:
             >>> stats = cache.get_scheduler_stats()
             >>> if stats:
-            ...     print(f"Total cleanups: {stats['total_runs']}")
-            ...     print(f"Total deleted: {stats['total_deleted']}")
+            ...     print(f"Cache cleanup runs: {stats['cache_cleanup']['total_runs']}")
+            ...     print(f"Metrics exports: {stats['metrics_export']['total_runs']}")
         """
-        if self.scheduler is None:
+        if self.scheduler_manager is None:
             return None
 
-        return self.scheduler.get_stats()
+        return self.scheduler_manager.get_stats()
 
     # ====================
     # INDEX & STATS
@@ -335,6 +424,7 @@ class Reminiscence:
     def get_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
         stats = {
+            "cache_entries": self.backend.count(),
             "total_entries": self.backend.count(),
             "max_entries": self.config.max_entries,
             "eviction_policy": self.config.eviction_policy,
@@ -350,8 +440,8 @@ class Reminiscence:
             stats.update(self.metrics.report())
 
         # Add scheduler stats if available
-        if self.scheduler:
-            stats["scheduler"] = self.scheduler.get_stats()
+        if self.scheduler_manager:
+            stats["schedulers"] = self.scheduler_manager.get_stats()
 
         return stats
 
@@ -373,7 +463,8 @@ class Reminiscence:
             "embedding": {"ok": True, "error": None},
             "database": {"ok": True, "error": None},
             "error_rate": {"ok": True, "details": "No metrics available"},
-            "scheduler": {"ok": True, "details": "Not running"},
+            "schedulers": {"ok": True, "details": "Not running"},
+            "opentelemetry": {"ok": True, "details": "Disabled"},
         }
 
         # Test embedding
@@ -426,24 +517,35 @@ class Reminiscence:
                     f"Insufficient data: {total_requests} requests"
                 )
 
-        # Check scheduler
-        if self.scheduler:
-            if self.scheduler.is_running():
-                scheduler_stats = self.scheduler.get_stats()
-                if scheduler_stats["errors"] > 0:
-                    checks["scheduler"]["ok"] = False
-                    checks["scheduler"]["details"] = (
-                        f"Scheduler running with {scheduler_stats['errors']} errors"
-                    )
-                else:
-                    checks["scheduler"]["ok"] = True
-                    checks["scheduler"]["details"] = (
-                        f"Running (runs: {scheduler_stats['total_runs']}, "
-                        f"deleted: {scheduler_stats['total_deleted']})"
-                    )
+        # Check schedulers
+        if self.scheduler_manager and self.scheduler_manager.schedulers:
+            all_stats = self.scheduler_manager.get_stats()
+            running_count = sum(1 for s in all_stats.values() if s["running"])
+            total_errors = sum(s["errors"] for s in all_stats.values())
+
+            if total_errors > 0:
+                checks["schedulers"]["ok"] = False
+                checks["schedulers"]["details"] = (
+                    f"{running_count}/{len(all_stats)} running with {total_errors} errors"
+                )
             else:
-                checks["scheduler"]["ok"] = False
-                checks["scheduler"]["details"] = "Scheduler initialized but not running"
+                checks["schedulers"]["ok"] = True
+                checks["schedulers"]["details"] = (
+                    f"{running_count}/{len(all_stats)} schedulers running"
+                )
+
+        # Check OpenTelemetry
+        if self.otel_exporter:
+            checks["opentelemetry"]["ok"] = True
+            checks["opentelemetry"]["details"] = (
+                f"Enabled (service: {self.otel_exporter.service_name}, "
+                f"endpoint: {self.otel_exporter.endpoint})"
+            )
+        elif self.config.otel_enabled:
+            checks["opentelemetry"]["ok"] = False
+            checks["opentelemetry"]["details"] = (
+                "Enabled but exporter failed to initialize"
+            )
 
         # Overall status
         all_checks_ok = all(check["ok"] for check in checks.values())
@@ -498,11 +600,11 @@ class Reminiscence:
     # ====================
 
     def __enter__(self):
-        """Context manager support - optionally starts scheduler."""
+        """Context manager support."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager support - stops scheduler if running."""
-        if self.scheduler and self.scheduler.is_running():
+        """Context manager support - stops all schedulers."""
+        if self.scheduler_manager and self.scheduler_manager.schedulers:
             self.stop_scheduler()
         return False

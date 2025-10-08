@@ -17,14 +17,35 @@ class CacheOperations:
     Combines lookup (semantic + exact context), store, and maintenance.
     """
 
-    def __init__(self, storage, embedder, eviction, config, metrics=None):
+    def __init__(
+        self,
+        storage,
+        embedder,
+        eviction,
+        config,
+        metrics=None,
+        enable_otel: bool = True,
+        otel_endpoint: str = "http://localhost:4318/v1/metrics",
+    ):
         self.storage = storage
         self.embedder = embedder
         self.eviction = eviction
         self.config = config
         self.metrics = metrics
 
-        # Sincronizar eviction policy con entries existentes
+        # OpenTelemetry exporter (optional)
+        self.otel_exporter = None
+        self._otel_export_counter = 0
+        if enable_otel:
+            try:
+                from .metrics.exporters import OpenTelemetryExporter
+
+                self.otel_exporter = OpenTelemetryExporter(endpoint=otel_endpoint)
+                logger.info("opentelemetry_enabled", endpoint=otel_endpoint)
+            except Exception as e:
+                logger.warning("opentelemetry_init_failed", error=str(e))
+
+        # Sync eviction policy with existing entries
         self._sync_eviction_state()
 
     def _sync_eviction_state(self):
@@ -39,13 +60,13 @@ class CacheOperations:
                     )
                     self.eviction.on_insert(entry_id)
 
-                    # Para LRU: usar timestamp de creación
+                    # For LRU: use creation timestamp
                     if hasattr(self.eviction, "access_times"):
                         self.eviction.access_times[entry_id] = row.get(
                             "timestamp", time.time()
                         )
 
-                    # Para LFU: inicializar frecuencia
+                    # For LFU: initialize frequency
                     if hasattr(self.eviction, "frequencies"):
                         self.eviction.frequencies[entry_id] = 0
 
@@ -64,6 +85,15 @@ class CacheOperations:
         else:
             context_str = json.dumps(context, sort_keys=True)
         return f"{query[:30]}:{context_str[:30]}"
+
+    def _export_metrics_to_otel(self):
+        """Export metrics to OpenTelemetry periodically."""
+        if self.otel_exporter and self.metrics:
+            try:
+                report = self.metrics.report()
+                self.otel_exporter.export(report)
+            except Exception as e:
+                logger.warning("otel_export_failed", error=str(e))
 
     # ====================
     # LOOKUP
@@ -120,7 +150,7 @@ class CacheOperations:
             if self._is_expired(best):
                 return self._miss("expired", start_time, track_metrics=_track_metrics)
 
-            # **EVICTION: Track access on HIT**
+            # EVICTION: Track access on HIT
             entry_id = self._generate_entry_id(best.query_text, best.context)
             self.eviction.on_access(entry_id)
 
@@ -140,6 +170,11 @@ class CacheOperations:
                 self.metrics.hits += 1
                 self.metrics.total_latency_saved_ms += 2000  # Estimated LLM call time
                 self.metrics.record_lookup_latency(elapsed_ms)
+
+                # Export to OpenTelemetry every 100 requests
+                self._otel_export_counter += 1
+                if self._otel_export_counter % 100 == 0:
+                    self._export_metrics_to_otel()
 
             return LookupResult(
                 hit=True,
@@ -217,7 +252,7 @@ class CacheOperations:
             # Store (serialization happens in storage backend)
             self.storage.add([entry])
 
-            # **EVICTION: Track insertion**
+            # EVICTION: Track insertion
             entry_id = self._generate_entry_id(query, context)
             self.eviction.on_insert(entry_id)
 
@@ -227,6 +262,15 @@ class CacheOperations:
                     self.config.index_threshold_entries,
                     self.config.index_num_partitions,
                 )
+
+            # Track result size in metrics
+            if self.metrics:
+                try:
+                    result_str = json.dumps(result)
+                    result_size = len(result_str.encode("utf-8"))
+                    self.metrics.record_result_size(result_size)
+                except Exception:
+                    pass  # Skip size tracking if serialization fails
 
             logger.debug(
                 "cache_store_success",
@@ -394,6 +438,21 @@ class CacheOperations:
         except Exception as e:
             logger.error("invalidation_failed", error=str(e), exc_info=True)
             return 0
+
+    def get_metrics_report(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current metrics report.
+
+        Returns:
+            Dict with comprehensive metrics or None if metrics disabled
+        """
+        if self.metrics:
+            return self.metrics.report()
+        return None
+
+    def export_metrics_now(self):
+        """Force immediate export of metrics to OpenTelemetry."""
+        self._export_metrics_to_otel()
 
     # ====================
     # INTERNAL HELPERS

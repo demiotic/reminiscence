@@ -6,7 +6,7 @@ from reminiscence.types import LookupResult, AvailabilityCheck
 from reminiscence.decorators import create_cached_decorator, ReminiscenceDecorator
 from reminiscence.scheduler import CleanupScheduler, SchedulerManager
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
     "Reminiscence",

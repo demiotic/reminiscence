@@ -113,8 +113,6 @@ cache = Reminiscence(config)
 cache = Reminiscence(ReminiscenceConfig.load())
 ```
 
-See [Configuration Guide](https://your-docs-site.github.io/reminiscence/configuration) for all environment variables.
-
 ## Background Tasks
 
 Automatic cleanup and metrics export:

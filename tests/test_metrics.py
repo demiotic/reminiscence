@@ -1,6 +1,5 @@
 """Tests for metrics tracking and exporters."""
 
-import pytest
 from reminiscence.metrics.tracker import CacheMetrics
 from reminiscence.metrics.exporters import OpenTelemetryExporter
 from reminiscence.config import ReminiscenceConfig
@@ -527,7 +526,3 @@ class TestMetricsIntegration:
         assert "storage" in report
         assert "embedding" in report
         assert "eviction" in report
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

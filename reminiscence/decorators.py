@@ -6,6 +6,9 @@ import json
 from typing import Any, Callable, Dict, Optional, TypeVar, List
 
 from .core import Reminiscence
+from .utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -60,6 +63,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
         similarity_threshold: Optional[float] = None,
+        allow_errors: bool = False,
     ) -> Callable[[F], F]:
         """
         Decorator to cache function results with hybrid matching.
@@ -70,7 +74,8 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
             context_params: Parameters for exact context matching
             static_context: Static context dict
             auto_strict: Auto-detect non-string params as context
-            similarity_threshold: Minimum similarity score (overrides config)  # ← AÑADIR DOC
+            similarity_threshold: Minimum similarity score (overrides config)
+            allow_errors: If False (default), don't cache error results
         """
 
         def decorator_func(func: F) -> F:
@@ -122,7 +127,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                 if not cache_context:
                     cache_context = {"__function__": func.__name__}
 
-                # Pass similarity_threshold to lookup
+                # Lookup in cache
                 result = reminiscence.lookup(
                     query_value,
                     cache_context,
@@ -133,13 +138,30 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                 if result.is_hit:
                     return result.result
 
-                output = func(*args, **kwargs)
+                # Execute function
+                try:
+                    output = func(*args, **kwargs)
 
-                reminiscence.store(
-                    query_value, cache_context, output, query_mode=query_mode
-                )
+                    # Store result (validates errors unless allow_errors=True)
+                    reminiscence.store(
+                        query_value,
+                        cache_context,
+                        output,
+                        query_mode=query_mode,
+                        allow_errors=allow_errors,
+                    )
 
-                return output
+                    return output
+
+                except Exception as e:
+                    # NEVER cache exceptions
+                    logger.debug(
+                        "function_raised_exception_not_cached",
+                        function=func.__name__,
+                        error_type=type(e).__name__,
+                        error=str(e),
+                    )
+                    raise  # Re-raise to preserve original behavior
 
             if inspect.iscoroutinefunction(func):
 
@@ -168,7 +190,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     if not cache_context:
                         cache_context = {"__function__": func.__name__}
 
-                    # Pass similarity_threshold to lookup
+                    # Lookup in cache
                     result = reminiscence.lookup(
                         query_value,
                         cache_context,
@@ -179,13 +201,30 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     if result.is_hit:
                         return result.result
 
-                    output = await func(*args, **kwargs)
+                    # Execute async function
+                    try:
+                        output = await func(*args, **kwargs)
 
-                    reminiscence.store(
-                        query_value, cache_context, output, query_mode=query_mode
-                    )
+                        # Store result (validates errors unless allow_errors=True)
+                        reminiscence.store(
+                            query_value,
+                            cache_context,
+                            output,
+                            query_mode=query_mode,
+                            allow_errors=allow_errors,
+                        )
 
-                    return output
+                        return output
+
+                    except Exception as e:
+                        # NEVER cache exceptions
+                        logger.debug(
+                            "async_function_raised_exception_not_cached",
+                            function=func.__name__,
+                            error_type=type(e).__name__,
+                            error=str(e),
+                        )
+                        raise  # Re-raise to preserve original behavior
 
                 return async_wrapper
 
@@ -225,21 +264,25 @@ class ReminiscenceDecorator:
 
     def cached(
         self,
-        query: str = "query",  # ← Renombrado
-        query_mode: str = "semantic",  # ← NUEVO
-        context_params: Optional[List[str]] = None,  # ← Renombrado
+        query: str = "query",
+        query_mode: str = "semantic",
+        context_params: Optional[List[str]] = None,
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
+        similarity_threshold: Optional[float] = None,
+        allow_errors: bool = False,  # ← NUEVO
     ) -> Callable[[F], F]:
         """
         Create a cached decorator with hybrid matching.
 
         Args:
-            query: Name of the query parameter (renamed from query_param)
+            query: Name of the query parameter
             query_mode: Query matching strategy ("semantic", "exact", "auto")
-            context_params: Parameters for exact context matching (renamed from strict_params)
+            context_params: Parameters for exact context matching
             static_context: Static context dict
             auto_strict: Auto-detect non-string params as context
+            similarity_threshold: Minimum similarity score (overrides config)
+            allow_errors: If False (default), don't cache error results
 
         Returns:
             Decorator function
@@ -250,4 +293,6 @@ class ReminiscenceDecorator:
             context_params=context_params,
             static_context=static_context,
             auto_strict=auto_strict,
+            similarity_threshold=similarity_threshold,
+            allow_errors=allow_errors,
         )

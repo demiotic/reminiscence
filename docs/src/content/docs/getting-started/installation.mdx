@@ -1,0 +1,140 @@
+---
+title: Installation
+description: Install Reminiscence and its dependencies
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Requirements
+
+- Python 3.9 or higher
+- pip, poetry, or uv package manager
+
+
+## Install Reminiscence
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
+This installs Reminiscence with all core dependencies:
+
+- `lancedb` - Vector database for embeddings
+- `fastembed` - Fast embedding generation
+- `orjson` - Fast JSON serialization
+- `pyarrow` - Columnar data format
+- `structlog` - Structured logging
+
+
+## Optional Dependencies
+
+### For DataFrame Support
+
+If you plan to cache pandas DataFrames or Polars DataFrames:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install "reminiscence[dataframes]"
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add "reminiscence[dataframes]"
+    ```
+  </TabItem>
+  <TabItem label="uv">
+	```bash
+	uv add "reminiscence[dataframes]"
+	```
+  </TabItem>
+</Tabs>
+
+### For OpenTelemetry
+
+If you want observability and metrics:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install "reminiscence[otel]"
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add "reminiscence[otel]"
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+	uv add "reminiscence[otel]"
+	```
+  </TabItem>
+</Tabs>
+
+## Verify Installation
+
+Test that Reminiscence is installed correctly:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+
+# Create a cache instance
+cache = Reminiscence()
+
+
+# Verify it works
+result = cache.lookup("test query", context={})
+print(f"Installation successful! Cache miss: {not result.is_hit}")
+```
+
+You should see: `Installation successful! Cache miss: True`
+
+## Development Installation
+
+If you want to contribute or modify Reminiscence:
+
+```bash
+# Clone the repository
+git clone https://github.com/demiotic/reminiscence.git
+cd reminiscence
+```
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+	pip install -e ".[dev]"
+	pytest
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+	poetry install --with dev
+	poetry run pytest
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+	uv sync --extra dev
+	uv run pytest
+
+	```
+  </TabItem>
+</Tabs>
+
+## Next Steps
+
+Now that Reminiscence is installed, check out the [Quick Start](/getting-started/quick-start/) guide to learn how to use it.

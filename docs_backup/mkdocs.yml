@@ -1,0 +1,224 @@
+site_name: Reminiscence
+site_description: Una documentación elegante y profesional
+repo_url: https://github.com/demiotic/reminiscence
+repo_name: demiotic/reminiscence
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  
+  # Logo y favicon
+  logo: assets/logo.svg
+  favicon: assets/logo.png
+  
+  # Color scheme mejorado
+  palette:
+    # Modo claro - tonos cálidos y profesionales
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Cambiar a modo oscuro
+    
+    # Modo oscuro - elegante y moderno
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Cambiar a modo claro
+  
+  # Tipografía optimizada
+  font:
+    text: Inter
+    code: JetBrains Mono
+  
+  # Features avanzadas
+  features:
+    # Navegación
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    
+    # Búsqueda
+    - search.suggest
+    - search.highlight
+    - search.share
+    
+    # Tabla de contenidos
+    - toc.follow
+    - toc.integrate
+    
+    # Contenido
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - content.action.edit
+    - content.action.view
+    
+    # Header
+    - header.autohide
+
+# Plugins optimizados
+plugins:
+  - search:
+      lang: 
+        - en
+        - es
+      separator: '[\s\-\.]+'
+  
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: es
+          name: Español
+          build: true
+          nav_translations:
+            Home: Inicio
+            Getting Started: Comenzando
+            Installation: Instalación
+            Quick Start: Inicio Rápido
+            API Reference: Referencia API
+            Advanced: Avanzado
+            Configuration: Configuración
+            Performance: Rendimiento
+            Contributing: Contribuir
+  
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+  
+  - minify:
+      minify_html: true
+
+# Navegación mejorada
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - API Reference: 
+    - api/index.md
+    - api/reference.md
+  - Advanced:
+    - advanced/index.md
+    - Configuration: advanced/configuration.md
+    - Performance: advanced/performance.md
+  - Contributing: contributing.md
+
+# Extensiones de Markdown completas
+markdown_extensions:
+  # Sintaxis de Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Anchor link to this section
+  
+  # PyMdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: demiotic
+      repo: reminiscence
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+# Extras
+extra:
+  # Información del proyecto
+  version:
+    provider: mike
+  
+  # Redes sociales
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/demiotic/reminiscence
+      name: GitHub Repository
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/reminiscence/
+      name: PyPI Package
+    - icon: fontawesome/solid/paper-plane
+      link: mailto:your-email@example.com
+      name: Contact Us
+  
+  # Selector de idioma
+  alternate:
+    - name: English
+      link: ./
+      lang: en
+    - name: Español
+      link: ./es/
+      lang: es
+  
+  # Analytics (opcional - descomenta si lo necesitas)
+  # analytics:
+  #   provider: google
+  #   property: G-XXXXXXXXXX
+
+# CSS y JavaScript personalizados
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Copyright
+copyright: Copyright &copy; 2024 Reminiscence - Todos los derechos reservados

@@ -41,7 +41,9 @@ reminiscence = Reminiscence(
 anthropic_client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 
-@reminiscence.cached()
+@reminiscence.cached(
+    query="query",
+)
 def ask_claude(query: str) -> str:
     """Ask Claude with Reminiscence semantic caching."""
     message = anthropic_client.messages.create(

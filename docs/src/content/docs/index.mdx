@@ -1,0 +1,39 @@
+---
+title: Reminiscence
+description: Semantic cache for LLMs and multi-agent systems
+---
+
+import { Card } from '@astrojs/starlight/components';
+
+**Reminiscence** eliminates redundant computations by matching queries semantically instead of exact strings. Built for **LLM applications**, **RAG pipelines**, and **multi-agent systems** where users express identical intent through different phrasing.
+
+## Why semantic caching matters
+
+Traditional *caching* requires exact string matches. Two semantically identical queries like "Analyze Q3 sales" and "Show third quarter revenue" both trigger **expensive LLM API calls**.
+
+Reminiscence uses sentence transformers to understand query meaning. Semantically similar requests return cached results, **reducing API costs and latency**.
+
+## Core capabilities
+
+<Card title="Semantic matching" icon="star">
+FastEmbed with multilingual transformers recognizes equivalent queries regardless of phrasing.
+</Card>
+
+<Card title="Hybrid approach" icon="puzzle">
+Combines semantic similarity with exact context matching for precise cache control.
+</Card>
+
+<Card title="Production-grade" icon="approve-check">
+Multiple eviction policies, TTL, health checks, and OpenTelemetry built-in.
+</Card>
+
+<Card title="Type-safe" icon="seti:config">
+Handles DataFrames, numpy arrays, nested structures. Scales to 100K+ entries.
+</Card>
+
+## Built for AI systems
+
+- LLM applications with variable user input
+- Multi-agent workflows requiring shared context
+- RAG pipelines caching retrieval and generation
+- Data analysis workflows with expensive operations

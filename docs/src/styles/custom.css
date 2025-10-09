@@ -1,0 +1,6 @@
+/* Custom styles */
+.site-title {
+    gap: 0 !important;
+    row-gap: 0 !important;
+    column-gap: 0 !important;
+}

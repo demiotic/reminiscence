@@ -197,4 +197,3 @@ with Reminiscence() as cache:
 - Explore [Decorators](/guides/decorators/) for advanced patterns
 - See [Configuration](/guides/configuration/) for all options
 - Check [API Reference](/reference/api/) for complete documentation
-```

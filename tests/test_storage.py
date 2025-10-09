@@ -531,3 +531,143 @@ class TestLanceDBBackend:
         assert result[4] == {"nested": "dict"}
         assert result[5] == [1, 2, 3]
         assert result[6] is None
+
+
+class TestDualTableArchitecture:
+    """Test dual table architecture (exact + semantic)."""
+
+    def test_dual_tables_created(self):
+        """Should create both exact and semantic tables."""
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        assert hasattr(storage, "exact_table")
+        assert hasattr(storage, "semantic_table")
+        assert storage.exact_table is not None
+        assert storage.semantic_table is not None
+
+    def test_add_to_exact_table(self):
+        """Should add to exact table when query_mode=exact."""
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entry = CacheEntry(
+            query_text="test",
+            context={"agent": "test"},
+            embedding=None,  # No embedding for exact mode
+            result="result",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        storage.add([entry], query_mode="exact")
+
+        assert storage.exact_table.count_rows() == 1
+        assert storage.semantic_table.count_rows() == 0
+
+    def test_add_to_semantic_table(self):
+        """Should add to semantic table when query_mode=semantic."""
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entry = CacheEntry(
+            query_text="test",
+            context={"agent": "test"},
+            embedding=[0.1] * 384,
+            result="result",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        storage.add([entry], query_mode="semantic")
+
+        assert storage.semantic_table.count_rows() == 1
+        assert storage.exact_table.count_rows() == 0
+
+    def test_search_exact_mode(self):
+        """Should search in exact table."""
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entry = CacheEntry(
+            query_text="exact query",
+            context={"agent": "test"},
+            embedding=None,
+            result="exact result",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        storage.add([entry], query_mode="exact")
+
+        results = storage.search(
+            embedding=None,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="exact",
+            query_text="exact query",
+        )
+
+        assert len(results) == 1
+        assert results[0].result == "exact result"
+
+    def test_count_includes_both_tables(self):
+        """Count should include entries from both tables."""
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entry1 = CacheEntry(
+            query_text="exact",
+            context={"agent": "test"},
+            embedding=None,
+            result="r1",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        entry2 = CacheEntry(
+            query_text="semantic",
+            context={"agent": "test"},
+            embedding=[0.1] * 384,
+            result="r2",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        storage.add([entry1], query_mode="exact")
+        storage.add([entry2], query_mode="semantic")
+
+        assert storage.count() == 2
+
+    def test_clear_clears_both_tables(self):
+        """Clear should remove entries from both tables."""
+        config = ReminiscenceConfig(db_uri="memory://")
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entry1 = CacheEntry(
+            query_text="exact",
+            context={"agent": "test"},
+            embedding=None,
+            result="r1",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        entry2 = CacheEntry(
+            query_text="semantic",
+            context={"agent": "test"},
+            embedding=[0.1] * 384,
+            result="r2",
+            timestamp=time.time(),
+            metadata=None,
+        )
+
+        storage.add([entry1], query_mode="exact")
+        storage.add([entry2], query_mode="semantic")
+
+        storage.clear()
+
+        assert storage.count() == 0
+        assert storage.exact_table.count_rows() == 0
+        assert storage.semantic_table.count_rows() == 0

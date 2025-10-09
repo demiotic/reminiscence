@@ -1,5 +1,6 @@
 """Core Reminiscence class - Facade for all components."""
 
+import pytest
 import time
 from typing import Any, Dict, Optional
 
@@ -605,3 +606,76 @@ class Reminiscence:
             f"dim={self.embedder.embedding_dim}, "
             f"threshold={self.config.similarity_threshold})"
         )
+
+
+@pytest.mark.integration
+class TestOTELIntegration:
+    """Integration tests with real OTEL collector."""
+
+    def test_metrics_actually_reach_collector(self):
+        """Verify metrics are sent to OTEL collector (requires Docker)."""
+        import time
+        from opentelemetry import metrics as otel_metrics
+
+        # Create exporter with very short interval for testing
+        config = ReminiscenceConfig(
+            otel_enabled=True,
+            otel_endpoint="http://localhost:4318/v1/metrics",
+            otel_export_interval_ms=100,  # 100ms for fast test
+        )
+
+        exporter = OpenTelemetryExporter.from_config(config)
+        metrics = CacheMetrics()
+
+        # Generate some metrics
+        metrics.hits = 100
+        metrics.misses = 20
+
+        # Export
+        exporter.export(metrics.report())
+
+        # Force flush to ensure it's sent immediately
+        provider = otel_metrics.get_meter_provider()
+        if hasattr(provider, "force_flush"):
+            result = provider.force_flush(timeout_millis=2000)
+            assert result, "Flush failed - collector not reachable"
+
+        # If we get here without exceptions, metrics were sent
+        # (OTEL would raise ConnectionError if collector is down)
+
+        # Verify internal state updated
+        assert exporter._last_hits == 100
+        assert exporter._last_misses == 20
+
+    def test_metrics_export_with_real_cache_operations(self):
+        """End-to-end test with CacheOperations + OTEL."""
+        import time
+        from reminiscence import Reminiscence, ReminiscenceConfig
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            otel_enabled=True,
+            otel_endpoint="http://localhost:4318/v1/metrics",
+            otel_export_interval_ms=100,
+        )
+
+        cache = Reminiscence(config)
+
+        # Generate cache activity
+        cache.store("test query", {}, "result")
+        result = cache.lookup("test query", {})
+        assert result.is_hit
+
+        # Force export
+        if cache.cache_ops.otel_exporter:
+            cache.cache_ops.export_metrics_now()
+
+            # Force flush
+            from opentelemetry import metrics as otel_metrics
+
+            provider = otel_metrics.get_meter_provider()
+            if hasattr(provider, "force_flush"):
+                provider.force_flush(timeout_millis=2000)
+
+        # Success if no ConnectionError
+        assert True

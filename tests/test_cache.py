@@ -11,61 +11,32 @@ from reminiscence.eviction import create_eviction_policy
 from reminiscence.metrics import CacheMetrics
 
 
-# Helper para tests que necesitan config específico
-def create_ops_custom(eviction_policy: str, max_entries: int = 3):
-    """Helper para crear CacheOperations con config específico."""
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        max_entries=max_entries,
-        eviction_policy=eviction_policy,
-        enable_metrics=True,
-        similarity_threshold=0.95,
-        log_level="WARNING",
-    )
-
-    embedder = create_embedder(config)
-    storage = create_storage_backend(config, embedder.embedding_dim)
-    eviction = create_eviction_policy(eviction_policy)
-    metrics = CacheMetrics()
-
-    return CacheOperations(storage, embedder, eviction, config, metrics)
-
-
 class TestFIFOPolicy:
     """Test FIFO (First In First Out) eviction."""
 
-    def test_fifo_evicts_oldest(self):
+    def test_fifo_evicts_oldest(self, fifo_ops):
         """FIFO should evict the first inserted entry."""
-        ops = create_ops_custom("fifo", max_entries=3)
-
-        ops.store("query1", {"agent": "test"}, "result1")
+        fifo_ops.store("query1", {"agent": "test"}, "result1")
         time.sleep(0.01)
-        ops.store("query2", {"agent": "test"}, "result2")
+        fifo_ops.store("query2", {"agent": "test"}, "result2")
         time.sleep(0.01)
-        ops.store("query3", {"agent": "test"}, "result3")
+        fifo_ops.store("query3", {"agent": "test"}, "result3")
 
-        assert ops.storage.count() == 3
+        assert fifo_ops.storage.count() == 3
 
         time.sleep(0.01)
-        ops.store("query4", {"agent": "test"}, "result4")
+        fifo_ops.store("query4", {"agent": "test"}, "result4")
 
-        assert ops.storage.count() == 3
+        assert fifo_ops.storage.count() == 3
 
-        result1 = ops.lookup("query1", {"agent": "test"})
-        assert result1.is_miss
+        assert fifo_ops.lookup("query1", {"agent": "test"}).is_miss
+        assert fifo_ops.lookup("query2", {"agent": "test"}).is_hit
+        assert fifo_ops.lookup("query3", {"agent": "test"}).is_hit
+        assert fifo_ops.lookup("query4", {"agent": "test"}).is_hit
 
-        result2 = ops.lookup("query2", {"agent": "test"})
-        assert result2.is_hit
-
-        result3 = ops.lookup("query3", {"agent": "test"})
-        assert result3.is_hit
-
-        result4 = ops.lookup("query4", {"agent": "test"})
-        assert result4.is_hit
-
-    def test_fifo_ignores_access_patterns(self):
+    def test_fifo_ignores_access_patterns(self, ops_factory):
         """FIFO should not care about access frequency or recency."""
-        ops = create_ops_custom("fifo", max_entries=2)
+        ops = ops_factory("fifo", max_entries=2)
 
         ops.store("database optimization techniques", {"agent": "test"}, "result_db")
         time.sleep(0.01)
@@ -84,41 +55,32 @@ class TestFIFOPolicy:
 class TestLRUPolicy:
     """Test LRU (Least Recently Used) eviction."""
 
-    def test_lru_evicts_least_recently_used(self):
+    def test_lru_evicts_least_recently_used(self, lru_ops):
         """LRU should evict the entry that hasn't been accessed recently."""
-        ops = create_ops_custom("lru", max_entries=3)
-
-        ops.store("query1", {"agent": "test"}, "result1")
+        lru_ops.store("query1", {"agent": "test"}, "result1")
         time.sleep(0.01)
-        ops.store("query2", {"agent": "test"}, "result2")
+        lru_ops.store("query2", {"agent": "test"}, "result2")
         time.sleep(0.01)
-        ops.store("query3", {"agent": "test"}, "result3")
+        lru_ops.store("query3", {"agent": "test"}, "result3")
         time.sleep(0.01)
 
-        ops.lookup("query2", {"agent": "test"})
+        lru_ops.lookup("query2", {"agent": "test"})
         time.sleep(0.01)
-        ops.lookup("query3", {"agent": "test"})
+        lru_ops.lookup("query3", {"agent": "test"})
         time.sleep(0.01)
 
-        ops.store("query4", {"agent": "test"}, "result4")
+        lru_ops.store("query4", {"agent": "test"}, "result4")
 
-        assert ops.storage.count() == 3
+        assert lru_ops.storage.count() == 3
 
-        result1 = ops.lookup("query1", {"agent": "test"})
-        assert result1.is_miss
+        assert lru_ops.lookup("query1", {"agent": "test"}).is_miss
+        assert lru_ops.lookup("query2", {"agent": "test"}).is_hit
+        assert lru_ops.lookup("query3", {"agent": "test"}).is_hit
+        assert lru_ops.lookup("query4", {"agent": "test"}).is_hit
 
-        result2 = ops.lookup("query2", {"agent": "test"})
-        assert result2.is_hit
-
-        result3 = ops.lookup("query3", {"agent": "test"})
-        assert result3.is_hit
-
-        result4 = ops.lookup("query4", {"agent": "test"})
-        assert result4.is_hit
-
-    def test_lru_updates_on_access(self):
+    def test_lru_updates_on_access(self, ops_factory):
         """LRU should update access time on cache hits."""
-        ops = create_ops_custom("lru", max_entries=2)
+        ops = ops_factory("lru", max_entries=2)
 
         ops.store("What is machine learning?", {"agent": "test"}, "result_ml")
         time.sleep(0.01)
@@ -153,43 +115,34 @@ class TestLRUPolicy:
 class TestLFUPolicy:
     """Test LFU (Least Frequently Used) eviction."""
 
-    def test_lfu_evicts_least_frequently_used(self):
+    def test_lfu_evicts_least_frequently_used(self, lfu_ops):
         """LFU should evict the entry with lowest access count."""
-        ops = create_ops_custom("lfu", max_entries=3)
+        lfu_ops.store("rarely_used", {"agent": "test"}, "result1")
+        lfu_ops.store("sometimes_used", {"agent": "test"}, "result2")
+        lfu_ops.store("frequently_used", {"agent": "test"}, "result3")
 
-        ops.store("rarely_used", {"agent": "test"}, "result1")
-        ops.store("sometimes_used", {"agent": "test"}, "result2")
-        ops.store("frequently_used", {"agent": "test"}, "result3")
-
-        ops.lookup("rarely_used", {"agent": "test"})
+        lfu_ops.lookup("rarely_used", {"agent": "test"})
 
         for _ in range(3):
-            ops.lookup("sometimes_used", {"agent": "test"})
+            lfu_ops.lookup("sometimes_used", {"agent": "test"})
 
         for _ in range(10):
-            ops.lookup("frequently_used", {"agent": "test"})
+            lfu_ops.lookup("frequently_used", {"agent": "test"})
 
         time.sleep(0.01)
 
-        ops.store("new_entry", {"agent": "test"}, "result4")
+        lfu_ops.store("new_entry", {"agent": "test"}, "result4")
 
-        assert ops.storage.count() == 3
+        assert lfu_ops.storage.count() == 3
 
-        result1 = ops.lookup("rarely_used", {"agent": "test"})
-        assert result1.is_miss
+        assert lfu_ops.lookup("rarely_used", {"agent": "test"}).is_miss
+        assert lfu_ops.lookup("sometimes_used", {"agent": "test"}).is_hit
+        assert lfu_ops.lookup("frequently_used", {"agent": "test"}).is_hit
+        assert lfu_ops.lookup("new_entry", {"agent": "test"}).is_hit
 
-        result2 = ops.lookup("sometimes_used", {"agent": "test"})
-        assert result2.is_hit
-
-        result3 = ops.lookup("frequently_used", {"agent": "test"})
-        assert result3.is_hit
-
-        result4 = ops.lookup("new_entry", {"agent": "test"})
-        assert result4.is_hit
-
-    def test_lfu_tracks_access_frequency(self):
+    def test_lfu_tracks_access_frequency(self, ops_factory):
         """LFU should increment frequency counter on each access."""
-        ops = create_ops_custom("lfu", max_entries=2)
+        ops = ops_factory("lfu", max_entries=2)
 
         ops.store("low_freq", {"agent": "test"}, "result1")
         ops.store("high_freq", {"agent": "test"}, "result2")
@@ -209,9 +162,9 @@ class TestLFUPolicy:
         result = ops.lookup("high_freq", {"agent": "test"})
         assert result.is_hit
 
-    def test_lfu_new_entries_start_at_zero(self):
+    def test_lfu_new_entries_start_at_zero(self, ops_factory):
         """New entries should start with frequency 0."""
-        ops = create_ops_custom("lfu", max_entries=2)
+        ops = ops_factory("lfu", max_entries=2)
 
         ops.store("accessed", {"agent": "test"}, "result1")
         ops.lookup("accessed", {"agent": "test"})
@@ -230,11 +183,11 @@ class TestLFUPolicy:
 class TestEvictionPolicyComparison:
     """Compare behavior across policies."""
 
-    def test_same_entries_different_evictions(self):
+    def test_same_entries_different_evictions(self, ops_factory):
         """Same access pattern should produce different evictions."""
 
         def run_scenario(policy: str):
-            ops = create_ops_custom(policy, max_entries=2)
+            ops = ops_factory(policy, max_entries=2)
 
             ops.store("first", {"agent": "test"}, "r1")
             time.sleep(0.01)
@@ -266,9 +219,9 @@ class TestEvictionEdgeCases:
     """Test edge cases for all policies."""
 
     @pytest.mark.parametrize("policy", ["fifo", "lru", "lfu"])
-    def test_eviction_with_single_entry_limit(self, policy):
+    def test_eviction_with_single_entry_limit(self, policy, ops_factory):
         """Eviction should work with max_entries=1."""
-        ops = create_ops_custom(policy, max_entries=1)
+        ops = ops_factory(policy, max_entries=1)
 
         ops.store("first", {"agent": "test"}, "r1")
         assert ops.storage.count() == 1
@@ -280,9 +233,9 @@ class TestEvictionEdgeCases:
         assert result.is_miss
 
     @pytest.mark.parametrize("policy", ["fifo", "lru", "lfu"])
-    def test_no_eviction_below_limit(self, policy):
+    def test_no_eviction_below_limit(self, policy, ops_factory):
         """No eviction should happen below max_entries."""
-        ops = create_ops_custom(policy, max_entries=10)
+        ops = ops_factory(policy, max_entries=10)
 
         for i in range(5):
             ops.store(f"query{i}", {"agent": "test"}, f"result{i}")
@@ -321,7 +274,6 @@ class TestEvictionEdgeCases:
         assert ops2.storage.count() == 3
 
 
-# Tests que SÍ pueden usar fixture
 class TestCacheOperationsLookup:
     """Test lookup functionality."""
 
@@ -375,9 +327,9 @@ class TestCacheOperationsStore:
         assert cache_ops.storage.count() == 1
 
     @pytest.mark.parametrize("policy", ["fifo", "lru", "lfu"])
-    def test_store_triggers_eviction_all_policies(self, policy):
+    def test_store_triggers_eviction_all_policies(self, policy, ops_factory):
         """Store should evict when max_entries reached."""
-        ops = create_ops_custom(policy, max_entries=2)
+        ops = ops_factory(policy, max_entries=2)
 
         for i in range(3):
             ops.store(f"query {i}", {"agent": "test"}, f"result {i}")

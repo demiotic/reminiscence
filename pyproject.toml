@@ -1,6 +1,6 @@
 [project]
 name = "reminiscence"
-version = "0.3.0"
+version = "0.4.0"
 description = "Semantic caching for LLMs"
 authors = [{ name = "Juan José de las Heras Herrera" }]
 readme = "README.md"
@@ -46,3 +46,10 @@ reminiscence = ["embeddings/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["-v"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "responses>=0.25.8",
+]

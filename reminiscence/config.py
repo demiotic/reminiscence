@@ -13,6 +13,7 @@ class ReminiscenceConfig:
     Environment variables:
     - REMINISCENCE_MODEL_NAME: Embedding model (optional, uses backend default)
     - REMINISCENCE_EMBEDDING_BACKEND: Backend (fastembed or auto)
+    - REMINISCENCE_EMBEDDING_BATCH_SIZE: Batch size for embedding generation (1-512)
     - REMINISCENCE_SIMILARITY_THRESHOLD: Similarity threshold (0.0-1.0)
     - REMINISCENCE_DB_URI: Database URI
     - REMINISCENCE_TABLE_NAME: Table name
@@ -34,11 +35,12 @@ class ReminiscenceConfig:
     """
 
     # Model
-    model_name: Optional[str] = None  # None = use backend default
-    embedding_backend: str = "fastembed"  # Only fastembed supported
+    model_name: Optional[str] = None
+    embedding_backend: str = "fastembed"
+    embedding_batch_size: int = 32
 
     # Cache
-    similarity_threshold: float = 0.80  # Adjusted for FastEmbed mean pooling
+    similarity_threshold: float = 0.80
     db_uri: str = "memory://"
     table_name: str = "semantic_cache"
     enable_metrics: bool = True
@@ -67,9 +69,9 @@ class ReminiscenceConfig:
     # OpenTelemetry
     otel_enabled: bool = False
     otel_endpoint: str = "http://localhost:4318/v1/metrics"
-    otel_headers: Optional[str] = None  # Format: "key1=value1,key2=value2"
+    otel_headers: Optional[str] = None
     otel_service_name: str = "reminiscence"
-    otel_export_interval_ms: int = 60000  # Export every 60 seconds by default
+    otel_export_interval_ms: int = 60000
 
     @classmethod
     def load(cls) -> "ReminiscenceConfig":
@@ -93,6 +95,12 @@ class ReminiscenceConfig:
             model_name=parse_str_or_none(os.getenv("REMINISCENCE_MODEL_NAME", "none")),
             embedding_backend=os.getenv(
                 "REMINISCENCE_EMBEDDING_BACKEND", defaults.embedding_backend
+            ),
+            embedding_batch_size=int(
+                os.getenv(
+                    "REMINISCENCE_EMBEDDING_BATCH_SIZE",
+                    str(defaults.embedding_batch_size),
+                )
             ),
             # Cache
             similarity_threshold=float(

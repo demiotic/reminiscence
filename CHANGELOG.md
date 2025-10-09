@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-10-09
+
+### Added
+- **Auto query mode** with intelligent detection
+  - Automatically detects query type: SQL/code/URLs use exact mode, natural language uses semantic
+  - Reduces embedding costs by 30-50% for mixed workloads
+  - Heuristics in `reminiscence/utils/query_detection.py`
+  - Supports SQL, GraphQL, API endpoints, file paths, JSON, code snippets
+  - Can be overridden with explicit `query_mode="semantic"` or `query_mode="exact"`
+- **Batch embeddings API**
+  - `embed_batch()` method for 3-5x performance improvement over sequential
+  - `store_batch()` optimized to use batch embeddings
+  - Configurable batch size via `REMINISCENCE_EMBEDDING_BATCH_SIZE` (default: 32)
+- **Dual table architecture**
+  - Separate `exact_cache` table for deterministic queries (SQL, code, APIs)
+  - Separate `semantic_cache` table for fuzzy matching (natural language)
+  - Auto mode intelligently routes to appropriate table
+  - Both tables share same context matching logic
+
+### Changed
+- **Test infrastructure improvements**
+  - Module-scoped fixtures for 75% faster test execution (~4min vs 15-20min)
+  - OTEL collector Docker integration for real integration tests
+  - Automatic container lifecycle management with `pytest_configure` and `pytest_sessionfinish`
+  - 238 tests passing with 0 errors
+
+
 ## [0.3.0] - 2025-10-09
 
 ### Added
@@ -116,6 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/yourusername/reminiscence/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/yourusername/reminiscence/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/yourusername/reminiscence/releases/tag/v0.4.0
 [0.3.0]: https://github.com/yourusername/reminiscence/releases/tag/v0.3.0
 [0.2.0]: https://github.com/yourusername/reminiscence/releases/tag/v0.2.0

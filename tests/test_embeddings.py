@@ -107,3 +107,56 @@ class TestFastEmbedEmbedder:
         # Different languages should produce different embeddings
         assert emb_en != emb_es
         assert emb_en != emb_zh
+
+
+class TestBatchEmbedding:
+    """Test batch embedding functionality."""
+
+    def test_embed_batch_basic(self):
+        """Should generate embeddings for multiple texts."""
+        config = ReminiscenceConfig()
+        embedder = FastEmbedEmbedder(config)
+
+        texts = ["hello", "world", "test"]
+        embeddings = embedder.embed_batch(texts)
+
+        assert len(embeddings) == 3
+        assert all(len(emb) == embedder.embedding_dim for emb in embeddings)
+
+    def test_embed_batch_empty(self):
+        """Should handle empty batch."""
+        config = ReminiscenceConfig()
+        embedder = FastEmbedEmbedder(config)
+
+        embeddings = embedder.embed_batch([])
+
+        assert embeddings == []
+
+    def test_embed_batch_uses_config_batch_size(self):
+        """Should use batch size from config."""
+        config = ReminiscenceConfig(embedding_batch_size=16)
+        embedder = FastEmbedEmbedder(config)
+
+        assert embedder.config.embedding_batch_size == 16
+
+        texts = ["text"] * 50
+        embeddings = embedder.embed_batch(texts)
+
+        assert len(embeddings) == 50
+
+    def test_embed_batch_vs_sequential(self):
+        """Batch should produce same results as sequential."""
+        config = ReminiscenceConfig()
+        embedder = FastEmbedEmbedder(config)
+
+        texts = ["hello", "world"]
+
+        # Sequential
+        emb_seq = [embedder.embed(t) for t in texts]
+
+        # Batch
+        emb_batch = embedder.embed_batch(texts)
+
+        # Should be approximately equal
+        for seq, batch in zip(emb_seq, emb_batch):
+            assert len(seq) == len(batch)

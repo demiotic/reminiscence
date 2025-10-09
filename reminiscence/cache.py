@@ -2,10 +2,11 @@
 
 import time
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from .types import LookupResult, CacheEntry
 from .utils.logging import get_logger
+from .utils.query_detection import should_use_exact_mode
 
 logger = get_logger(__name__)
 
@@ -20,8 +21,6 @@ class CacheOperations:
         eviction,
         config,
         metrics=None,
-        enable_otel: bool = True,
-        otel_endpoint: str = "http://localhost:4318/v1/metrics",
     ):
         self.storage = storage
         self.embedder = embedder
@@ -31,12 +30,13 @@ class CacheOperations:
 
         self.otel_exporter = None
         self._otel_export_counter = 0
-        if enable_otel:
+
+        if config.otel_enabled:
             try:
                 from .metrics.exporters import OpenTelemetryExporter
 
-                self.otel_exporter = OpenTelemetryExporter(endpoint=otel_endpoint)
-                logger.info("opentelemetry_enabled", endpoint=otel_endpoint)
+                self.otel_exporter = OpenTelemetryExporter.from_config(config)
+                logger.info("opentelemetry_enabled", endpoint=config.otel_endpoint)
             except Exception as e:
                 logger.warning("opentelemetry_init_failed", error=str(e))
 
@@ -103,9 +103,9 @@ class CacheOperations:
             context: Context dict for exact matching
             similarity_threshold: Minimum similarity score (overrides config)
             query_mode: Query matching strategy:
-                - "semantic": Normal semantic search (default, threshold from config)
-                - "exact": Very high threshold (0.9999) for near-exact matches
-                - "auto": Try exact first (0.9999), fallback to semantic
+                - "semantic": Normal semantic search (default)
+                - "exact": Hash-based exact matching (no embeddings)
+                - "auto": Intelligent detection (SQL/code → exact, text → semantic)
             _track_metrics: Internal flag to control metrics tracking
 
         Returns:
@@ -120,80 +120,46 @@ class CacheOperations:
                     "cache_empty", start_time, track_metrics=_track_metrics
                 )
 
-            embed_start = time.time()
-            query_embedding = self.embedder.embed(query)
-            embed_ms = (time.time() - embed_start) * 1000
-            logger.debug(
-                "embedding_generated",
-                latency_ms=round(embed_ms, 1),
-                text_length=len(query),
+            # Handle auto mode with intelligent detection
+            actual_mode = query_mode
+            if query_mode == "auto":
+                use_exact = should_use_exact_mode(query)
+                actual_mode = "exact" if use_exact else "semantic"
+
+                logger.debug(
+                    "auto_mode_lookup",
+                    query_preview=query[:50],
+                    detected_mode=actual_mode,
+                )
+
+            # Generate embedding only for semantic mode
+            embedding = None
+            if actual_mode == "semantic":
+                embed_start = time.time()
+                embedding = self.embedder.embed(query)
+                embed_ms = (time.time() - embed_start) * 1000
+                logger.debug(
+                    "embedding_generated",
+                    latency_ms=round(embed_ms, 1),
+                    text_length=len(query),
+                )
+
+            threshold = similarity_threshold or self.config.similarity_threshold
+
+            candidates = self.storage.search(
+                embedding=embedding,
+                context=context,
+                limit=1,
+                similarity_threshold=threshold,
+                query_mode=actual_mode,
+                query_text=query,
             )
 
-            if query_mode == "exact":
-                threshold = 0.9999
-                candidates = self.storage.search(
-                    embedding=query_embedding,
-                    context=context,
-                    limit=50,
-                    similarity_threshold=threshold,
-                )
+            if not candidates:
+                reason = "no_exact_match" if actual_mode == "exact" else "no_match"
+                return self._miss(reason, start_time, track_metrics=_track_metrics)
 
-                if not candidates:
-                    return self._miss(
-                        "no_exact_match", start_time, track_metrics=_track_metrics
-                    )
-
-                return self._process_hit(candidates[0], start_time, _track_metrics)
-
-            elif query_mode == "auto":
-                threshold_exact = 0.9999
-                threshold_semantic = (
-                    similarity_threshold or self.config.similarity_threshold
-                )
-
-                candidates = self.storage.search(
-                    embedding=query_embedding,
-                    context=context,
-                    limit=50,
-                    similarity_threshold=threshold_exact,
-                )
-
-                if candidates:
-                    logger.debug(
-                        "auto_mode_exact_hit", similarity=candidates[0].similarity
-                    )
-                    return self._process_hit(candidates[0], start_time, _track_metrics)
-
-                logger.debug("auto_mode_fallback_to_semantic")
-                candidates = self.storage.search(
-                    embedding=query_embedding,
-                    context=context,
-                    limit=50,
-                    similarity_threshold=threshold_semantic,
-                )
-
-                if not candidates:
-                    return self._miss(
-                        "no_match", start_time, track_metrics=_track_metrics
-                    )
-
-                return self._process_hit(candidates[0], start_time, _track_metrics)
-
-            else:
-                threshold = similarity_threshold or self.config.similarity_threshold
-                candidates = self.storage.search(
-                    embedding=query_embedding,
-                    context=context,
-                    limit=50,
-                    similarity_threshold=threshold,
-                )
-
-                if not candidates:
-                    return self._miss(
-                        "no_match", start_time, track_metrics=_track_metrics
-                    )
-
-                return self._process_hit(candidates[0], start_time, _track_metrics)
+            return self._process_hit(candidates[0], start_time, _track_metrics)
 
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
@@ -226,9 +192,9 @@ class CacheOperations:
 
         logger.info(
             "cache_hit",
-            similarity=round(best.similarity, 3),
+            similarity=round(best.similarity, 3) if best.similarity else 1.0,
             query_preview=best.query_text[:50],
-            age_seconds=round(best.age_seconds, 1),
+            age_seconds=round(best.age_seconds, 1) if best.age_seconds else 0,
             latency_ms=round(elapsed_ms, 1),
         )
 
@@ -267,7 +233,10 @@ class CacheOperations:
             context: Context dict (matched exactly in lookups)
             result: Result to cache
             metadata: Optional metadata
-            query_mode: For tracking only (all modes generate embeddings)
+            query_mode: Storage mode:
+                - "semantic": Generate embedding (default)
+                - "exact": No embedding, hash-based
+                - "auto": Intelligent detection (SQL/code → exact, text → semantic)
         """
         try:
             if (
@@ -282,31 +251,55 @@ class CacheOperations:
                 )
                 self._evict_one()
 
-            embed_start = time.time()
-            embedding = self.embedder.embed(query)
-            embed_ms = (time.time() - embed_start) * 1000
+            # Handle auto mode with intelligent detection
+            embedding = None
+            actual_mode = query_mode
 
-            logger.debug(
-                f"store_{query_mode}_mode",
-                query_preview=query[:50],
-                embedding_latency_ms=round(embed_ms, 1),
-            )
+            if query_mode == "auto":
+                # Detect query type intelligently
+                use_exact = should_use_exact_mode(query)
+                actual_mode = "exact" if use_exact else "semantic"
+
+                logger.debug(
+                    "auto_mode_detected",
+                    query_preview=query[:50],
+                    detected_mode=actual_mode,
+                    query_length=len(query),
+                )
+
+            # Generate embedding only if needed
+            if actual_mode == "semantic":
+                embed_start = time.time()
+                embedding = self.embedder.embed(query)
+                embed_ms = (time.time() - embed_start) * 1000
+                logger.debug(
+                    f"store_{actual_mode}_mode",
+                    query_preview=query[:50],
+                    embedding_latency_ms=round(embed_ms, 1),
+                )
+            else:  # exact
+                logger.debug(
+                    f"store_{actual_mode}_mode",
+                    query_preview=query[:50],
+                    embedding_skipped=True,
+                )
 
             timestamp = time.time()
 
             metadata_dict = metadata or {}
-            metadata_dict["query_mode"] = query_mode
+            metadata_dict["query_mode"] = actual_mode
 
             entry = CacheEntry(
                 query_text=query,
                 context=context,
-                embedding=embedding,
+                embedding=embedding,  # None for exact mode
                 result=result,
                 timestamp=timestamp,
                 metadata=metadata_dict,
             )
 
-            self.storage.add([entry])
+            # Store with resolved mode (exact or semantic, never "auto")
+            self.storage.add([entry], query_mode=actual_mode)
 
             entry_id = self._generate_entry_id(query, context)
             self.eviction.on_insert(entry_id)
@@ -330,7 +323,7 @@ class CacheOperations:
                 query_preview=query[:50],
                 context_keys=list(context.keys()),
                 cache_entries=self.storage.count(),
-                query_mode=query_mode,
+                query_mode=actual_mode,
             )
 
         except Exception as e:
@@ -346,6 +339,35 @@ class CacheOperations:
             if self.metrics:
                 self.metrics.store_errors += 1
 
+    def store_batch(
+        self,
+        queries: List[str],
+        contexts: List[Dict[str, Any]],
+        results: List[Any],
+        metadata: Optional[List[Dict[str, Any]]] = None,
+        query_mode: str = "semantic",
+    ):
+        """Store multiple results in batch (optimized for embeddings)."""
+        if query_mode in ("semantic", "auto"):
+            # Batch embedding (3-5x faster than sequential)
+            embeddings = self.embedder.embed_batch(queries)
+        else:
+            embeddings = [None] * len(queries)
+
+        entries = []
+        for i, query in enumerate(queries):
+            entry = CacheEntry(
+                query_text=query,
+                context=contexts[i],
+                embedding=embeddings[i],
+                result=results[i],
+                timestamp=time.time(),
+                metadata=metadata[i] if metadata else None,
+            )
+            entries.append(entry)
+
+        self.storage.add(entries, query_mode=query_mode)
+
     def cleanup_expired(self) -> int:
         """Remove expired entries based on TTL."""
         if self.config.ttl_seconds is None:
@@ -355,42 +377,77 @@ class CacheOperations:
         try:
             import pyarrow.compute as pc
 
-            arrow_table = self.storage.to_arrow()
-
-            if len(arrow_table) == 0:
-                return 0
+            exact_table = self.storage.exact_table.to_arrow()
+            semantic_table = self.storage.semantic_table.to_arrow()
 
             cutoff = time.time() - self.config.ttl_seconds
-            before = len(arrow_table)
+            deleted_total = 0
 
-            expired_mask = pc.less_equal(arrow_table["timestamp"], cutoff)
-            expired_rows = arrow_table.filter(expired_mask).to_pylist()
+            if len(exact_table) > 0:
+                before = len(exact_table)
+                expired_mask = pc.less_equal(exact_table["timestamp"], cutoff)
+                expired_rows = exact_table.filter(expired_mask).to_pylist()
 
-            for row in expired_rows:
-                entry_id = self._generate_entry_id(
-                    row.get("query_text", ""), row.get("context", "{}")
-                )
-                try:
-                    self.eviction.on_evict(entry_id)
-                except Exception:
-                    pass
+                for row in expired_rows:
+                    entry_id = self._generate_entry_id(
+                        row.get("query_text", ""), row.get("context", "{}")
+                    )
+                    try:
+                        self.eviction.on_evict(entry_id)
+                    except Exception:
+                        pass
 
-            mask = pc.greater(arrow_table["timestamp"], cutoff)
+                mask = pc.greater(exact_table["timestamp"], cutoff)
 
-            if self.config.db_uri == "memory://":
-                filtered = arrow_table.filter(mask)
-                self.storage.table = self.storage.db.create_table(
-                    self.config.table_name,
-                    data=filtered if len(filtered) > 0 else None,
-                    schema=self.storage.schema if len(filtered) == 0 else None,
-                    mode="overwrite",
-                )
-            else:
-                self.storage.delete_by_filter(f"timestamp <= {cutoff}")
+                if self.config.db_uri == "memory://":
+                    filtered = exact_table.filter(mask)
+                    self.storage.exact_table = self.storage.db.create_table(
+                        self.storage._exact_table_name,
+                        data=filtered if len(filtered) > 0 else None,
+                        schema=self.storage.exact_schema
+                        if len(filtered) == 0
+                        else None,
+                        mode="overwrite",
+                    )
+                else:
+                    self.storage.exact_table.delete(f"timestamp <= {cutoff}")
 
-            deleted = before - self.storage.count()
-            logger.info("cleaned_up_expired", deleted=deleted)
-            return deleted
+                deleted_total += before - len(self.storage.exact_table.to_arrow())
+
+            if len(semantic_table) > 0:
+                before = len(semantic_table)
+                expired_mask = pc.less_equal(semantic_table["timestamp"], cutoff)
+                expired_rows = semantic_table.filter(expired_mask).to_pylist()
+
+                for row in expired_rows:
+                    entry_id = self._generate_entry_id(
+                        row.get("query_text", ""), row.get("context", "{}")
+                    )
+                    try:
+                        self.eviction.on_evict(entry_id)
+                    except Exception:
+                        pass
+
+                mask = pc.greater(semantic_table["timestamp"], cutoff)
+
+                if self.config.db_uri == "memory://":
+                    filtered = semantic_table.filter(mask)
+                    self.storage.semantic_table = self.storage.db.create_table(
+                        self.storage._semantic_table_name,
+                        data=filtered if len(filtered) > 0 else None,
+                        schema=self.storage.semantic_schema
+                        if len(filtered) == 0
+                        else None,
+                        mode="overwrite",
+                    )
+                    self.storage.table = self.storage.semantic_table
+                else:
+                    self.storage.semantic_table.delete(f"timestamp <= {cutoff}")
+
+                deleted_total += before - len(self.storage.semantic_table.to_arrow())
+
+            logger.info("cleaned_up_expired", deleted=deleted_total)
+            return deleted_total
 
         except Exception as e:
             logger.error("cleanup_failed", error=str(e), exc_info=True)
@@ -411,45 +468,87 @@ class CacheOperations:
             import pyarrow.compute as pc
 
             before = self.storage.count()
-            arrow_table = self.storage.to_arrow()
-
             entries_to_remove = []
 
             if older_than_seconds is not None:
                 cutoff = time.time() - older_than_seconds
-                old_mask = pc.less_equal(arrow_table["timestamp"], cutoff)
-                old_rows = arrow_table.filter(old_mask).to_pylist()
-                entries_to_remove.extend(old_rows)
 
-                if self.config.db_uri == "memory://":
-                    mask = pc.greater(arrow_table["timestamp"], cutoff)
-                    filtered = arrow_table.filter(mask)
-                    self.storage.table = self.storage.db.create_table(
-                        self.config.table_name,
-                        data=filtered if len(filtered) > 0 else None,
-                        schema=self.storage.schema if len(filtered) == 0 else None,
-                        mode="overwrite",
-                    )
-                else:
-                    self.storage.delete_by_filter(f"timestamp <= {cutoff}")
+                for table, table_name, schema in [
+                    (
+                        self.storage.exact_table,
+                        self.storage._exact_table_name,
+                        self.storage.exact_schema,
+                    ),
+                    (
+                        self.storage.semantic_table,
+                        self.storage._semantic_table_name,
+                        self.storage.semantic_schema,
+                    ),
+                ]:
+                    arrow_table = table.to_arrow()
+                    if len(arrow_table) == 0:
+                        continue
+
+                    old_mask = pc.less_equal(arrow_table["timestamp"], cutoff)
+                    old_rows = arrow_table.filter(old_mask).to_pylist()
+                    entries_to_remove.extend(old_rows)
+
+                    if self.config.db_uri == "memory://":
+                        mask = pc.greater(arrow_table["timestamp"], cutoff)
+                        filtered = arrow_table.filter(mask)
+                        new_table = self.storage.db.create_table(
+                            table_name,
+                            data=filtered if len(filtered) > 0 else None,
+                            schema=schema if len(filtered) == 0 else None,
+                            mode="overwrite",
+                        )
+                        if table_name == self.storage._exact_table_name:
+                            self.storage.exact_table = new_table
+                        else:
+                            self.storage.semantic_table = new_table
+                            self.storage.table = new_table
+                    else:
+                        table.delete(f"timestamp <= {cutoff}")
 
             elif context is not None:
                 context_json = json.dumps(context, sort_keys=True)
-                context_mask = pc.equal(arrow_table["context"], context_json)
-                context_rows = arrow_table.filter(context_mask).to_pylist()
-                entries_to_remove.extend(context_rows)
 
-                if self.config.db_uri == "memory://":
-                    mask = pc.not_equal(arrow_table["context"], context_json)
-                    filtered = arrow_table.filter(mask)
-                    self.storage.table = self.storage.db.create_table(
-                        self.config.table_name,
-                        data=filtered if len(filtered) > 0 else None,
-                        schema=self.storage.schema if len(filtered) == 0 else None,
-                        mode="overwrite",
-                    )
-                else:
-                    self.storage.delete_by_filter(f"context = '{context_json}'")
+                for table, table_name, schema in [
+                    (
+                        self.storage.exact_table,
+                        self.storage._exact_table_name,
+                        self.storage.exact_schema,
+                    ),
+                    (
+                        self.storage.semantic_table,
+                        self.storage._semantic_table_name,
+                        self.storage.semantic_schema,
+                    ),
+                ]:
+                    arrow_table = table.to_arrow()
+                    if len(arrow_table) == 0:
+                        continue
+
+                    context_mask = pc.equal(arrow_table["context"], context_json)
+                    context_rows = arrow_table.filter(context_mask).to_pylist()
+                    entries_to_remove.extend(context_rows)
+
+                    if self.config.db_uri == "memory://":
+                        mask = pc.not_equal(arrow_table["context"], context_json)
+                        filtered = arrow_table.filter(mask)
+                        new_table = self.storage.db.create_table(
+                            table_name,
+                            data=filtered if len(filtered) > 0 else None,
+                            schema=schema if len(filtered) == 0 else None,
+                            mode="overwrite",
+                        )
+                        if table_name == self.storage._exact_table_name:
+                            self.storage.exact_table = new_table
+                        else:
+                            self.storage.semantic_table = new_table
+                            self.storage.table = new_table
+                    else:
+                        table.delete(f"context = '{context_json}'")
 
             elif query is not None:
                 logger.warning("semantic_invalidation_not_implemented")
@@ -486,68 +585,74 @@ class CacheOperations:
         """Check if entry is expired."""
         if self.config.ttl_seconds is None:
             return False
-        return entry.age_seconds > self.config.ttl_seconds
+        age = entry.age_seconds if entry.age_seconds else 0
+        return age > self.config.ttl_seconds
 
     def _evict_one(self):
         """Evict one entry using configured eviction policy."""
         try:
             victim_id = self.eviction.select_victim()
 
-            arrow_table = self.storage.to_arrow()
-            rows = arrow_table.to_pylist()
+            for table, table_name, schema in [
+                (
+                    self.storage.exact_table,
+                    self.storage._exact_table_name,
+                    self.storage.exact_schema,
+                ),
+                (
+                    self.storage.semantic_table,
+                    self.storage._semantic_table_name,
+                    self.storage.semantic_schema,
+                ),
+            ]:
+                arrow_table = table.to_arrow()
+                if len(arrow_table) == 0:
+                    continue
 
-            victim_row = None
-            for row in rows:
-                entry_id = self._generate_entry_id(
-                    row.get("query_text", ""), row.get("context", "{}")
-                )
-                if entry_id == victim_id:
-                    victim_row = row
-                    break
+                rows = arrow_table.to_pylist()
 
-            if victim_row is None:
-                logger.warning(
-                    "victim_not_found_fallback_to_oldest", victim_id=victim_id
-                )
-                import pyarrow.compute as pc
-
-                oldest_ts = pc.min(arrow_table["timestamp"]).as_py()
-
-                if self.config.db_uri == "memory://":
-                    mask = pc.not_equal(arrow_table["timestamp"], oldest_ts)
-                    filtered = arrow_table.filter(mask)
-                    self.storage.table = self.storage.db.create_table(
-                        self.config.table_name,
-                        data=filtered if len(filtered) > 0 else None,
-                        schema=self.storage.schema if len(filtered) == 0 else None,
-                        mode="overwrite",
+                victim_row = None
+                for row in rows:
+                    entry_id = self._generate_entry_id(
+                        row.get("query_text", ""), row.get("context", "{}")
                     )
-                else:
-                    self.storage.delete_by_filter(f"timestamp = {oldest_ts}")
-            else:
-                victim_ts = victim_row.get("timestamp")
+                    if entry_id == victim_id:
+                        victim_row = row
+                        break
 
-                if self.config.db_uri == "memory://":
-                    import pyarrow.compute as pc
+                if victim_row is not None:
+                    victim_ts = victim_row.get("timestamp")
 
-                    mask = pc.not_equal(arrow_table["timestamp"], victim_ts)
-                    filtered = arrow_table.filter(mask)
-                    self.storage.table = self.storage.db.create_table(
-                        self.config.table_name,
-                        data=filtered if len(filtered) > 0 else None,
-                        schema=self.storage.schema if len(filtered) == 0 else None,
-                        mode="overwrite",
+                    if self.config.db_uri == "memory://":
+                        import pyarrow.compute as pc
+
+                        mask = pc.not_equal(arrow_table["timestamp"], victim_ts)
+                        filtered = arrow_table.filter(mask)
+                        new_table = self.storage.db.create_table(
+                            table_name,
+                            data=filtered if len(filtered) > 0 else None,
+                            schema=schema if len(filtered) == 0 else None,
+                            mode="overwrite",
+                        )
+                        if table_name == self.storage._exact_table_name:
+                            self.storage.exact_table = new_table
+                        else:
+                            self.storage.semantic_table = new_table
+                            self.storage.table = new_table
+                    else:
+                        table.delete(f"timestamp = {victim_ts}")
+
+                    self.eviction.on_evict(victim_id)
+
+                    logger.info(
+                        "entry_evicted",
+                        policy=self.config.eviction_policy,
+                        victim_id=victim_id[:50],
+                        table=table_name,
                     )
-                else:
-                    self.storage.delete_by_filter(f"timestamp = {victim_ts}")
+                    return
 
-            self.eviction.on_evict(victim_id)
-
-            logger.info(
-                "entry_evicted",
-                policy=self.config.eviction_policy,
-                victim_id=victim_id[:50],
-            )
+            logger.warning("victim_not_found", victim_id=victim_id)
 
         except ValueError as e:
             logger.warning("eviction_failed_no_entries", error=str(e))

@@ -135,6 +135,75 @@ class FastEmbedEmbedder(EmbeddingModel):
             )
             raise
 
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for multiple texts in batch.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            List of embedding vectors
+        """
+        if not texts:
+            return []
+
+        start = time.perf_counter()
+        batch_size = self.config.embedding_batch_size
+
+        try:
+            # FastEmbed's embed() already handles batching internally
+            # Just pass the list directly
+            embeddings = list(self._model.embed(texts, batch_size=batch_size))
+            result = [emb.tolist() for emb in embeddings]
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            if self.metrics:
+                if not hasattr(self.metrics, "embedding_generations"):
+                    self.metrics.embedding_generations = 0
+                self.metrics.embedding_generations += len(texts)
+
+                if not hasattr(self.metrics, "embedding_latencies_ms"):
+                    self.metrics.embedding_latencies_ms = []
+
+                # Track average latency per text
+                avg_latency_per_text = elapsed_ms / len(texts)
+                self.metrics.embedding_latencies_ms.extend(
+                    [avg_latency_per_text] * len(texts)
+                )
+
+                if len(self.metrics.embedding_latencies_ms) > 1000:
+                    self.metrics.embedding_latencies_ms = (
+                        self.metrics.embedding_latencies_ms[-1000:]
+                    )
+
+            logger.debug(
+                "batch_embedding_generated",
+                batch_size=len(texts),
+                latency_ms=round(elapsed_ms, 2),
+                latency_per_text_ms=round(elapsed_ms / len(texts), 2),
+            )
+
+            return result
+
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            if self.metrics:
+                if not hasattr(self.metrics, "embedding_errors"):
+                    self.metrics.embedding_errors = 0
+                self.metrics.embedding_errors += 1
+
+            logger.error(
+                "batch_embedding_failed",
+                error=str(e),
+                batch_size=len(texts),
+                latency_ms=round(elapsed_ms, 2),
+                exc_info=True,
+            )
+            raise
+
     def get_embedding_stats(self) -> dict:
         """Get embedding-specific statistics."""
         if not self.metrics:

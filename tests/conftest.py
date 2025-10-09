@@ -5,9 +5,6 @@ import tempfile
 import shutil
 import structlog
 import logging
-import subprocess
-import requests
-import time
 from pathlib import Path
 
 from reminiscence import Reminiscence, ReminiscenceConfig

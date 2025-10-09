@@ -217,6 +217,30 @@ class CacheOperations:
             context=best.context,
         )
 
+    def _is_error_result(self, result: Any) -> bool:
+        """Check if result represents an error that shouldn't be cached."""
+        # 1. Exception objects
+        if isinstance(result, Exception):
+            return True
+
+        # 2. Dict with error keys
+        if isinstance(result, dict):
+            error_keys = {"error", "exception", "traceback", "error_message", "failed"}
+            if any(key in result for key in error_keys):
+                return True
+
+        # 3. String error patterns (solo si es muy obvio)
+        if isinstance(result, str):
+            error_patterns = ["error:", "exception:", "traceback:", "failed:"]
+            if any(result.lower().startswith(pattern) for pattern in error_patterns):
+                return True
+
+        # 4. None results (configurable)
+        if result is None:
+            return True
+
+        return False
+
     def store(
         self,
         query: str,
@@ -224,6 +248,7 @@ class CacheOperations:
         result: Any,
         metadata: Optional[Dict[str, Any]] = None,
         query_mode: str = "semantic",
+        allow_errors: bool = False,  # ← NUEVO
     ):
         """
         Store result in cache with context.
@@ -237,8 +262,21 @@ class CacheOperations:
                 - "semantic": Generate embedding (default)
                 - "exact": No embedding, hash-based
                 - "auto": Intelligent detection (SQL/code → exact, text → semantic)
+            allow_errors: If False (default), skip caching error results
         """
         try:
+            # Validate result before caching (skip errors by default)
+            if not allow_errors and self._is_error_result(result):
+                logger.debug(
+                    "skipping_error_cache",
+                    query_preview=query[:50],
+                    result_type=type(result).__name__,
+                    reason="error_result_detected",
+                )
+                if self.metrics:
+                    self.metrics.store_errors += 1
+                return
+
             if (
                 self.config.max_entries
                 and self.storage.count() >= self.config.max_entries
@@ -346,27 +384,72 @@ class CacheOperations:
         results: List[Any],
         metadata: Optional[List[Dict[str, Any]]] = None,
         query_mode: str = "semantic",
+        allow_errors: bool = False,  # ← NUEVO
     ):
-        """Store multiple results in batch (optimized for embeddings)."""
+        """
+        Store multiple results in batch (optimized for embeddings).
+
+        Args:
+            queries: List of query texts
+            contexts: List of context dicts
+            results: List of results to cache
+            metadata: Optional list of metadata dicts
+            query_mode: Storage mode (semantic/exact/auto)
+            allow_errors: If False (default), skip error results
+        """
+        # Filter out errors if allow_errors=False
+        valid_entries = []
+
+        for i, result in enumerate(results):
+            if not allow_errors and self._is_error_result(result):
+                logger.debug(
+                    "skipping_error_in_batch",
+                    query_preview=queries[i][:50],
+                    index=i,
+                    result_type=type(result).__name__,
+                )
+                if self.metrics:
+                    self.metrics.store_errors += 1
+                continue
+
+            valid_entries.append(i)
+
+        # Nothing to store
+        if not valid_entries:
+            logger.debug("batch_store_skipped_all_errors", total=len(results))
+            return
+
+        # Filter to valid entries only
+        valid_queries = [queries[i] for i in valid_entries]
+        valid_contexts = [contexts[i] for i in valid_entries]
+        valid_results = [results[i] for i in valid_entries]
+        valid_metadata = [metadata[i] if metadata else None for i in valid_entries]
+
+        # Batch embedding (3-5x faster than sequential)
         if query_mode in ("semantic", "auto"):
-            # Batch embedding (3-5x faster than sequential)
-            embeddings = self.embedder.embed_batch(queries)
+            embeddings = self.embedder.embed_batch(valid_queries)
         else:
-            embeddings = [None] * len(queries)
+            embeddings = [None] * len(valid_queries)
 
         entries = []
-        for i, query in enumerate(queries):
+        for i, query in enumerate(valid_queries):
             entry = CacheEntry(
                 query_text=query,
-                context=contexts[i],
+                context=valid_contexts[i],
                 embedding=embeddings[i],
-                result=results[i],
+                result=valid_results[i],
                 timestamp=time.time(),
-                metadata=metadata[i] if metadata else None,
+                metadata=valid_metadata[i],
             )
             entries.append(entry)
 
         self.storage.add(entries, query_mode=query_mode)
+
+        logger.debug(
+            "batch_store_success",
+            total_entries=len(entries),
+            skipped_errors=len(results) - len(entries),
+        )
 
     def cleanup_expired(self) -> int:
         """Remove expired entries based on TTL."""

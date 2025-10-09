@@ -46,6 +46,3 @@ reminiscence = ["embeddings/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["-v"]
-
-[dependency-groups]
-dev = ["mkdocs>=1.6.1"]

@@ -5,23 +5,23 @@
       <stop offset="100%" style="stop-color:#9333ea;stop-opacity:1" />
     </linearGradient>
   </defs>
-
+  
+  <!-- Cubo en perspectiva isométrica -->
   <!-- Cara superior -->
-  <path d="M 100,20 L 170,60 L 100,100 L 30,60 Z" 
+  <path d="M 100,60 L 140,80 L 100,100 L 60,80 Z" 
         fill="url(#grad)" opacity="0.95"/>
-
+  
   <!-- Cara izquierda -->
-  <path d="M 30,60 L 30,140 L 100,180 L 100,100 Z" 
+  <path d="M 60,80 L 60,120 L 100,140 L 100,100 Z" 
         fill="#06b6d4" opacity="0.9"/>
-
+  
   <!-- Cara derecha -->
-  <path d="M 100,100 L 100,180 L 170,140 L 170,60 Z" 
+  <path d="M 100,100 L 100,140 L 140,120 L 140,80 Z" 
         fill="#3b82f6" opacity="0.9"/>
-
+  
   <!-- Bordes del cubo -->
   <g stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linejoin="round" stroke-linecap="round">
-    <path d="M 100,20 L 170,60 L 100,100 L 30,60 Z"/>
-    <path d="M 30,60 L 30,140 L 100,180 L 170,140 L 170,60"/>
+    <path d="M 100,60 L 140,80 L 100,100 L 60,80 Z"/>
+    <path d="M 60,80 L 60,120 L 100,140 L 140,120 L 140,80"/>
   </g>
 </svg>
-

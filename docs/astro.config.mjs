@@ -10,7 +10,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'Reminiscence',
-			//plugins: [starlightThemeObsidian()],
+			favicon: 'public/favicon.svg',
 			plugins: [starlightThemeRapide()],
 			description: 'Semantic caching for LLMs - reduce costs and latency through intelligent response caching',
 			logo: {

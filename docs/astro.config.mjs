@@ -6,7 +6,7 @@ import starlightThemeRapide from 'starlight-theme-rapide'
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://demiotic.github.io',
-	base: '/reminiscence',
+	base: '/',
 	integrations: [
 		starlight({
 			title: 'Reminiscence',

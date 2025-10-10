@@ -1,8 +1,7 @@
 """Core Reminiscence class - Facade for all components."""
 
-import pytest
 import time
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union
 
 from .config import ReminiscenceConfig
 from .types import LookupResult, AvailabilityCheck
@@ -25,24 +24,27 @@ class Reminiscence:
     Hybrid matching: semantic similarity + exact context matching.
 
     Query modes:
-    - semantic: Normal semantic search (configurable threshold)
-    - exact: Very high threshold (0.9999) for near-exact matches
-    - auto: Try exact first, fallback to semantic
+      - semantic: Normal semantic search (configurable threshold)
+      - exact: Very high threshold (0.9999) for near-exact matches
+      - auto: Try exact first, fallback to semantic
 
     Main API:
-    - lookup(): Search for existing result
-    - store(): Save new result
-    - check_availability(): Verify availability without retrieving data
-    - invalidate(): Mark entries as invalid
-    - cleanup_expired(): Remove expired entries
-    - create_index(): Create vector index for fast searches
-    - get_stats(): Return cache statistics
-    - health_check(): Perform health checks
-    - cached(): Decorator for automatic caching
-    - start_scheduler(): Start background cleanup and metrics export
-    - stop_scheduler(): Stop background schedulers
+      - lookup: Search for existing result
+      - lookup_batch: Search for multiple results (optimized)
+      - store: Save new result
+      - store_batch: Save multiple results (optimized)
+      - check_availability: Verify availability without retrieving data
+      - invalidate: Mark entries as invalid
+      - cleanup_expired: Remove expired entries
+      - create_index: Create vector index for fast searches
+      - get_stats: Return cache statistics
+      - health_check: Perform health checks
+      - cached: Decorator for automatic caching
+      - start_scheduler: Start background cleanup and metrics export
+      - stop_scheduler: Stop background schedulers
 
     Example:
+        >>> # Initialize cache
         >>> cache = Reminiscence()
         >>>
         >>> # Manual usage with context
@@ -53,6 +55,18 @@ class Reminiscence:
         ...     data = expensive_llm_call()
         ...     cache.store("What is ML?", {"agent": "qa", "model": "gpt-4"}, data)
         >>>
+        >>> # Batch operations (optimized)
+        >>> results = cache.lookup_batch(
+        ...     queries=["What is AI?", "What is ML?"],
+        ...     contexts={"model": "gpt-4"}  # Shared context
+        ... )
+        >>>
+        >>> cache.store_batch(
+        ...     queries=["q1", "q2", "q3"],
+        ...     contexts={"model": "gpt-4"},  # Shared context
+        ...     results=[r1, r2, r3]
+        ... )
+        >>>
         >>> # Exact mode for SQL caching
         >>> result = cache.lookup("SELECT * FROM users", {"db": "prod"}, query_mode="exact")
         >>>
@@ -61,7 +75,7 @@ class Reminiscence:
         >>>
         >>> # With automatic background tasks
         >>> cache.start_scheduler()
-        >>> # ... use cache ...
+        >>> ... # use cache
         >>> cache.stop_scheduler()
         >>>
         >>> # Decorator usage
@@ -88,11 +102,13 @@ class Reminiscence:
             eviction=self.config.eviction_policy,
         )
 
+        # Initialize components
         self.embedder = create_embedder(self.config)
         self.backend = create_storage_backend(self.config, self.embedder.embedding_dim)
         self.eviction = create_eviction_policy(self.config.eviction_policy)
         self.metrics = CacheMetrics() if self.config.enable_metrics else None
 
+        # OpenTelemetry exporter
         self.otel_exporter: Optional[OpenTelemetryExporter] = None
         if self.config.otel_enabled and self.metrics:
             try:
@@ -118,7 +134,8 @@ class Reminiscence:
                 reason="Metrics are disabled (REMINISCENCE_ENABLE_METRICS=false)",
             )
 
-        self.ops = CacheOperations(
+        # Cache operations
+        self._ops = CacheOperations(
             storage=self.backend,
             embedder=self.embedder,
             eviction=self.eviction,
@@ -148,7 +165,7 @@ class Reminiscence:
         context: Optional[Dict[str, Any]] = None,
         similarity_threshold: Optional[float] = None,
         query_mode: str = "semantic",
-        _track_metrics: Optional[bool] = True,
+        track_metrics: Optional[bool] = True,
     ) -> LookupResult:
         """
         Search cache entry by semantic similarity with exact context matching.
@@ -158,13 +175,69 @@ class Reminiscence:
             context: Context dict for exact matching (agent_id, tools, model, etc)
             similarity_threshold: Minimum similarity score (0-1)
             query_mode: Matching strategy ("semantic", "exact", "auto")
-            _track_metrics: Internal flag to control metrics tracking
+            track_metrics: Internal flag to control metrics tracking
 
         Returns:
             LookupResult with hit status and cached data
         """
-        return self.ops.lookup(
-            query, context, similarity_threshold, query_mode, _track_metrics
+        return self._ops.lookup(
+            query,
+            context,
+            similarity_threshold,
+            query_mode,
+            track_metrics,
+        )
+
+    def lookup_batch(
+        self,
+        queries: List[str],
+        contexts: Union[Dict[str, Any], List[Dict[str, Any]]],
+        similarity_threshold: Optional[float] = None,
+        query_mode: str = "semantic",
+        track_metrics: bool = True,
+    ) -> List[LookupResult]:
+        """
+        Lookup multiple queries in batch (optimized for embeddings).
+
+        Args:
+            queries: List of query texts to search
+            contexts: Single context dict (shared) OR list of contexts (one per query)
+            similarity_threshold: Minimum similarity score (overrides config)
+            query_mode: Matching strategy ("semantic", "exact", "auto")
+            track_metrics: Whether to track metrics for these lookups
+
+        Returns:
+            List of LookupResult objects (one per query)
+
+        Examples:
+            >>> # Shared context (most common)
+            >>> results = cache.lookup_batch(
+            ...     queries=["What is AI?", "What is ML?"],
+            ...     contexts={"model": "gpt-4"}  # Single dict
+            ... )
+            >>>
+            >>> # Individual contexts (when needed)
+            >>> results = cache.lookup_batch(
+            ...     queries=["q1", "q2"],
+            ...     contexts=[{"model": "gpt-4"}, {"model": "claude"}]
+            ... )
+        """
+        # Normalize contexts to list
+        if isinstance(contexts, dict):
+            contexts_list = [contexts] * len(queries)
+        else:
+            contexts_list = contexts
+            if len(contexts_list) != len(queries):
+                raise ValueError(
+                    f"Length mismatch: {len(queries)} queries but {len(contexts_list)} contexts"
+                )
+
+        return self._ops.lookup_batch(
+            queries,
+            contexts_list,
+            similarity_threshold,
+            query_mode,
+            track_metrics,
         )
 
     def store(
@@ -185,15 +258,16 @@ class Reminiscence:
             result: Result to cache (supports JSON, Arrow, Pandas, Polars)
             metadata: Optional metadata
             query_mode: For tracking purposes (all modes generate embeddings)
+            allow_errors: If False (default), don't cache error results
         """
-        self.ops.store(query, context, result, metadata, query_mode, allow_errors)
+        self._ops.store(query, context, result, metadata, query_mode, allow_errors)
 
     def store_batch(
         self,
         queries: List[str],
-        contexts: List[Dict[str, Any]],
+        contexts: Union[Dict[str, Any], List[Dict[str, Any]]],
         results: List[Any],
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         query_mode: str = "semantic",
         allow_errors: bool = False,
     ):
@@ -205,24 +279,54 @@ class Reminiscence:
 
         Args:
             queries: List of query texts
-            contexts: List of context dicts
+            contexts: Single context dict (shared) OR list of contexts (one per query)
             results: List of results to cache
-            metadata: Optional list of metadata dicts
-            query_mode: Storage mode (semantic/exact/auto)
+            metadata: Single metadata dict (shared) OR list of metadata dicts
+            query_mode: Storage mode ("semantic"/"exact"/"auto")
             allow_errors: If False (default), skip error results
 
-        Example:
+        Examples:
+            >>> # Shared context (most common)
             >>> cache.store_batch(
             ...     queries=["q1", "q2", "q3"],
-            ...     contexts=[{}, {}, {}],
-            ...     results=["r1", "r2", "r3"]
+            ...     contexts={"model": "gpt-4"},  # Single dict
+            ...     results=[r1, r2, r3]
+            ... )
+            >>>
+            >>> # Individual contexts (advanced)
+            >>> cache.store_batch(
+            ...     queries=["q1", "q2", "q3"],
+            ...     contexts=[{"model": "gpt-4"}, {"model": "claude"}, {"model": "gpt-4"}],
+            ...     results=[r1, r2, r3]
             ... )
         """
-        self.ops.store_batch(
+        # Normalize contexts to list
+        if isinstance(contexts, dict):
+            contexts_list = [contexts] * len(queries)
+        else:
+            contexts_list = contexts
+            if len(contexts_list) != len(queries):
+                raise ValueError(
+                    f"Length mismatch: {len(queries)} queries but {len(contexts_list)} contexts"
+                )
+
+        # Normalize metadata to list
+        if metadata is None:
+            metadata_list = [None] * len(queries)
+        elif isinstance(metadata, dict):
+            metadata_list = [metadata] * len(queries)
+        else:
+            metadata_list = metadata
+            if len(metadata_list) != len(queries):
+                raise ValueError(
+                    f"Length mismatch: {len(queries)} queries but {len(metadata_list)} metadata dicts"
+                )
+
+        self._ops.store_batch(
             queries,
-            contexts,
+            contexts_list,
             results,
-            metadata,
+            metadata_list,
             query_mode,
             allow_errors,
         )
@@ -244,7 +348,7 @@ class Reminiscence:
         Returns:
             Number of invalidated entries
         """
-        return self.ops.invalidate(query, context, older_than_seconds)
+        return self._ops.invalidate(query, context, older_than_seconds)
 
     def cleanup_expired(self) -> int:
         """
@@ -253,7 +357,7 @@ class Reminiscence:
         Returns:
             Number of deleted entries
         """
-        return self.ops.cleanup_expired()
+        return self._ops.cleanup_expired()
 
     def check_availability(
         self,
@@ -275,11 +379,15 @@ class Reminiscence:
             AvailabilityCheck with availability info
         """
         result = self.lookup(
-            query, context, similarity_threshold, query_mode, _track_metrics=False
+            query,
+            context,
+            similarity_threshold,
+            query_mode,
+            track_metrics=False,
         )
 
         if not result.is_hit:
-            return AvailabilityCheck(available=False)
+            return AvailabilityCheck(available=False, ttl_remaining_seconds=None)
 
         ttl_remaining = None
         if self.config.ttl_seconds and result.age_seconds is not None:
@@ -314,6 +422,7 @@ class Reminiscence:
             ...     interval_seconds=1800,
             ...     metrics_export_interval_seconds=10
             ... )
+            >>> # ... use cache ...
             >>> cache.stop_scheduler()
         """
         if self.scheduler_manager and self.scheduler_manager.schedulers:
@@ -322,16 +431,15 @@ class Reminiscence:
 
         self.scheduler_manager = SchedulerManager(metrics=self.metrics)
 
+        # Cleanup scheduler (if TTL configured)
         if self.config.ttl_seconds is not None:
             cleanup_interval = interval_seconds or 3600
-
             self.scheduler_manager.add_scheduler(
                 name="cache_cleanup",
                 cleanup_func=self.cleanup_expired,
                 interval_seconds=cleanup_interval,
                 initial_delay_seconds=initial_delay_seconds,
             )
-
             logger.info(
                 "cleanup_scheduler_configured",
                 interval_seconds=cleanup_interval,
@@ -343,8 +451,9 @@ class Reminiscence:
                 reason="No TTL configured (REMINISCENCE_TTL_SECONDS not set)",
             )
 
+        # Metrics export scheduler (if OTEL enabled)
         if self.otel_exporter and self.metrics:
-            default_interval = self.config.otel_export_interval_ms // 1000
+            default_interval = self.config.otel_export_interval_ms / 1000
             metrics_interval = metrics_export_interval_seconds or default_interval
 
             def export_metrics() -> int:
@@ -373,13 +482,13 @@ class Reminiscence:
                 interval_seconds=metrics_interval,
                 initial_delay_seconds=metrics_initial_delay_seconds,
             )
-
             logger.info(
                 "metrics_export_scheduler_configured",
                 interval_seconds=metrics_interval,
                 endpoint=self.config.otel_endpoint,
             )
 
+        # Start all schedulers
         if self.scheduler_manager.schedulers:
             self.scheduler_manager.start_all()
             logger.info(
@@ -427,34 +536,37 @@ class Reminiscence:
         """
         if self.scheduler_manager is None:
             return None
-
         return self.scheduler_manager.get_stats()
 
     def create_index(
-        self,
-        num_partitions: int = 256,
-        num_sub_vectors: Optional[int] = None,
-    ) -> None:
-        """Create IVF-PQ index for fast vector searches."""
-        row_count = self.backend.count()
+        self, num_partitions: int = 256, num_subvectors: Optional[int] = None
+    ):
+        """
+        Create IVF-PQ index for fast vector searches.
 
+        Args:
+            num_partitions: Number of IVF partitions
+            num_subvectors: Number of PQ subvectors (default: embedding_dim / 4)
+        """
+        row_count = self.backend.count()
         if row_count < 256:
             logger.warning(
-                "insufficient_entries_for_index", count=row_count, minimum=256
+                "insufficient_entries_for_index",
+                count=row_count,
+                minimum=256,
             )
             return
 
-        if num_sub_vectors is None:
-            num_sub_vectors = max(1, self.embedder.embedding_dim // 4)
+        if num_subvectors is None:
+            num_subvectors = max(1, self.embedder.embedding_dim // 4)
 
         logger.info(
             "creating_index",
             partitions=num_partitions,
-            sub_vectors=num_sub_vectors,
+            subvectors=num_subvectors,
             entries=row_count,
         )
-
-        self.backend.create_index(num_partitions, num_sub_vectors)
+        self.backend.create_index(num_partitions, num_subvectors)
 
     def get_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
@@ -497,6 +609,7 @@ class Reminiscence:
             "opentelemetry": {"ok": True, "details": "Disabled"},
         }
 
+        # Test embeddings
         try:
             test_embedding = self.embedder.embed("health check test")
             if len(test_embedding) != self.embedder.embedding_dim:
@@ -509,15 +622,17 @@ class Reminiscence:
             checks["embedding"]["error"] = str(e)
             logger.error("health_check_embedding_failed", error=str(e), exc_info=True)
 
+        # Test database
         try:
             entry_count = self.backend.count()
             if entry_count > 0:
-                _ = self.backend.to_arrow()
+                self.backend.to_arrow()
         except Exception as e:
             checks["database"]["ok"] = False
             checks["database"]["error"] = str(e)
             logger.error("health_check_database_failed", error=str(e), exc_info=True)
 
+        # Check error rates
         if self.metrics:
             total_requests = self.metrics.total_requests
             lookup_errors = self.metrics.lookup_errors
@@ -525,25 +640,26 @@ class Reminiscence:
             total_errors = lookup_errors + store_errors
 
             if total_requests >= 10:
-                error_rate = total_errors / total_requests if total_requests > 0 else 0
+                error_rate = (
+                    (total_errors / total_requests) if total_requests > 0 else 0
+                )
                 if error_rate > 0.10:
                     checks["error_rate"]["ok"] = False
                     checks["error_rate"]["details"] = (
-                        f"High error rate: {error_rate * 100:.1f}% "
-                        f"({total_errors}/{total_requests} requests)"
+                        f"High error rate: {error_rate * 100:.1f}% ({total_errors}/{total_requests} requests)"
                     )
                 else:
                     checks["error_rate"]["ok"] = True
                     checks["error_rate"]["details"] = (
-                        f"Error rate: {error_rate * 100:.1f}% "
-                        f"({total_errors}/{total_requests} requests)"
+                        f"Error rate: {error_rate * 100:.1f}% ({total_errors}/{total_requests} requests)"
                     )
             else:
                 checks["error_rate"]["ok"] = True
                 checks["error_rate"]["details"] = (
-                    f"Insufficient data: {total_requests} requests"
+                    f"Insufficient data ({total_requests} requests)"
                 )
 
+        # Check schedulers
         if self.scheduler_manager and self.scheduler_manager.schedulers:
             all_stats = self.scheduler_manager.get_stats()
             running_count = sum(1 for s in all_stats.values() if s["running"])
@@ -560,6 +676,7 @@ class Reminiscence:
                     f"{running_count}/{len(all_stats)} schedulers running"
                 )
 
+        # Check OpenTelemetry
         if self.otel_exporter:
             checks["opentelemetry"]["ok"] = True
             checks["opentelemetry"]["details"] = (
@@ -646,74 +763,3 @@ class Reminiscence:
             f"dim={self.embedder.embedding_dim}, "
             f"threshold={self.config.similarity_threshold})"
         )
-
-
-@pytest.mark.integration
-class TestOTELIntegration:
-    """Integration tests with real OTEL collector."""
-
-    def test_metrics_actually_reach_collector(self):
-        """Verify metrics are sent to OTEL collector (requires Docker)."""
-        from opentelemetry import metrics as otel_metrics
-
-        # Create exporter with very short interval for testing
-        config = ReminiscenceConfig(
-            otel_enabled=True,
-            otel_endpoint="http://localhost:4318/v1/metrics",
-            otel_export_interval_ms=100,  # 100ms for fast test
-        )
-
-        exporter = OpenTelemetryExporter.from_config(config)
-        metrics = CacheMetrics()
-
-        # Generate some metrics
-        metrics.hits = 100
-        metrics.misses = 20
-
-        # Export
-        exporter.export(metrics.report())
-
-        # Force flush to ensure it's sent immediately
-        provider = otel_metrics.get_meter_provider()
-        if hasattr(provider, "force_flush"):
-            result = provider.force_flush(timeout_millis=2000)
-            assert result, "Flush failed - collector not reachable"
-
-        # If we get here without exceptions, metrics were sent
-        # (OTEL would raise ConnectionError if collector is down)
-
-        # Verify internal state updated
-        assert exporter._last_hits == 100
-        assert exporter._last_misses == 20
-
-    def test_metrics_export_with_real_cache_operations(self):
-        """End-to-end test with CacheOperations + OTEL."""
-        from reminiscence import Reminiscence, ReminiscenceConfig
-
-        config = ReminiscenceConfig(
-            db_uri="memory://",
-            otel_enabled=True,
-            otel_endpoint="http://localhost:4318/v1/metrics",
-            otel_export_interval_ms=100,
-        )
-
-        cache = Reminiscence(config)
-
-        # Generate cache activity
-        cache.store("test query", {}, "result")
-        result = cache.lookup("test query", {})
-        assert result.is_hit
-
-        # Force export
-        if cache.cache_ops.otel_exporter:
-            cache.cache_ops.export_metrics_now()
-
-            # Force flush
-            from opentelemetry import metrics as otel_metrics
-
-            provider = otel_metrics.get_meter_provider()
-            if hasattr(provider, "force_flush"):
-                provider.force_flush(timeout_millis=2000)
-
-        # Success if no ConnectionError
-        assert True

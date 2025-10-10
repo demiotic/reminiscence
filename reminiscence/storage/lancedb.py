@@ -12,7 +12,6 @@ from ..types import CacheEntry
 from ..utils.logging import get_logger
 from ..utils.fingerprint import create_fingerprint
 from ..utils.serde import ResultSerializer
-from ..utils.query_detection import should_use_exact_mode
 
 logger = get_logger(__name__)
 
@@ -20,21 +19,30 @@ logger = get_logger(__name__)
 class LanceDBBackend(StorageBackend):
     """LanceDB implementation with dual exact/semantic tables."""
 
-    _instances: Dict[str, "LanceDBBackend"] = {}
+    _instances: Dict[tuple, "LanceDBBackend"] = {}  # FIX: Changed to tuple keys
 
     def __new__(cls, config, embedding_dim: int, metrics=None):
-        """Create or return existing instance for the same db_uri."""
-        db_uri = config.db_uri
+        """Create or return existing instance for the same db_uri + embedding_dim."""
+        # FIX #2: Include embedding_dim in singleton key to prevent dimension mismatches
+        key = (config.db_uri, embedding_dim)
 
-        if db_uri not in cls._instances:
+        if key not in cls._instances:
             instance = super().__new__(cls)
             instance._initialized = False
-            cls._instances[db_uri] = instance
-            logger.debug("storage_backend_created", db_uri=db_uri)
+            cls._instances[key] = instance
+            logger.debug(
+                "storage_backend_created",
+                db_uri=config.db_uri,
+                embedding_dim=embedding_dim,
+            )
         else:
-            logger.debug("storage_backend_reused", db_uri=db_uri)
+            logger.debug(
+                "storage_backend_reused",
+                db_uri=config.db_uri,
+                embedding_dim=embedding_dim,
+            )
 
-        return cls._instances[db_uri]
+        return cls._instances[key]
 
     def __init__(self, config, embedding_dim: int, metrics=None):
         """Initialize LanceDB backend with dual tables."""
@@ -160,6 +168,16 @@ class LanceDBBackend(StorageBackend):
         context_json = json.dumps(context, sort_keys=True)
         data = f"{query_text}:{context_json}"
         return hashlib.sha256(data.encode()).hexdigest()
+
+    def _generate_id(self, entry: CacheEntry) -> str:
+        """
+        Generate unique ID for entry using SHA256 hash.
+
+        FIX #3: Reuses _compute_query_hash() for consistency.
+        This ensures the same query+context always generates the same ID,
+        enabling proper deduplication.
+        """
+        return self._compute_query_hash(entry.query_text, entry.context)
 
     def count(self) -> int:
         """Get total entries across both tables."""
@@ -368,18 +386,17 @@ class LanceDBBackend(StorageBackend):
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
+        # FIX #1: Metrics now use deque, no manual truncation needed
         if self.metrics and total_added > 0:
             if not hasattr(self.metrics, "storage_adds"):
                 self.metrics.storage_adds = 0
             self.metrics.storage_adds += total_added
 
             if not hasattr(self.metrics, "storage_add_latencies_ms"):
-                self.metrics.storage_add_latencies_ms = []
+                from collections import deque
+
+                self.metrics.storage_add_latencies_ms = deque(maxlen=1000)
             self.metrics.storage_add_latencies_ms.append(elapsed_ms)
-            if len(self.metrics.storage_add_latencies_ms) > 1000:
-                self.metrics.storage_add_latencies_ms = (
-                    self.metrics.storage_add_latencies_ms[-1000:]
-                )
 
         logger.info(
             "storage_add_complete",
@@ -438,19 +455,17 @@ class LanceDBBackend(StorageBackend):
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
+        # FIX #1: Metrics now use deque, no manual truncation needed
         if self.metrics:
             if not hasattr(self.metrics, "storage_searches"):
                 self.metrics.storage_searches = 0
             self.metrics.storage_searches += 1
 
             if not hasattr(self.metrics, "storage_search_latencies_ms"):
-                self.metrics.storage_search_latencies_ms = []
-            self.metrics.storage_search_latencies_ms.append(elapsed_ms)
+                from collections import deque
 
-            if len(self.metrics.storage_search_latencies_ms) > 1000:
-                self.metrics.storage_search_latencies_ms = (
-                    self.metrics.storage_search_latencies_ms[-1000:]
-                )
+                self.metrics.storage_search_latencies_ms = deque(maxlen=1000)
+            self.metrics.storage_search_latencies_ms.append(elapsed_ms)
 
         logger.debug(
             "search_complete",
@@ -814,8 +829,3 @@ class LanceDBBackend(StorageBackend):
             "index_created": self._index_created,
             "encryption_enabled": self.serializer.encryptor is not None,
         }
-
-    def _generate_id(self, entry: CacheEntry) -> str:
-        """Generate unique ID for entry using SHA256 hash."""
-        data = f"{entry.query_text}:{json.dumps(entry.context, sort_keys=True)}:{entry.timestamp}"
-        return hashlib.sha256(data.encode()).hexdigest()

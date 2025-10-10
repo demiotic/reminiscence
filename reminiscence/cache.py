@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any, List
 from .types import LookupResult, CacheEntry, BulkInvalidatePattern
 from .utils.logging import get_logger
 from .utils.query_detection import should_use_exact_mode
+from .utils.fingerprint import create_fingerprint
 
 logger = get_logger(__name__)
 
@@ -650,7 +651,7 @@ class CacheOperations:
             )
 
             storage_start = time.time()
-            self.storage.add_entry(entry)
+            self.storage.add([entry])
             storage_ms = (time.time() - storage_start) * 1000
             logger.debug("store_entry_added", storage_ms=round(storage_ms, 1))
 
@@ -848,7 +849,7 @@ class CacheOperations:
         storage_start = time.time()
         logger.debug("batch_storage_add_start", entries=len(entries))
 
-        self.storage.add_entries(entries)
+        self.storage.add(entries)
 
         storage_ms = (time.time() - storage_start) * 1000
         logger.debug(
@@ -1110,90 +1111,148 @@ class CacheOperations:
 
     def invalidate_bulk(self, pattern: BulkInvalidatePattern) -> int:
         """
-        Bulk invalidate entries matching pattern.
+        Bulk invalidate entries matching pattern using efficient batch deletion.
 
-        This is more efficient than calling invalidate() multiple times
-        as it performs pattern matching in a single scan.
+        This method scans all entries once, collects IDs of entries matching
+        the pattern, and then deletes them in batch. Much more efficient than
+        deleting one-by-one.
 
         Args:
-            pattern: BulkInvalidatePattern specification
+            pattern: BulkInvalidatePattern with matching criteria
 
         Returns:
             Number of entries invalidated
+
+        Raises:
+            Exception: Re-raises any exception after logging
+
+        Performance:
+            - Single-pass scan: O(n) where n = total entries
+            - Batch deletion: O(k) where k = matched entries
+            - Total: O(n + k) vs O(n * k) for naive approach
         """
+        bulk_start = time.time()
         invalidated_count = 0
+        entry_ids_to_delete = []
+        eviction_ids_to_notify = []
 
         try:
-            import pyarrow.compute as pc
-
-            exact_table = self.storage.exact_table.to_arrow()
-            semantic_table = self.storage.semantic_table.to_arrow()
-
-            entries_to_delete_exact = []
-            entries_to_delete_semantic = []
-
-            for table, delete_list in [
-                (exact_table, entries_to_delete_exact),
-                (semantic_table, entries_to_delete_semantic),
-            ]:
-                if len(table) == 0:
+            # Scan both tables once to collect matching entry IDs
+            for table in [self.storage.exact_table, self.storage.semantic_table]:
+                arrow_table = table.to_arrow()
+                if len(arrow_table) == 0:
                     continue
 
-                rows = table.to_pylist()
+                rows = arrow_table.to_pylist()
+
                 for row in rows:
+                    # Extract entry data
+                    entry_id = row.get("id")
                     query_text = row.get("query_text", "")
                     context_str = row.get("context", "{}")
-                    context = json.loads(context_str) if context_str != "{}" else {}
                     timestamp = row.get("timestamp", 0)
-                    entry_id = row.get("id", "")
 
+                    # Parse context JSON
+                    try:
+                        context = json.loads(context_str) if context_str != "{}" else {}
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "invalid_context_json_in_bulk",
+                            entry_id=entry_id[:16] if entry_id else "unknown",
+                        )
+                        context = {}
+
+                    # Calculate entry age
                     age_seconds = time.time() - timestamp
 
-                    if pattern.matches_entry_id(entry_id):
-                        if pattern.matches_query(query_text):
-                            if pattern.matches_context(context):
-                                if pattern.matches_age(age_seconds):
-                                    delete_list.append(entry_id)
-                                    invalidated_count += 1
+                    # Apply pattern matching filters
+                    if not pattern.matches_query(query_text):
+                        continue
+                    if not pattern.matches_context(context):
+                        continue
+                    if not pattern.matches_age(age_seconds):
+                        continue
 
-                                    eviction_id = self._generate_entry_id(
-                                        query_text, context
-                                    )
-                                    try:
-                                        self.eviction.on_evict(eviction_id)
-                                    except Exception:
-                                        pass
+                    # Entry matches all criteria - mark for deletion
+                    entry_ids_to_delete.append(entry_id)
 
-            if entries_to_delete_exact:
-                id_list = "', '".join(entries_to_delete_exact)
-                filter_expr = f"id IN ('{id_list}')"
-                self.storage.delete_by_filter(filter_expr)
+                    # Generate eviction tracking ID for policy notification
+                    eviction_id = self._generate_entry_id(query_text, context)
+                    eviction_ids_to_notify.append(eviction_id)
 
-            if entries_to_delete_semantic:
-                id_list = "', '".join(entries_to_delete_semantic)
-                filter_expr = f"id IN ('{id_list}')"
-                self.storage.delete_by_filter(filter_expr)
+                    invalidated_count += 1
 
-            if invalidated_count > 0:
-                logger.info(
-                    "bulk_invalidation_completed",
-                    invalidated=invalidated_count,
-                )
+            # Early exit if nothing to delete
+            if not entry_ids_to_delete:
+                logger.debug("bulk_invalidation_no_matches")
+                return 0
 
+            # Delete all matched entries in batch
+            logger.debug(
+                "bulk_deletion_start",
+                entries_to_delete=len(entry_ids_to_delete),
+            )
+
+            deletion_start = time.time()
+            deleted_count = 0
+
+            for entry_id in entry_ids_to_delete:
+                if self.storage.delete_by_id(entry_id):
+                    deleted_count += 1
+
+            deletion_ms = (time.time() - deletion_start) * 1000
+
+            logger.debug(
+                "bulk_deletion_complete",
+                attempted=len(entry_ids_to_delete),
+                deleted=deleted_count,
+                latency_ms=round(deletion_ms, 1),
+            )
+
+            # Notify eviction policy of all removed entries
+            for eviction_id in eviction_ids_to_notify:
+                try:
+                    self.eviction.on_evict(eviction_id)
+                except Exception as e:
+                    logger.warning(
+                        "eviction_notification_failed",
+                        eviction_id=eviction_id,
+                        error=str(e),
+                    )
+
+            # Update metrics
             if self.metrics:
                 if not hasattr(self.metrics, "invalidations"):
                     self.metrics.invalidations = 0
                 self.metrics.invalidations += invalidated_count
 
+                if not hasattr(self.metrics, "bulk_invalidations"):
+                    self.metrics.bulk_invalidations = 0
+                self.metrics.bulk_invalidations += 1
+
+            bulk_ms = (time.time() - bulk_start) * 1000
+
+            logger.info(
+                "bulk_invalidation_completed",
+                matched=invalidated_count,
+                deleted=deleted_count,
+                total_ms=round(bulk_ms, 1),
+                scan_ms=round(bulk_ms - deletion_ms, 1),
+                deletion_ms=round(deletion_ms, 1),
+            )
+
+            return invalidated_count
+
         except Exception as e:
+            elapsed_ms = (time.time() - bulk_start) * 1000
             logger.error(
                 "bulk_invalidation_failed",
                 error=str(e),
+                error_type=type(e).__name__,
+                latency_ms=round(elapsed_ms, 1),
                 exc_info=True,
             )
             raise
-
-        return invalidated_count
 
     def invalidate_by_prefix(self, query_prefix: str) -> int:
         """
@@ -1292,29 +1351,98 @@ class CacheOperations:
 
     def _evict_one(self):
         """
-        Evict one entry to make space.
+        Evict one entry to make space using the configured eviction policy.
 
-        Uses the configured eviction policy to select victim.
+        This method uses the eviction policy to select a victim entry, then
+        efficiently deletes it by reconstructing the full entry ID from storage.
+
+        Raises:
+            Exception: If eviction fails, logs error but doesn't raise to
+                    allow cache operations to continue
         """
         evict_start = time.time()
+
         try:
             victim_id = self.eviction.select_victim()
-            logger.debug(
-                "evicting_entry",
-                victim_id=victim_id,
-                policy=self.config.eviction_policy,
-            )
 
-            self.storage.delete_entry(victim_id)
-            self.eviction.on_evict(victim_id)
+            # Parse victim_id format: "query_preview:context_json"
+            parts = victim_id.split(":", 1)
+            if len(parts) != 2:
+                logger.error(
+                    "invalid_victim_id_format",
+                    victim_id=victim_id,
+                    expected_format="query:context",
+                )
+                return
 
-            evict_ms = (time.time() - evict_start) * 1000
-            logger.info(
-                "entry_evicted", victim_id=victim_id, latency_ms=round(evict_ms, 1)
-            )
+            query_preview = parts[0]
+            context_str = parts[1]
 
-            if self.metrics:
-                self.metrics.evictions += 1
+            # Parse context JSON
+            try:
+                context = json.loads(context_str)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "invalid_context_json",
+                    victim_id=victim_id,
+                    context_str=context_str[:100],
+                )
+                context = {}
+
+            # Find the actual entry in storage to get full query text
+            # We need to search by context hash to find candidates
+            context_hash = create_fingerprint(context)
+
+            deleted = False
+
+            # Search in both tables
+            for table in [self.storage.exact_table, self.storage.semantic_table]:
+                arrow_table = table.to_arrow()
+                if len(arrow_table) == 0:
+                    continue
+
+                import pyarrow.compute as pc
+
+                # Filter by context hash and query prefix
+                context_mask = pc.equal(arrow_table["context_hash"], context_hash)
+                query_mask = pc.starts_with(arrow_table["query_text"], query_preview)
+                combined = pc.and_(context_mask, query_mask)
+
+                filtered = arrow_table.filter(combined)
+
+                if len(filtered) > 0:
+                    # Found the entry - get its actual ID
+                    entry_id = filtered["id"][0].as_py()
+
+                    logger.debug(
+                        "evicting_entry",
+                        victim_id=victim_id,
+                        entry_id=entry_id[:16],
+                        policy=self.config.eviction_policy,
+                    )
+
+                    # Delete by actual ID
+                    deleted = self.storage.delete_by_id(entry_id)
+                    break
+
+            if deleted:
+                self.eviction.on_evict(victim_id)
+
+                evict_ms = (time.time() - evict_start) * 1000
+                logger.info(
+                    "entry_evicted",
+                    victim_id=victim_id,
+                    policy=self.config.eviction_policy,
+                    latency_ms=round(evict_ms, 1),
+                )
+
+                if self.metrics:
+                    self.metrics.evictions += 1
+            else:
+                logger.warning(
+                    "eviction_entry_not_found",
+                    victim_id=victim_id,
+                )
 
         except Exception as e:
             logger.error(
@@ -1554,7 +1682,7 @@ class CacheOperations:
                     ttl_seconds=row.get("ttl_seconds"),
                     context_threshold=row.get("context_threshold"),
                 )
-                self.storage.add_entry(entry)
+                self.storage.add([entry])
 
             logger.info(
                 "cache_imported",

@@ -1,5 +1,6 @@
 """FastEmbed implementation (lightweight, ONNX-optimized)."""
 
+import os
 import time
 from typing import List
 from functools import cached_property
@@ -14,6 +15,7 @@ except ImportError:
 from .base import EmbeddingModel
 from .model_registry import get_default_model
 from ..utils.logging import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -38,7 +40,6 @@ class FastEmbedEmbedder(EmbeddingModel):
         self.config = config
         self.metrics = metrics
 
-        # Use backend default if no model specified
         if config.model_name is None:
             self.model_name = get_default_model("fastembed")
             logger.info(
@@ -53,16 +54,43 @@ class FastEmbedEmbedder(EmbeddingModel):
     @cached_property
     def _model(self) -> TextEmbedding:
         """Lazy-load FastEmbed model."""
+        cache_dir = os.getenv("FASTEMBED_CACHE_PATH", "/tmp/fastembed_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+
         logger.info(
             "loading_model",
             model=self.model_name,
             backend="fastembed-onnx",
+            cache_dir=cache_dir,
         )
 
         try:
-            model = TextEmbedding(model_name=self.model_name)
-            logger.info("fastembed_model_loaded", model=self.model_name)
-            return model
+            logger.debug("attempting_local_cache_load", model=self.model_name)
+
+            try:
+                model = TextEmbedding(
+                    model_name=self.model_name,
+                    cache_dir=cache_dir,
+                    local_files_only=True,
+                )
+                logger.info("fastembed_model_loaded_from_cache", model=self.model_name)
+                return model
+
+            except (OSError, ValueError) as cache_error:
+                logger.info(
+                    "model_not_cached_downloading",
+                    model=self.model_name,
+                    reason=str(cache_error)[:100],
+                )
+
+                model = TextEmbedding(
+                    model_name=self.model_name,
+                    cache_dir=cache_dir,
+                    local_files_only=False,
+                )
+                logger.info("fastembed_model_downloaded", model=self.model_name)
+                return model
+
         except Exception as e:
             logger.error(
                 "fastembed_load_failed",
@@ -76,7 +104,6 @@ class FastEmbedEmbedder(EmbeddingModel):
     def embedding_dim(self) -> int:
         """Get embedding dimension."""
         if not hasattr(self, "_cached_dim"):
-            # Compute from test embedding
             logger.debug("computing_embedding_dim", model=self.model_name)
             test_emb = list(self._model.embed([""]))[0]
             self._cached_dim = len(test_emb)
@@ -92,7 +119,6 @@ class FastEmbedEmbedder(EmbeddingModel):
             embeddings = list(self._model.embed([text]))
             embedding = embeddings[0].tolist()
 
-            # Track embedding generation metrics
             elapsed_ms = (time.perf_counter() - start) * 1000
 
             if self.metrics:
@@ -104,7 +130,6 @@ class FastEmbedEmbedder(EmbeddingModel):
                     self.metrics.embedding_latencies_ms = []
                 self.metrics.embedding_latencies_ms.append(elapsed_ms)
 
-                # Keep only last 1000 samples
                 if len(self.metrics.embedding_latencies_ms) > 1000:
                     self.metrics.embedding_latencies_ms = (
                         self.metrics.embedding_latencies_ms[-1000:]
@@ -152,8 +177,6 @@ class FastEmbedEmbedder(EmbeddingModel):
         batch_size = self.config.embedding_batch_size
 
         try:
-            # FastEmbed's embed() already handles batching internally
-            # Just pass the list directly
             embeddings = list(self._model.embed(texts, batch_size=batch_size))
             result = [emb.tolist() for emb in embeddings]
 
@@ -167,7 +190,6 @@ class FastEmbedEmbedder(EmbeddingModel):
                 if not hasattr(self.metrics, "embedding_latencies_ms"):
                     self.metrics.embedding_latencies_ms = []
 
-                # Track average latency per text
                 avg_latency_per_text = elapsed_ms / len(texts)
                 self.metrics.embedding_latencies_ms.extend(
                     [avg_latency_per_text] * len(texts)

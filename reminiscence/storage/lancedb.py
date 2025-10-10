@@ -11,7 +11,8 @@ from .base import StorageBackend
 from ..types import CacheEntry
 from ..utils.logging import get_logger
 from ..utils.fingerprint import create_fingerprint
-from ..utils.serde import ResultSerializer
+from ..serialization import ResultSerializer
+from ..compression import create_compressor
 
 logger = get_logger(__name__)
 
@@ -19,11 +20,10 @@ logger = get_logger(__name__)
 class LanceDBBackend(StorageBackend):
     """LanceDB implementation with dual exact/semantic tables."""
 
-    _instances: Dict[tuple, "LanceDBBackend"] = {}  # FIX: Changed to tuple keys
+    _instances: Dict[tuple, "LanceDBBackend"] = {}
 
     def __new__(cls, config, embedding_dim: int, metrics=None):
         """Create or return existing instance for the same db_uri + embedding_dim."""
-        # FIX #2: Include embedding_dim in singleton key to prevent dimension mismatches
         key = (config.db_uri, embedding_dim)
 
         if key not in cls._instances:
@@ -74,7 +74,6 @@ class LanceDBBackend(StorageBackend):
         self.table = self.semantic_table
         self.schema = self.semantic_schema
 
-        # Initialize encryptor if enabled
         encryptor = None
         if config.encryption_enabled:
             logger.debug("initializing_encryption", backend=config.encryption_backend)
@@ -96,9 +95,29 @@ class LanceDBBackend(StorageBackend):
                 max_workers=config.encryption_max_workers,
             )
 
-        # Initialize serializer with optional encryptor
-        logger.debug("initializing_serializer", has_encryptor=encryptor is not None)
-        self.serializer = ResultSerializer(encryptor=encryptor)
+        compressor = None
+        if config.compression_enabled:
+            logger.debug(
+                "initializing_compression",
+                algorithm=config.compression_algorithm,
+                level=config.compression_level,
+            )
+            compressor = create_compressor(
+                algorithm=config.compression_algorithm,
+                level=config.compression_level,
+            )
+            logger.info(
+                "compression_initialized",
+                algorithm=config.compression_algorithm,
+                level=config.compression_level,
+            )
+
+        logger.debug(
+            "initializing_serializer",
+            has_encryptor=encryptor is not None,
+            has_compressor=compressor is not None,
+        )
+        self.serializer = ResultSerializer(encryptor=encryptor, compressor=compressor)
 
         self._index_created = False
         self._initialized = True
@@ -111,6 +130,7 @@ class LanceDBBackend(StorageBackend):
             semantic_table=self._semantic_table_name,
             embedding_dim=embedding_dim,
             encryption=config.encryption_enabled,
+            compression=config.compression_enabled,
             init_ms=round(init_ms, 1),
         )
 
@@ -170,13 +190,7 @@ class LanceDBBackend(StorageBackend):
         return hashlib.sha256(data.encode()).hexdigest()
 
     def _generate_id(self, entry: CacheEntry) -> str:
-        """
-        Generate unique ID for entry using SHA256 hash.
-
-        FIX #3: Reuses _compute_query_hash() for consistency.
-        This ensures the same query+context always generates the same ID,
-        enabling proper deduplication.
-        """
+        """Generate unique ID for entry using SHA256 hash."""
         return self._compute_query_hash(entry.query_text, entry.context)
 
     def count(self) -> int:
@@ -194,12 +208,7 @@ class LanceDBBackend(StorageBackend):
         return total
 
     def add(self, entries: List[CacheEntry]):
-        """
-        Add entries to appropriate tables.
-
-        Each entry's metadata contains 'query_mode' (resolved upstream).
-        Routes to exact_table or semantic_table based on metadata.
-        """
+        """Add entries to appropriate tables."""
         start = time.perf_counter()
 
         if not entries:
@@ -210,18 +219,15 @@ class LanceDBBackend(StorageBackend):
             "add_start",
             entries=len(entries),
             has_encryptor=self.serializer.encryptor is not None,
+            has_compressor=self.serializer.compressor is not None,
         )
 
-        # Prepare data
         prep_start = time.perf_counter()
         query_texts = [e.query_text for e in entries]
         contexts = [e.context for e in entries]
         timestamps = [e.timestamp for e in entries]
 
-        # Batch serialize contexts
         context_jsons = [json.dumps(c, sort_keys=True) for c in contexts]
-
-        # Batch fingerprinting
         context_hashes = [create_fingerprint(c) for c in contexts]
 
         prep_ms = (time.perf_counter() - prep_start) * 1000
@@ -234,7 +240,6 @@ class LanceDBBackend(StorageBackend):
         exact_data = []
         semantic_data = []
 
-        # Batch serialize results
         results = [e.result for e in entries]
         serialize_start = time.perf_counter()
         logger.debug(
@@ -266,7 +271,6 @@ class LanceDBBackend(StorageBackend):
                 self.metrics.storage_add_errors += 1
             return
 
-        # Build data dicts - route based on metadata
         build_start = time.perf_counter()
         for i, entry in enumerate(entries):
             ser_result, result_type = serialized_results[i]
@@ -284,11 +288,9 @@ class LanceDBBackend(StorageBackend):
                 "metadata": json.dumps(entry.metadata) if entry.metadata else "{}",
             }
 
-            # Read mode from metadata (resolved upstream in store/store_batch)
             if entry.metadata and "query_mode" in entry.metadata:
                 detected_mode = entry.metadata["query_mode"]
             else:
-                # Fallback: if no metadata, default to semantic
                 detected_mode = "semantic"
                 logger.warning(
                     "entry_missing_query_mode",
@@ -304,7 +306,6 @@ class LanceDBBackend(StorageBackend):
                 mode=detected_mode,
             )
 
-            # Route to appropriate table
             if detected_mode == "exact":
                 exact_data.append(
                     {
@@ -314,7 +315,7 @@ class LanceDBBackend(StorageBackend):
                         ),
                     }
                 )
-            else:  # semantic (or fallback)
+            else:
                 semantic_data.append(
                     {
                         **base_data,
@@ -332,7 +333,6 @@ class LanceDBBackend(StorageBackend):
 
         total_added = 0
 
-        # Add to exact table
         if exact_data:
             exact_add_start = time.perf_counter()
             try:
@@ -358,7 +358,6 @@ class LanceDBBackend(StorageBackend):
                         self.metrics.storage_add_errors = 0
                     self.metrics.storage_add_errors += 1
 
-        # Add to semantic table
         if semantic_data:
             semantic_add_start = time.perf_counter()
             try:
@@ -386,7 +385,6 @@ class LanceDBBackend(StorageBackend):
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
-        # FIX #1: Metrics now use deque, no manual truncation needed
         if self.metrics and total_added > 0:
             if not hasattr(self.metrics, "storage_adds"):
                 self.metrics.storage_adds = 0
@@ -416,12 +414,7 @@ class LanceDBBackend(StorageBackend):
         query_mode: str = "semantic",
         query_text: str = None,
     ) -> List[CacheEntry]:
-        """
-        Search with mode-based routing.
-
-        Mode should be resolved upstream (lookup/lookup_batch applies heuristic).
-        This method expects 'exact' or 'semantic', not 'auto'.
-        """
+        """Search with mode-based routing."""
         start = time.perf_counter()
 
         logger.debug(
@@ -433,7 +426,6 @@ class LanceDBBackend(StorageBackend):
             has_query_text=query_text is not None,
         )
 
-        # Route based on resolved mode
         if query_mode == "exact":
             results = self._search_exact(query_text, context)
         elif query_mode == "semantic":
@@ -441,7 +433,6 @@ class LanceDBBackend(StorageBackend):
                 embedding, context, limit, similarity_threshold
             )
         else:
-            # Unexpected mode - log warning and fallback
             logger.warning(
                 "unexpected_query_mode",
                 mode=query_mode,
@@ -455,7 +446,6 @@ class LanceDBBackend(StorageBackend):
 
         elapsed_ms = (time.perf_counter() - start) * 1000
 
-        # FIX #1: Metrics now use deque, no manual truncation needed
         if self.metrics:
             if not hasattr(self.metrics, "storage_searches"):
                 self.metrics.storage_searches = 0
@@ -563,11 +553,9 @@ class LanceDBBackend(StorageBackend):
                 )
                 return []
 
-            # Vectorized similarity computation
             distances = results["_distance"]
             similarities = pc.subtract(1.0, distances)
 
-            # Vectorized filtering
             mask = pc.greater_equal(similarities, similarity_threshold)
             filtered_results = results.filter(mask)
 
@@ -580,7 +568,6 @@ class LanceDBBackend(StorageBackend):
                 )
                 return []
 
-            # Convert to entries
             entries = []
             filtered_distances = filtered_results["_distance"]
             for i in range(len(filtered_results)):
@@ -629,7 +616,7 @@ class LanceDBBackend(StorageBackend):
             result_obj = self.serializer.deserialize(result_data, result_type)
             deserialize_ms = (time.perf_counter() - deserialize_start) * 1000
 
-            if deserialize_ms > 10:  # Only log if significant
+            if deserialize_ms > 10:
                 logger.debug(
                     "deserialization_slow",
                     latency_ms=round(deserialize_ms, 1),
@@ -828,4 +815,10 @@ class LanceDBBackend(StorageBackend):
             "add_errors": getattr(self.metrics, "storage_add_errors", 0),
             "index_created": self._index_created,
             "encryption_enabled": self.serializer.encryptor is not None,
+            "compression_enabled": self.serializer.compressor is not None,
+            "compression_algorithm": (
+                self.serializer.compressor.algorithm
+                if self.serializer.compressor
+                else None
+            ),
         }

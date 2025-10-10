@@ -37,12 +37,17 @@ class ReminiscenceConfig:
     - REMINISCENCE_ENCRYPTION_KEY: Encryption key string, ARN, URI, or file path
     - REMINISCENCE_ENCRYPTION_BACKEND: Backend (age/aws-kms/gcp-kms/azure-keyvault/vault)
     - REMINISCENCE_ENCRYPTION_MAX_WORKERS: Max threads for batch encryption
+    - REMINISCENCE_WARM_UP_EMBEDDER: Pre-load embedder model (true/false, default: true)
+    - REMINISCENCE_COMPRESSION_ENABLED: Enable result compression (true/false, default: false)
+    - REMINISCENCE_COMPRESSION_ALGORITHM: Algorithm (zstd/gzip/none, default: zstd)
+    - REMINISCENCE_COMPRESSION_LEVEL: Compression level (1-22 for zstd, 1-9 for gzip, default: 3)
     """
 
     # Model
     model_name: Optional[str] = None
     embedding_backend: str = "fastembed"
     embedding_batch_size: int = 32
+    warm_up_embedder: bool = True  # NEW
 
     # Cache
     similarity_threshold: float = 0.80
@@ -84,6 +89,11 @@ class ReminiscenceConfig:
     encryption_backend: Optional[str] = None
     encryption_max_workers: int = 4
 
+    # Compression (NEW)
+    compression_enabled: bool = False
+    compression_algorithm: str = "zstd"
+    compression_level: int = 3
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         # Validate encryption settings
@@ -93,6 +103,30 @@ class ReminiscenceConfig:
         # Auto-detect encryption backend if not specified
         if self.encryption_enabled and not self.encryption_backend:
             self.encryption_backend = self._detect_encryption_backend()
+
+        # Validate compression settings
+        if self.compression_enabled:
+            valid_algorithms = ["zstd", "gzip", "none"]
+            if self.compression_algorithm not in valid_algorithms:
+                raise ValueError(
+                    f"Invalid compression_algorithm: {self.compression_algorithm}. "
+                    f"Must be one of: {', '.join(valid_algorithms)}"
+                )
+
+            if self.compression_algorithm == "zstd" and not (
+                1 <= self.compression_level <= 22
+            ):
+                raise ValueError(
+                    f"Invalid compression_level for zstd: {self.compression_level}. "
+                    "Must be between 1 and 22."
+                )
+            elif self.compression_algorithm == "gzip" and not (
+                1 <= self.compression_level <= 9
+            ):
+                raise ValueError(
+                    f"Invalid compression_level for gzip: {self.compression_level}. "
+                    "Must be between 1 and 9."
+                )
 
     def _detect_encryption_backend(self) -> str:
         """
@@ -175,6 +209,12 @@ class ReminiscenceConfig:
                 os.getenv(
                     "REMINISCENCE_EMBEDDING_BATCH_SIZE",
                     str(defaults.embedding_batch_size),
+                )
+            ),
+            warm_up_embedder=parse_bool(
+                os.getenv(
+                    "REMINISCENCE_WARM_UP_EMBEDDER",
+                    str(defaults.warm_up_embedder).lower(),
                 )
             ),
             # Cache
@@ -287,6 +327,23 @@ class ReminiscenceConfig:
                 os.getenv(
                     "REMINISCENCE_ENCRYPTION_MAX_WORKERS",
                     str(defaults.encryption_max_workers),
+                )
+            ),
+            # Compression (NEW)
+            compression_enabled=parse_bool(
+                os.getenv(
+                    "REMINISCENCE_COMPRESSION_ENABLED",
+                    str(defaults.compression_enabled).lower(),
+                )
+            ),
+            compression_algorithm=os.getenv(
+                "REMINISCENCE_COMPRESSION_ALGORITHM",
+                defaults.compression_algorithm,
+            ).lower(),
+            compression_level=int(
+                os.getenv(
+                    "REMINISCENCE_COMPRESSION_LEVEL",
+                    str(defaults.compression_level),
                 )
             ),
         )

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Batch operations support**
+  - `lookup_batch()` and `store_batch()` with batch embedding generation (3-5x faster than individual calls)
+  - Batch operations use shared context by default (single dict) or per-query contexts (list of dicts)
+  - Auto mode detection in batch operations (applies heuristic per query)
+  - Stores `query_mode` in entry metadata for flexible routing
+  - Metadata-based routing in storage layer (enables future extensibility)
+  - **Performance**: ~5% overhead for single items using batch API, major gains (3-10x) for batches
+
+- **Encryption support for cached results**
+  - Optional encryption for stored cache results using **age encryption**
+  - Enable with `REMINISCENCE_ENCRYPTION_ENABLED=true`
+  - Provide encryption key via `REMINISCENCE_ENCRYPTION_KEY` environment variable
+  - Age encryption backend (`REMINISCENCE_ENCRYPTION_BACKEND=age`)
+  - Configurable worker pool for parallel encryption (`REMINISCENCE_ENCRYPTION_MAX_WORKERS`, default: 4)
+  - Transparent encryption/decryption at storage layer
+  - Batch serialization with optional encryption for performance
+  - Compatible with all result types (JSON, Arrow, DataFrames, NumPy arrays)
+
+- **Decorator batch support** 
+  - `batch_mode` parameter in decorator (default: True)
+  - Auto-detects single vs batch calls transparently
+  - Supports single context (dict) or per-item context (list)
+  - Handles batch processing automatically in decorators
+
+### Changed
+- **Storage API changes** (BREAKING)
+  - `storage.add()` now reads `query_mode` from entry metadata instead of parameter
+  - `storage.search()` no longer accepts "auto" mode (resolved upstream in cache layer)
+  - Storage layer responsibility: physical storage and optional encryption
+  - Cache layer responsibility: mode detection and routing
+
+### Fixed
+- **Type corrections**
+  - `AvailabilityCheck` parameter names (`ttl_remaining_seconds` not `ttl_remaining`)
+  - `store_batch()` passes full entries list to storage (not single entry)
+
 ## [0.4.0] - 2025-10-09
 
 ### Added
@@ -32,7 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - OTEL collector Docker integration for real integration tests
   - Automatic container lifecycle management with `pytest_configure` and `pytest_sessionfinish`
   - 238 tests passing with 0 errors
-
 
 ## [0.3.0] - 2025-10-09
 

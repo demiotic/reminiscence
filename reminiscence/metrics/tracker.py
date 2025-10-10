@@ -1,7 +1,8 @@
 """Enhanced metrics for Reminiscence."""
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import Dict, Any
+from collections import deque
 
 
 @dataclass
@@ -13,62 +14,73 @@ class CacheMetrics:
     embedding, and scheduler metrics.
     """
 
+    # Sample limit to avoid memory leak (used to create deque maxlen)
+    max_samples: int = 1000
+
     # Cache-level metrics
     hits: int = 0
     misses: int = 0
     total_latency_saved_ms: float = 0.0
-    lookup_latencies_ms: List[float] = field(default_factory=list)
+
+    # FIX: Use deque with maxlen for auto-truncation (prevents memory leaks)
+    # These are initialized in __post_init__ using max_samples
+    lookup_latencies_ms: deque = field(default=None, init=False)
+
     store_errors: int = 0
     lookup_errors: int = 0
-    result_sizes_bytes: List[int] = field(default_factory=list)
+
+    result_sizes_bytes: deque = field(default=None, init=False)
 
     # Eviction metrics (general)
     evictions: int = 0
     evictions_by_policy: Dict[str, int] = field(default_factory=dict)
-    evicted_entry_ages: List[float] = field(default_factory=list)
+    evicted_entry_ages: deque = field(default=None, init=False)
 
     # LFU-specific metrics
     lfu_total_accesses: int = 0
-    lfu_evicted_frequencies: List[int] = field(default_factory=list)
+    lfu_evicted_frequencies: deque = field(default=None, init=False)
 
     # LRU-specific metrics
     lru_total_accesses: int = 0
-    lru_evicted_recency_seconds: List[float] = field(default_factory=list)
+    lru_evicted_recency_seconds: deque = field(default=None, init=False)
 
-    # Storage metrics
+    # Storage metrics (FIX: deque with maxlen)
     storage_searches: int = 0
     storage_adds: int = 0
-    storage_search_latencies_ms: List[float] = field(default_factory=list)
-    storage_add_latencies_ms: List[float] = field(default_factory=list)
+    storage_search_latencies_ms: deque = field(default=None, init=False)
+    storage_add_latencies_ms: deque = field(default=None, init=False)
     storage_search_errors: int = 0
     storage_add_errors: int = 0
 
-    # Embedding metrics
+    # Embedding metrics (FIX: deque with maxlen)
     embedding_generations: int = 0
-    embedding_latencies_ms: List[float] = field(default_factory=list)
+    embedding_latencies_ms: deque = field(default=None, init=False)
     embedding_errors: int = 0
 
-    # Scheduler metrics
+    # Scheduler metrics (FIX: deque with maxlen)
     scheduler_runs: int = 0
-    scheduler_cleanup_latencies_ms: List[float] = field(default_factory=list)
+    scheduler_cleanup_latencies_ms: deque = field(default=None, init=False)
     scheduler_errors: int = 0
 
-    # Sample limit to avoid memory leak
-    max_samples: int = 10000
+    def __post_init__(self):
+        """Initialize deques with configurable maxlen from max_samples."""
+        self.lookup_latencies_ms = deque(maxlen=self.max_samples)
+        self.result_sizes_bytes = deque(maxlen=self.max_samples)
+        self.evicted_entry_ages = deque(maxlen=self.max_samples)
+        self.lfu_evicted_frequencies = deque(maxlen=self.max_samples)
+        self.lru_evicted_recency_seconds = deque(maxlen=self.max_samples)
+        self.storage_search_latencies_ms = deque(maxlen=self.max_samples)
+        self.storage_add_latencies_ms = deque(maxlen=self.max_samples)
+        self.embedding_latencies_ms = deque(maxlen=self.max_samples)
+        self.scheduler_cleanup_latencies_ms = deque(maxlen=self.max_samples)
 
     def record_lookup_latency(self, latency_ms: float):
-        """Record lookup latency."""
+        """Record lookup latency (auto-truncates with deque)."""
         self.lookup_latencies_ms.append(latency_ms)
 
-        if len(self.lookup_latencies_ms) > self.max_samples:
-            self.lookup_latencies_ms = self.lookup_latencies_ms[-self.max_samples :]
-
     def record_result_size(self, size_bytes: int):
-        """Record cached result size."""
+        """Record cached result size (auto-truncates with deque)."""
         self.result_sizes_bytes.append(size_bytes)
-
-        if len(self.result_sizes_bytes) > self.max_samples:
-            self.result_sizes_bytes = self.result_sizes_bytes[-self.max_samples :]
 
     @property
     def hit_rate(self) -> float:
@@ -87,8 +99,8 @@ class CacheMetrics:
         total = self.total_requests
         return self.evictions / total if total > 0 else 0.0
 
-    def get_percentiles(self, values: List[float]) -> Dict[str, float]:
-        """Calculate percentiles for a list of values."""
+    def get_percentiles(self, values) -> Dict[str, float]:
+        """Calculate percentiles for a deque or list of values."""
         if not values:
             return {"p50": 0.0, "p95": 0.0, "p99": 0.0}
 

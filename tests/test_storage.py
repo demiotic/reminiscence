@@ -715,3 +715,255 @@ class TestEncryptedStorage:
         )
         assert len(results) == 1
         assert results[0].result == {"classified": "data"}
+
+
+class TestCompressedStorage:
+    """Test compression support."""
+
+    def test_add_and_search_compressed_result(self):
+        """Should compress and decompress results transparently."""
+        pytest.importorskip("zstandard")
+
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            compression_enabled=True,
+            compression_algorithm="zstd",
+            compression_level=3,
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        large_data = {"data": "x" * 10000}
+
+        entry = CacheEntry(
+            query_text="compressed query",
+            context={"agent": "test"},
+            embedding=[0.1] * 384,
+            result=large_data,
+            timestamp=time.time(),
+            metadata={"query_mode": "semantic"},
+        )
+        storage.add([entry])
+
+        results = storage.search(
+            embedding=[0.1] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
+        )
+
+        assert len(results) == 1
+        assert results[0].result == large_data
+
+    def test_compressed_dataframe(self):
+        """Should compress DataFrames."""
+        pytest.importorskip("zstandard")
+        pytest.importorskip("pandas")
+
+        import pandas as pd
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            compression_enabled=True,
+            compression_algorithm="zstd",
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        df = pd.DataFrame({"col" + str(i): range(100) for i in range(10)})
+
+        entry = CacheEntry(
+            query_text="compressed df",
+            context={"agent": "test"},
+            embedding=[0.2] * 384,
+            result=df,
+            timestamp=time.time(),
+            metadata={"query_mode": "semantic"},
+        )
+        storage.add([entry])
+
+        results = storage.search(
+            embedding=[0.2] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0].result, pd.DataFrame)
+        assert results[0].result.equals(df)
+
+    def test_compression_with_gzip(self):
+        """Should support gzip compression."""
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            compression_enabled=True,
+            compression_algorithm="gzip",
+            compression_level=6,
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        data = {"message": "hello" * 1000}
+
+        entry = CacheEntry(
+            query_text="gzip query",
+            context={"agent": "test"},
+            embedding=[0.3] * 384,
+            result=data,
+            timestamp=time.time(),
+            metadata={"query_mode": "semantic"},
+        )
+        storage.add([entry])
+
+        results = storage.search(
+            embedding=[0.3] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
+        )
+
+        assert len(results) == 1
+        assert results[0].result == data
+
+    def test_encryption_plus_compression(self, age_private_key):
+        """Should support both encryption and compression together."""
+        pytest.importorskip("zstandard")
+
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            encryption_enabled=True,
+            encryption_key=age_private_key,
+            compression_enabled=True,
+            compression_algorithm="zstd",
+            compression_level=5,
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        sensitive_data = {"secret": "classified" * 1000, "level": "top"}
+
+        entry = CacheEntry(
+            query_text="encrypted+compressed",
+            context={"agent": "secure"},
+            embedding=[0.4] * 384,
+            result=sensitive_data,
+            timestamp=time.time(),
+            metadata={"query_mode": "semantic"},
+        )
+        storage.add([entry])
+
+        results = storage.search(
+            embedding=[0.4] * 384,
+            context={"agent": "secure"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
+        )
+
+        assert len(results) == 1
+        assert results[0].result == sensitive_data
+
+    def test_compression_disabled(self):
+        """Should work without compression when disabled."""
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            compression_enabled=False,
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        assert storage.serializer.compressor is None
+
+        entry = CacheEntry(
+            query_text="uncompressed",
+            context={"agent": "test"},
+            embedding=[0.5] * 384,
+            result={"data": "value"},
+            timestamp=time.time(),
+            metadata={"query_mode": "semantic"},
+        )
+        storage.add([entry])
+
+        results = storage.search(
+            embedding=[0.5] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
+        )
+
+        assert len(results) == 1
+        assert results[0].result == {"data": "value"}
+
+    def test_storage_stats_includes_compression(self):
+        """Storage stats should include compression information."""
+        pytest.importorskip("zstandard")
+
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+        from reminiscence.metrics import CacheMetrics
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            compression_enabled=True,
+            compression_algorithm="zstd",
+        )
+        metrics = CacheMetrics()
+        storage = LanceDBBackend(config, embedding_dim=384, metrics=metrics)
+
+        stats = storage.get_storage_stats()
+
+        assert stats["compression_enabled"] is True
+        assert stats["compression_algorithm"] == "zstd"
+
+    def test_batch_add_with_compression(self):
+        """Should compress multiple entries in batch."""
+        pytest.importorskip("zstandard")
+
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://",
+            compression_enabled=True,
+            compression_algorithm="zstd",
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entries = [
+            CacheEntry(
+                query_text=f"query {i}",
+                context={"agent": "test"},
+                embedding=[0.1 * i] * 384,
+                result={"data": "x" * 1000, "index": i},
+                timestamp=time.time(),
+                metadata={"query_mode": "semantic"},
+            )
+            for i in range(5)
+        ]
+
+        storage.add(entries)
+        assert storage.count() == 5
+
+        results = storage.search(
+            embedding=[0.2] * 384,
+            context={"agent": "test"},
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
+        )
+
+        assert len(results) > 0

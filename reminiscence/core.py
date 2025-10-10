@@ -104,6 +104,27 @@ class Reminiscence:
 
         # Initialize components
         self.embedder = create_embedder(self.config)
+
+        # Warm-up embedder if configured
+        if self.config.warm_up_embedder:
+            logger.debug("warming_up_embedder")
+            warmup_start = time.perf_counter()
+            try:
+                # Generate a dummy embedding to load model into memory
+                _ = self.embedder.embed("warm up query")
+                warmup_ms = (time.perf_counter() - warmup_start) * 1000
+                logger.info(
+                    "embedder_warmed_up",
+                    model=self.config.model_name,
+                    warmup_ms=round(warmup_ms, 1),
+                )
+            except Exception as e:
+                logger.warning(
+                    "embedder_warmup_failed",
+                    error=str(e),
+                    note="Continuing without warm-up",
+                )
+
         self.backend = create_storage_backend(self.config, self.embedder.embedding_dim)
         self.eviction = create_eviction_policy(self.config.eviction_policy)
         self.metrics = CacheMetrics() if self.config.enable_metrics else None

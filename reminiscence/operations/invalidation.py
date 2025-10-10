@@ -2,12 +2,10 @@
 
 import time
 import json
-import re
 from typing import Optional, Dict, Any
 
 from ..types import BulkInvalidatePattern
 from ..utils.logging import get_logger
-from ..utils.fingerprint import create_fingerprint
 
 logger = get_logger(__name__)
 

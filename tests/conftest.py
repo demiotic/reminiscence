@@ -5,7 +5,6 @@ import tempfile
 import shutil
 import structlog
 import logging
-from pathlib import Path
 
 from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.cache import CacheOperations
@@ -232,7 +231,7 @@ def age_keypair():
 
         identity = x25519.Identity.generate()
         return (str(identity), str(identity.to_public()))
-    except:
+    except Exception:
         return (
             "AGE-SECRET-KEY-1GQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
             "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",

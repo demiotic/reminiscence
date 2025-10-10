@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-10-00
+
 ### Added
 
 - **Context-specific similarity thresholds**
@@ -83,6 +85,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Storage layer refactoring**
+  - Split monolithic `lancedb.py` (1000+ lines) into modular architecture under `reminiscence/storage/lancedb/`:
+    - `backend.py` - Main LanceDBBackend class with singleton pattern and dual-table management
+    - `schema.py` - Arrow schema definitions for exact and semantic tables
+    - `serialization.py` - Result serialization with pickle, compression, and encryption
+    - `query_builder.py` - SQL query builder for context filtering, TTL checks, and cleanup
+    - `table_manager.py` - Table lifecycle management (create, search, add, delete)
+  - Each module now ~200 lines (down from 1000+), following Single Responsibility Principle
+  - **No breaking changes**: Public API remains identical
+
+- **Core API enhancement**
+  - Added optional `embedder` parameter to `Reminiscence.__init__()` for dependency injection
+  - Allows sharing embedder instances across multiple cache instances
+  - Example: `cache = Reminiscence(config, embedder=shared_embedder)`
+
 - **Types updated**
   - `CacheEntry` now includes optional `ttl_seconds` and `context_threshold` fields (backward compatible)
   - `LookupResult` now includes `ttl_remaining` field
@@ -121,6 +138,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security improvements (Bandit compliance)**
+  - Replaced hardcoded `/tmp` directory with `tempfile.gettempdir()` in FastEmbed cache path
+  - Added debug logging for all try-except-pass blocks to improve error visibility:
+    - Eviction cleanup failures during invalidation, TTL cleanup, and age-based cleanup
+    - Result size measurement failures in storage operations
+  - All silent exceptions now logged at DEBUG level for better observability
+
 - **Type corrections**
   - `AvailabilityCheck` parameter names (`ttl_remaining_seconds` not `ttl_remaining`)
   - `store_batch()` passes full entries list to storage (not single entry)
@@ -153,6 +177,7 @@ All changes are **100% backward compatible**. Existing code works unchanged:
 - Compression and encryption are disabled by default
 - New fields in `CacheEntry` are optional with sensible defaults
 - Batch methods work identically to before, new parameters are optional
+
 
 ## [0.4.0] - 2025-10-09
 

@@ -2,7 +2,7 @@
 
 import json
 import base64
-from typing import Any, Tuple
+from typing import Any, Tuple, List
 
 try:
     import orjson
@@ -168,8 +168,6 @@ class ResultSerializer:
             # NumPy array
             elif result_class_name == "numpy.ndarray":
                 try:
-                    import numpy as np
-
                     arrow_array = pa.array(result.flatten())
                     arrow_table = pa.Table.from_arrays([arrow_array], names=["values"])
                     sink = pa.BufferOutputStream()
@@ -222,6 +220,113 @@ class ResultSerializer:
                 raise
 
         return serialized, result_type
+
+    def serialize_batch(self, results: List[Any]) -> List[Tuple[str, str]]:
+        """Serialize multiple results in parallel."""
+        if not results:
+            return []
+
+        # For small batches, sequential
+        if len(results) <= 3:
+            return [self.serialize(result) for result in results]
+
+        # For larger batches with encryption: serialize first, then encrypt in batch
+        if self.encryptor:
+            from concurrent.futures import ThreadPoolExecutor
+
+            # Step 1: Serialize in parallel (without encryption)
+            temp_encryptor = self.encryptor
+            self.encryptor = None  # Temporarily disable encryption
+
+            with ThreadPoolExecutor(max_workers=temp_encryptor.max_workers) as executor:
+                serialized_list = list(executor.map(self.serialize, results))
+
+            self.encryptor = temp_encryptor  # Restore
+
+            # Step 2: Extract data and types
+            serialized_data = [s[0] for s in serialized_list]
+            result_types = [s[1] for s in serialized_list]
+
+            # Step 3: Encrypt in batch (parallel internally)
+            encrypted_data = self.encryptor.encrypt_batch(serialized_data)
+
+            # Step 4: Encode and add encrypted_ prefix
+            final_results = []
+            for encrypted_bytes, result_type in zip(encrypted_data, result_types):
+                encrypted_str = base64.b64encode(encrypted_bytes).decode("utf-8")
+                final_results.append((encrypted_str, f"encrypted_{result_type}"))
+
+            return final_results
+        else:
+            # Without encryption, sequential is fastest
+            return [self.serialize(result) for result in results]
+
+    def deserialize_batch(self, data_list: List[Tuple[str, str]]) -> List[Any]:
+        """Deserialize multiple results in parallel."""
+        if not data_list:
+            return []
+
+        # For small batches, sequential
+        if len(data_list) <= 3:
+            return [
+                self.deserialize(data, result_type) for data, result_type in data_list
+            ]
+
+        # For larger batches with encryption: decrypt in batch first, then deserialize
+        if self.encryptor:
+            from concurrent.futures import ThreadPoolExecutor
+
+            # Check if any are encrypted
+            encrypted_indices = []
+            _ = []
+
+            for i, (data, result_type) in enumerate(data_list):
+                if result_type.startswith("encrypted_"):
+                    encrypted_indices.append(i)
+
+            # If we have encrypted data, decrypt in batch
+            if encrypted_indices:
+                encrypted_bytes_list = []
+                for i in encrypted_indices:
+                    data, _ = data_list[i]
+                    encrypted_bytes = base64.b64decode(data.encode("utf-8"))
+                    encrypted_bytes_list.append(encrypted_bytes)
+
+                # Batch decrypt (parallel internally)
+                decrypted_strings = self.encryptor.decrypt_batch(encrypted_bytes_list)
+
+                # Build new data_list with decrypted data
+                decrypted_data_list = []
+                encrypted_idx = 0
+                for i, (data, result_type) in enumerate(data_list):
+                    if result_type.startswith("encrypted_"):
+                        original_type = result_type.replace("encrypted_", "")
+                        decrypted_data_list.append(
+                            (decrypted_strings[encrypted_idx], original_type)
+                        )
+                        encrypted_idx += 1
+                    else:
+                        decrypted_data_list.append((data, result_type))
+            else:
+                decrypted_data_list = data_list
+
+            # Now deserialize in parallel (no encryption)
+            temp_encryptor = self.encryptor
+            self.encryptor = None  # Temporarily disable to avoid recursive decrypt
+
+            with ThreadPoolExecutor(max_workers=temp_encryptor.max_workers) as executor:
+                deserialized = list(
+                    executor.map(
+                        lambda x: self.deserialize(x[0], x[1]), decrypted_data_list
+                    )
+                )
+
+            self.encryptor = temp_encryptor  # Restore
+            return deserialized
+        else:
+            return [
+                self.deserialize(data, result_type) for data, result_type in data_list
+            ]
 
     def _deserialize_nested_dict(self, data: str) -> dict:
         """Deserialize nested dict with special types."""

@@ -436,3 +436,40 @@ def sample_contexts():
         "sql_prod": {"agent": "sql", "db": "prod"},
         "sql_dev": {"agent": "sql", "db": "dev"},
     }
+
+
+@pytest.fixture(scope="session")
+def age_keypair():
+    """
+    Generate a real age keypair for testing.
+
+    Returns:
+        tuple: (private_key_string, public_key_string)
+    """
+    from pyrage import x25519
+
+    identity = x25519.Identity.generate()
+    recipient = identity.to_public()
+
+    return (str(identity), str(recipient))
+
+
+@pytest.fixture
+def age_encryption(age_keypair):
+    """AgeEncryption instance with real keypair."""
+    from reminiscence.encryption import AgeEncryption
+
+    private_key, public_key = age_keypair
+    return AgeEncryption(key=private_key)
+
+
+@pytest.fixture
+def age_private_key(age_keypair):
+    """Private key string."""
+    return age_keypair[0]
+
+
+@pytest.fixture
+def age_public_key(age_keypair):
+    """Public key string."""
+    return age_keypair[1]

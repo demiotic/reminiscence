@@ -671,3 +671,33 @@ class TestDualTableArchitecture:
         assert storage.count() == 0
         assert storage.exact_table.count_rows() == 0
         assert storage.semantic_table.count_rows() == 0
+
+
+class TestEncryptedStorage:
+    def test_add_and_search_encrypted_result(self, age_private_key):
+        from reminiscence import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
+
+        config = ReminiscenceConfig(
+            db_uri="memory://", encryption_enabled=True, encryption_key=age_private_key
+        )
+        storage = LanceDBBackend(config, embedding_dim=384)
+
+        entry = CacheEntry(
+            query_text="secret query",
+            context={"agent": "secure"},
+            embedding=[0.1] * 384,
+            result={"classified": "data"},
+            timestamp=time.time(),
+            metadata=None,
+        )
+        storage.add([entry])
+
+        results = storage.search(
+            embedding=[0.1] * 384,
+            context={"agent": "secure"},
+            limit=10,
+            similarity_threshold=0.5,
+        )
+        assert len(results) == 1
+        assert results[0].result == {"classified": "data"}

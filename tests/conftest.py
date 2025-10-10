@@ -9,8 +9,8 @@ from pathlib import Path
 
 from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.cache import CacheOperations
-from reminiscence.embeddings import create_embedder
-from reminiscence.storage import create_storage_backend
+from reminiscence.embeddings.fastembed import FastEmbedEmbedder
+from reminiscence.storage import LanceDBBackend
 from reminiscence.eviction import create_eviction_policy
 from reminiscence.metrics import CacheMetrics
 
@@ -22,15 +22,7 @@ from reminiscence.metrics import CacheMetrics
 
 @pytest.fixture(autouse=True)
 def clear_singletons():
-    """
-    Clear singleton instances between tests for isolation.
-
-    This ensures each test starts with a clean slate for:
-    - Storage backends (LanceDBBackend)
-    - OpenTelemetry exporters
-
-    autouse=True means this runs automatically for every test.
-    """
+    """Clear singleton instances between tests for isolation."""
     yield
 
     from reminiscence.storage.lancedb import LanceDBBackend
@@ -41,13 +33,131 @@ def clear_singletons():
 
 
 # ============================================================================
+# SHARED EMBEDDER (session-scoped) - HUGE SPEEDUP
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def shared_embedder():
+    """Load embedder once per test session (~2s saved per test)."""
+    config = ReminiscenceConfig(
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    return FastEmbedEmbedder(config)
+
+
+@pytest.fixture(scope="session")
+def embedding_dim(shared_embedder):
+    """Get embedding dimension once."""
+    return len(shared_embedder.embed("test"))
+
+
+# ============================================================================
+# REMINISCENCE FACTORY (uses shared embedder)
+# ============================================================================
+
+
+@pytest.fixture
+def reminiscence_factory(shared_embedder):
+    """Factory to create Reminiscence with shared embedder."""
+    created_instances = []
+
+    def _create(**config_kwargs):
+        config_kwargs.setdefault("db_uri", "memory://")
+        config_kwargs.setdefault("log_level", "WARNING")
+        config_kwargs.setdefault("otel_enabled", False)
+
+        config = ReminiscenceConfig(**config_kwargs)
+        cache = Reminiscence(config, embedder=shared_embedder)
+
+        created_instances.append(cache)
+        return cache
+
+    yield _create
+
+    for cache in created_instances:
+        if hasattr(cache, "backend"):
+            cache.backend.clear()
+    LanceDBBackend._clear_instances()
+
+
+@pytest.fixture
+def reminiscence(reminiscence_factory):
+    """Default Reminiscence instance."""
+    return reminiscence_factory()
+
+
+# ============================================================================
+# CACHE OPERATIONS FIXTURES (uses shared embedder)
+# ============================================================================
+
+
+@pytest.fixture
+def ops_factory(shared_embedder, embedding_dim):
+    """Factory to create CacheOperations with shared embedder."""
+    created_backends = []
+
+    def _create(
+        eviction_policy="fifo", max_entries=None, ttl_seconds=None, **config_kwargs
+    ):
+        config_kwargs.setdefault("db_uri", "memory://")
+        config_kwargs.setdefault("log_level", "WARNING")
+        config_kwargs.setdefault("otel_enabled", False)
+
+        config = ReminiscenceConfig(
+            eviction_policy=eviction_policy,
+            max_entries=max_entries,
+            ttl_seconds=ttl_seconds,
+            **config_kwargs,
+        )
+
+        storage = LanceDBBackend(config, embedding_dim)
+        created_backends.append(storage)
+
+        eviction = create_eviction_policy(eviction_policy)
+        metrics = CacheMetrics()
+
+        return CacheOperations(storage, shared_embedder, eviction, config, metrics)
+
+    yield _create
+
+    for backend in created_backends:
+        backend.clear()
+    LanceDBBackend._clear_instances()
+
+
+@pytest.fixture
+def cache_ops(ops_factory):
+    """Default CacheOperations (no eviction limit)."""
+    return ops_factory("fifo", max_entries=None)
+
+
+@pytest.fixture
+def fifo_ops(ops_factory):
+    """FIFO CacheOperations with max_entries=3."""
+    return ops_factory("fifo", max_entries=3, similarity_threshold=0.95)
+
+
+@pytest.fixture
+def lru_ops(ops_factory):
+    """LRU CacheOperations with max_entries=3."""
+    return ops_factory("lru", max_entries=3, similarity_threshold=0.95)
+
+
+@pytest.fixture
+def lfu_ops(ops_factory):
+    """LFU CacheOperations with max_entries=3."""
+    return ops_factory("lfu", max_entries=3, similarity_threshold=0.95)
+
+
+# ============================================================================
 # STRUCTLOG RESET FIXTURES
 # ============================================================================
 
 
 @pytest.fixture
 def reset_config():
-    """Reset configuration singleton to force reload."""
+    """Reset configuration singleton."""
     from reminiscence.config import ReminiscenceConfig
 
     if hasattr(ReminiscenceConfig, "_instance"):
@@ -57,16 +167,9 @@ def reset_config():
 
 @pytest.fixture
 def reset_structlog():
-    """
-    Reset structlog configuration before and after each test.
-
-    This ensures complete isolation between tests that use different
-    logging configurations (JSON vs text).
-    """
+    """Reset structlog configuration."""
     structlog.reset_defaults()
-
     structlog._config._CONFIG = structlog._config._Configuration()
-
     logging.root.handlers = []
     logging.root.setLevel(logging.WARNING)
 
@@ -79,12 +182,7 @@ def reset_structlog():
 
 @pytest.fixture
 def json_logging_env(reset_structlog, reset_config, monkeypatch):
-    """
-    Configure environment for JSON logging tests.
-
-    Sets REMINISCENCE_JSON_LOGS=true and REMINISCENCE_LOG_LEVEL=INFO
-    before any code runs, ensuring proper structlog configuration.
-    """
+    """Configure JSON logging."""
     monkeypatch.setenv("REMINISCENCE_JSON_LOGS", "true")
     monkeypatch.setenv("REMINISCENCE_LOG_LEVEL", "INFO")
 
@@ -97,12 +195,7 @@ def json_logging_env(reset_structlog, reset_config, monkeypatch):
 
 @pytest.fixture
 def text_logging_env(reset_structlog, reset_config, monkeypatch):
-    """
-    Configure environment for text logging tests.
-
-    Sets REMINISCENCE_JSON_LOGS=false and REMINISCENCE_LOG_LEVEL=INFO
-    before any code runs, ensuring proper structlog configuration.
-    """
+    """Configure text logging."""
     monkeypatch.setenv("REMINISCENCE_JSON_LOGS", "false")
     monkeypatch.setenv("REMINISCENCE_LOG_LEVEL", "INFO")
 
@@ -127,281 +220,43 @@ def temp_cache_dir():
 
 
 # ============================================================================
-# CONFIG FIXTURES
-# ============================================================================
-
-
-@pytest.fixture
-def memory_config():
-    """Configuration for in-memory cache (fast for tests)."""
-    return ReminiscenceConfig(
-        db_uri="memory://",
-        similarity_threshold=0.75,
-        enable_metrics=True,
-        log_level="WARNING",
-        ttl_seconds=None,
-        otel_enabled=False,  # Explicitly disable OTEL
-    )
-
-
-@pytest.fixture
-def disk_config(temp_cache_dir):
-    """Configuration for disk-based cache."""
-    return ReminiscenceConfig(
-        db_uri=str(Path(temp_cache_dir) / "test_cache.db"),
-        similarity_threshold=0.75,
-        enable_metrics=True,
-        log_level="WARNING",
-        ttl_seconds=None,
-        otel_enabled=False,  # Explicitly disable OTEL
-    )
-
-
-# ============================================================================
-# REMINISCENCE FIXTURES - High-level API
+# ENCRYPTION FIXTURES
 # ============================================================================
 
 
 @pytest.fixture(scope="session")
-def reminiscence_memory_session():
-    """
-    Shared in-memory Reminiscence instance (loaded once per session).
+def age_keypair():
+    """Generate real age keypair once per session."""
+    try:
+        from pyrage import x25519
 
-    Uses scope="session" to load the embeddings model only once
-    and reuse it across all tests, improving performance.
-    """
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        similarity_threshold=0.75,
-        enable_metrics=True,
-        log_level="WARNING",
-        ttl_seconds=None,
-        otel_enabled=False,
-    )
-    return Reminiscence(config)
-
-
-@pytest.fixture(scope="module")
-def reminiscence_memory_module():
-    """
-    Shared Reminiscence instance for entire module (loads model once).
-
-    Uses scope="module" to load embeddings model only once per test module,
-    dramatically improving test performance (load time ~2s saved per test).
-    """
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        similarity_threshold=0.75,
-        enable_metrics=True,
-        log_level="WARNING",
-        otel_enabled=False,
-    )
-    cache = Reminiscence(config)
-
-    return cache
-
-
-@pytest.fixture
-def reminiscence(reminiscence_memory_module):
-    """
-    Clean cache for each test, but reuses the same model.
-
-    This fixture:
-    1. Reuses the module-scoped instance (no model reload)
-    2. Clears cache before each test (isolation)
-    3. Resets metrics before each test (clean counters)
-
-    Result: Fast tests (~50ms) with proper isolation.
-    """
-    reminiscence_memory_module.clear()
-
-    if reminiscence_memory_module.metrics:
-        reminiscence_memory_module.metrics.reset()
-
-    yield reminiscence_memory_module
-
-
-@pytest.fixture
-def reminiscence_disk(disk_config):
-    """Disk-based Reminiscence instance (new for each test)."""
-    return Reminiscence(disk_config)
-
-
-# ============================================================================
-# CACHE OPERATIONS FIXTURES - Low-level API
-# ============================================================================
-
-
-@pytest.fixture(scope="module")
-def cache_ops_module():
-    """Shared CacheOperations for module (loads model once)."""
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        similarity_threshold=0.75,
-        enable_metrics=True,
-        log_level="WARNING",
-        max_entries=10,
-        eviction_policy="fifo",
-        otel_enabled=False,
-    )
-
-    embedder = create_embedder(config)
-    storage = create_storage_backend(config, embedder.embedding_dim)
-    eviction = create_eviction_policy(config.eviction_policy)
-    metrics = CacheMetrics()
-
-    return CacheOperations(
-        storage=storage,
-        embedder=embedder,
-        eviction=eviction,
-        config=config,
-        metrics=metrics,
-    )
-
-
-@pytest.fixture
-def cache_ops(cache_ops_module):
-    """Clean CacheOps for each test, reuses model."""
-    cache_ops_module.storage.clear()
-    cache_ops_module.metrics.reset()
-
-    cache_ops_module.eviction = create_eviction_policy(
-        cache_ops_module.config.eviction_policy
-    )
-
-    yield cache_ops_module
-
-
-# ============================================================================
-# EVICTION POLICY FIXTURES
-# ============================================================================
-
-
-@pytest.fixture(scope="module")
-def fifo_ops_module():
-    """FIFO cache operations (model loaded once per module)."""
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        max_entries=3,
-        eviction_policy="fifo",
-        enable_metrics=True,
-        similarity_threshold=0.95,
-        log_level="WARNING",
-        otel_enabled=False,
-    )
-
-    embedder = create_embedder(config)
-    storage = create_storage_backend(config, embedder.embedding_dim)
-    eviction = create_eviction_policy("fifo")
-    metrics = CacheMetrics()
-
-    return CacheOperations(storage, embedder, eviction, config, metrics)
-
-
-@pytest.fixture
-def fifo_ops(fifo_ops_module):
-    """Clean FIFO ops for each test, reuses model."""
-    fifo_ops_module.storage.clear()
-    fifo_ops_module.metrics.reset()
-    fifo_ops_module.eviction = create_eviction_policy("fifo")
-    yield fifo_ops_module
-
-
-@pytest.fixture(scope="module")
-def lru_ops_module():
-    """LRU cache operations (model loaded once per module)."""
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        max_entries=3,
-        eviction_policy="lru",
-        enable_metrics=True,
-        similarity_threshold=0.95,
-        log_level="WARNING",
-        otel_enabled=False,
-    )
-
-    embedder = create_embedder(config)
-    storage = create_storage_backend(config, embedder.embedding_dim)
-    eviction = create_eviction_policy("lru")
-    metrics = CacheMetrics()
-
-    return CacheOperations(storage, embedder, eviction, config, metrics)
-
-
-@pytest.fixture
-def lru_ops(lru_ops_module):
-    """Clean LRU ops for each test, reuses model."""
-    lru_ops_module.storage.clear()
-    lru_ops_module.metrics.reset()
-    lru_ops_module.eviction = create_eviction_policy("lru")
-    yield lru_ops_module
-
-
-@pytest.fixture(scope="module")
-def lfu_ops_module():
-    """LFU cache operations (model loaded once per module)."""
-    config = ReminiscenceConfig(
-        db_uri="memory://",
-        max_entries=3,
-        eviction_policy="lfu",
-        enable_metrics=True,
-        similarity_threshold=0.95,
-        log_level="WARNING",
-        otel_enabled=False,
-    )
-
-    embedder = create_embedder(config)
-    storage = create_storage_backend(config, embedder.embedding_dim)
-    eviction = create_eviction_policy("lfu")
-    metrics = CacheMetrics()
-
-    return CacheOperations(storage, embedder, eviction, config, metrics)
-
-
-@pytest.fixture
-def lfu_ops(lfu_ops_module):
-    """Clean LFU ops for each test, reuses model."""
-    lfu_ops_module.storage.clear()
-    lfu_ops_module.metrics.reset()
-    lfu_ops_module.eviction = create_eviction_policy("lfu")
-    yield lfu_ops_module
-
-
-@pytest.fixture
-def ops_factory():
-    """
-    Factory fixture for creating CacheOperations with custom config.
-
-    Use this for tests that need non-standard max_entries or other config.
-
-    Usage:
-        def test_something(ops_factory):
-            ops = ops_factory("fifo", max_entries=5)
-            ops.store(...)
-    """
-
-    def _create(eviction_policy: str = "fifo", max_entries: int = 3, **kwargs):
-        # Ensure OTEL is disabled unless explicitly enabled
-        kwargs.setdefault("otel_enabled", False)
-
-        config = ReminiscenceConfig(
-            db_uri="memory://",
-            max_entries=max_entries,
-            eviction_policy=eviction_policy,
-            enable_metrics=True,
-            similarity_threshold=0.95,
-            log_level="WARNING",
-            **kwargs,
+        identity = x25519.Identity.generate()
+        return (str(identity), str(identity.to_public()))
+    except:
+        return (
+            "AGE-SECRET-KEY-1GQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+            "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         )
 
-        embedder = create_embedder(config)
-        storage = create_storage_backend(config, embedder.embedding_dim)
-        eviction = create_eviction_policy(eviction_policy)
-        metrics = CacheMetrics()
 
-        return CacheOperations(storage, embedder, eviction, config, metrics)
+@pytest.fixture
+def age_private_key(age_keypair):
+    """Private key string."""
+    return age_keypair[0]
 
-    return _create
+
+@pytest.fixture
+def age_public_key(age_keypair):
+    """Public key string."""
+    return age_keypair[1]
+
+
+@pytest.fixture
+def age_encryption(age_private_key):
+    """AgeEncryption instance."""
+    from reminiscence.encryption import AgeEncryption
+
+    return AgeEncryption(key=age_private_key)
 
 
 # ============================================================================
@@ -436,40 +291,3 @@ def sample_contexts():
         "sql_prod": {"agent": "sql", "db": "prod"},
         "sql_dev": {"agent": "sql", "db": "dev"},
     }
-
-
-@pytest.fixture(scope="session")
-def age_keypair():
-    """
-    Generate a real age keypair for testing.
-
-    Returns:
-        tuple: (private_key_string, public_key_string)
-    """
-    from pyrage import x25519
-
-    identity = x25519.Identity.generate()
-    recipient = identity.to_public()
-
-    return (str(identity), str(recipient))
-
-
-@pytest.fixture
-def age_encryption(age_keypair):
-    """AgeEncryption instance with real keypair."""
-    from reminiscence.encryption import AgeEncryption
-
-    private_key, public_key = age_keypair
-    return AgeEncryption(key=private_key)
-
-
-@pytest.fixture
-def age_private_key(age_keypair):
-    """Private key string."""
-    return age_keypair[0]
-
-
-@pytest.fixture
-def age_public_key(age_keypair):
-    """Public key string."""
-    return age_keypair[1]

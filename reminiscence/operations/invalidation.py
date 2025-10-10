@@ -173,8 +173,12 @@ class InvalidationOperations:
                 )
                 try:
                     self.eviction.on_evict(entry_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        "eviction_state_cleanup_failed_during_invalidation",
+                        entry_id=entry_id,
+                        error=str(e),
+                    )
 
             deleted = before - self.storage.count()
             invalidate_ms = (time.time() - invalidate_start) * 1000

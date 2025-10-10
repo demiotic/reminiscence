@@ -69,3 +69,10 @@ def get_fingerprint_cache_info():
         >>> print(f"Hit rate: {info.hits / (info.hits + info.misses):.2%}")
     """
     return _compute_fingerprint.cache_info()
+
+
+def compute_query_hash(query_text: str, context: Dict[str, Any]) -> str:
+    """Compute hash of query + context for exact matching."""
+    context_json = json.dumps(context, sort_keys=True)
+    data = f"{query_text}:{context_json}"
+    return hashlib.sha256(data.encode()).hexdigest()

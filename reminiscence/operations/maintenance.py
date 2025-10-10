@@ -78,8 +78,12 @@ class MaintenanceOperations:
                     )
                     try:
                         self.eviction.on_evict(entry_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            "eviction_state_cleanup_failed_during_ttl_cleanup",
+                            entry_id=entry_id,
+                            error=str(e),
+                        )
 
                 mask = pc.greater(exact_table["timestamp"], cutoff)
 
@@ -111,8 +115,12 @@ class MaintenanceOperations:
                     )
                     try:
                         self.eviction.on_evict(entry_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            "eviction_state_cleanup_failed_during_age_cleanup",
+                            entry_id=entry_id,
+                            error=str(e),
+                        )
 
                 mask = pc.greater(semantic_table["timestamp"], cutoff)
 

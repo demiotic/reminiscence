@@ -2,6 +2,7 @@
 
 import os
 import time
+import tempfile
 from typing import List
 from functools import cached_property
 
@@ -54,8 +55,9 @@ class FastEmbedEmbedder(EmbeddingModel):
     @cached_property
     def _model(self) -> TextEmbedding:
         """Lazy-load FastEmbed model."""
-        cache_dir = os.getenv("FASTEMBED_CACHE_PATH", "/tmp/fastembed_cache")
-        os.makedirs(cache_dir, exist_ok=True)
+        cache_dir = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(
+            tempfile.gettempdir(), "fastembed_cache"
+        )
 
         logger.info(
             "loading_model",

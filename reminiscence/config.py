@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 
@@ -32,6 +33,10 @@ class ReminiscenceConfig:
     - REMINISCENCE_OTEL_HEADERS: OTLP headers (key1=value1,key2=value2)
     - REMINISCENCE_OTEL_SERVICE_NAME: Service name for telemetry
     - REMINISCENCE_OTEL_EXPORT_INTERVAL_MS: Export interval in milliseconds
+    - REMINISCENCE_ENCRYPTION_ENABLED: Enable encryption (true/false)
+    - REMINISCENCE_ENCRYPTION_KEY: Encryption key string, ARN, URI, or file path
+    - REMINISCENCE_ENCRYPTION_BACKEND: Backend (age/aws-kms/gcp-kms/azure-keyvault/vault)
+    - REMINISCENCE_ENCRYPTION_MAX_WORKERS: Max threads for batch encryption
     """
 
     # Model
@@ -72,6 +77,76 @@ class ReminiscenceConfig:
     otel_headers: Optional[str] = None
     otel_service_name: str = "reminiscence"
     otel_export_interval_ms: int = 60000
+
+    # Encryption
+    encryption_enabled: bool = False
+    encryption_key: Optional[str] = None
+    encryption_backend: Optional[str] = None
+    encryption_max_workers: int = 4
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        # Validate encryption settings
+        if self.encryption_enabled and not self.encryption_key:
+            raise ValueError("encryption_key is required when encryption_enabled=True")
+
+        # Auto-detect encryption backend if not specified
+        if self.encryption_enabled and not self.encryption_backend:
+            self.encryption_backend = self._detect_encryption_backend()
+
+    def _detect_encryption_backend(self) -> str:
+        """
+        Auto-detect encryption backend from encryption_key format.
+
+        Returns:
+            str: Detected backend name
+
+        Raises:
+            ValueError: If backend cannot be detected
+        """
+        if not self.encryption_key:
+            raise ValueError("Cannot detect backend: encryption_key is None")
+
+        key = self.encryption_key
+
+        # File path with file:// prefix
+        if key.startswith("file://"):
+            file_path = key[7:]  # Remove file:// prefix
+            with open(file_path, "r") as f:
+                key = f.read().strip()
+                self.encryption_key = key  # Update to actual key content
+
+        # Check if it's a file path without file:// prefix
+        elif Path(key).is_file():
+            with open(key, "r") as f:
+                key = f.read().strip()
+                self.encryption_key = key
+
+        # AWS KMS ARN
+        if key.startswith("arn:aws:kms:"):
+            return "aws-kms"
+
+        # GCP KMS resource name
+        if key.startswith("projects/") and "/cryptoKeys/" in key:
+            return "gcp-kms"
+
+        # Azure Key Vault URI
+        if key.startswith("https://") and "vault.azure.net" in key:
+            return "azure-keyvault"
+
+        # HashiCorp Vault path
+        if key.startswith("secret/"):
+            return "vault"
+
+        # Age key (public or private)
+        if key.startswith("age1") or key.startswith("AGE-SECRET-KEY-"):
+            return "age"
+
+        raise ValueError(
+            "Cannot auto-detect encryption backend from key format. "
+            "Please specify encryption_backend explicitly. "
+            "Supported: age, aws-kms, gcp-kms, azure-keyvault, vault"
+        )
 
     @classmethod
     def load(cls) -> "ReminiscenceConfig":
@@ -193,6 +268,25 @@ class ReminiscenceConfig:
                 os.getenv(
                     "REMINISCENCE_OTEL_EXPORT_INTERVAL_MS",
                     str(defaults.otel_export_interval_ms),
+                )
+            ),
+            # Encryption
+            encryption_enabled=parse_bool(
+                os.getenv(
+                    "REMINISCENCE_ENCRYPTION_ENABLED",
+                    str(defaults.encryption_enabled).lower(),
+                )
+            ),
+            encryption_key=parse_str_or_none(
+                os.getenv("REMINISCENCE_ENCRYPTION_KEY", "none")
+            ),
+            encryption_backend=parse_str_or_none(
+                os.getenv("REMINISCENCE_ENCRYPTION_BACKEND", "none")
+            ),
+            encryption_max_workers=int(
+                os.getenv(
+                    "REMINISCENCE_ENCRYPTION_MAX_WORKERS",
+                    str(defaults.encryption_max_workers),
                 )
             ),
         )

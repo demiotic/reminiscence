@@ -1,9 +1,10 @@
 """Cache configuration."""
 
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 
 @dataclass
@@ -16,6 +17,7 @@ class ReminiscenceConfig:
     - REMINISCENCE_EMBEDDING_BACKEND: Backend (fastembed or auto)
     - REMINISCENCE_EMBEDDING_BATCH_SIZE: Batch size for embedding generation (1-512)
     - REMINISCENCE_SIMILARITY_THRESHOLD: Similarity threshold (0.0-1.0)
+    - REMINISCENCE_CONTEXT_THRESHOLDS: JSON dict of context-specific thresholds
     - REMINISCENCE_DB_URI: Database URI
     - REMINISCENCE_TABLE_NAME: Table name
     - REMINISCENCE_ENABLE_METRICS: Enable metrics (true/false)
@@ -43,68 +45,57 @@ class ReminiscenceConfig:
     - REMINISCENCE_COMPRESSION_LEVEL: Compression level (1-22 for zstd, 1-9 for gzip, default: 3)
     """
 
-    # Model
     model_name: Optional[str] = None
     embedding_backend: str = "fastembed"
     embedding_batch_size: int = 32
-    warm_up_embedder: bool = True  # NEW
+    warm_up_embedder: bool = True
 
-    # Cache
     similarity_threshold: float = 0.80
+    context_thresholds: Dict[str, float] = field(default_factory=dict)
+
     db_uri: str = "memory://"
     table_name: str = "semantic_cache"
     enable_metrics: bool = True
     ttl_seconds: Optional[int] = None
 
-    # Logging
     log_level: str = "INFO"
     json_logs: bool = False
 
-    # Cleanup
     cleanup_threshold: float = 0.3
 
-    # Index
     auto_create_index: bool = False
     index_threshold_entries: int = 256
     index_num_partitions: int = 256
 
-    # Limits
     max_entries: Optional[int] = 1_000
     eviction_policy: str = "fifo"
 
-    # Scheduler
     cleanup_interval_seconds: Optional[int] = None
     cleanup_initial_delay: int = 60
 
-    # OpenTelemetry
     otel_enabled: bool = False
     otel_endpoint: str = "http://localhost:4318/v1/metrics"
     otel_headers: Optional[str] = None
     otel_service_name: str = "reminiscence"
     otel_export_interval_ms: int = 60000
 
-    # Encryption
     encryption_enabled: bool = False
     encryption_key: Optional[str] = None
     encryption_backend: Optional[str] = None
     encryption_max_workers: int = 4
 
-    # Compression (NEW)
     compression_enabled: bool = False
     compression_algorithm: str = "zstd"
     compression_level: int = 3
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        # Validate encryption settings
         if self.encryption_enabled and not self.encryption_key:
             raise ValueError("encryption_key is required when encryption_enabled=True")
 
-        # Auto-detect encryption backend if not specified
         if self.encryption_enabled and not self.encryption_backend:
             self.encryption_backend = self._detect_encryption_backend()
 
-        # Validate compression settings
         if self.compression_enabled:
             valid_algorithms = ["zstd", "gzip", "none"]
             if self.compression_algorithm not in valid_algorithms:
@@ -120,6 +111,7 @@ class ReminiscenceConfig:
                     f"Invalid compression_level for zstd: {self.compression_level}. "
                     "Must be between 1 and 22."
                 )
+
             elif self.compression_algorithm == "gzip" and not (
                 1 <= self.compression_level <= 9
             ):
@@ -128,51 +120,43 @@ class ReminiscenceConfig:
                     "Must be between 1 and 9."
                 )
 
+        for key, threshold in self.context_thresholds.items():
+            if not (0.0 <= threshold <= 1.0):
+                raise ValueError(
+                    f"Invalid threshold for context '{key}': {threshold}. "
+                    "Must be between 0.0 and 1.0."
+                )
+
     def _detect_encryption_backend(self) -> str:
-        """
-        Auto-detect encryption backend from encryption_key format.
-
-        Returns:
-            str: Detected backend name
-
-        Raises:
-            ValueError: If backend cannot be detected
-        """
+        """Auto-detect encryption backend from encryption_key format."""
         if not self.encryption_key:
             raise ValueError("Cannot detect backend: encryption_key is None")
 
         key = self.encryption_key
 
-        # File path with file:// prefix
         if key.startswith("file://"):
-            file_path = key[7:]  # Remove file:// prefix
+            file_path = key[7:]
             with open(file_path, "r") as f:
                 key = f.read().strip()
-                self.encryption_key = key  # Update to actual key content
+            self.encryption_key = key
 
-        # Check if it's a file path without file:// prefix
         elif Path(key).is_file():
             with open(key, "r") as f:
                 key = f.read().strip()
-                self.encryption_key = key
+            self.encryption_key = key
 
-        # AWS KMS ARN
         if key.startswith("arn:aws:kms:"):
             return "aws-kms"
 
-        # GCP KMS resource name
         if key.startswith("projects/") and "/cryptoKeys/" in key:
             return "gcp-kms"
 
-        # Azure Key Vault URI
         if key.startswith("https://") and "vault.azure.net" in key:
             return "azure-keyvault"
 
-        # HashiCorp Vault path
         if key.startswith("secret/"):
             return "vault"
 
-        # Age key (public or private)
         if key.startswith("age1") or key.startswith("AGE-SECRET-KEY-"):
             return "age"
 
@@ -182,25 +166,49 @@ class ReminiscenceConfig:
             "Supported: age, aws-kms, gcp-kms, azure-keyvault, vault"
         )
 
+    def get_threshold_for_context(self, context: Dict[str, Any]) -> float:
+        """
+        Get similarity threshold for given context.
+
+        Matches context keys against configured thresholds.
+        Returns most specific match or default similarity_threshold.
+        """
+        if not self.context_thresholds:
+            return self.similarity_threshold
+
+        for pattern, threshold in self.context_thresholds.items():
+            if ":" in pattern:
+                key, value = pattern.split(":", 1)
+                if key in context and str(context[key]) == value:
+                    return threshold
+            elif pattern in context:
+                return threshold
+
+        return self.similarity_threshold
+
     @classmethod
     def load(cls) -> "ReminiscenceConfig":
         """Load configuration from environment variables."""
         defaults = cls()
 
         def parse_bool(value: str) -> bool:
-            """Parse boolean from string."""
             return value.lower() in ("true", "1", "yes", "on")
 
         def parse_int_or_none(value: str) -> Optional[int]:
-            """Parse optional int from string."""
             return None if value.lower() == "none" else int(value)
 
         def parse_str_or_none(value: str) -> Optional[str]:
-            """Parse optional string from string."""
             return None if value.lower() in ("none", "") else value
 
+        def parse_context_thresholds(value: str) -> Dict[str, float]:
+            if not value or value.lower() == "none":
+                return {}
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+
         return cls(
-            # Model
             model_name=parse_str_or_none(os.getenv("REMINISCENCE_MODEL_NAME", "none")),
             embedding_backend=os.getenv(
                 "REMINISCENCE_EMBEDDING_BACKEND", defaults.embedding_backend
@@ -217,12 +225,14 @@ class ReminiscenceConfig:
                     str(defaults.warm_up_embedder).lower(),
                 )
             ),
-            # Cache
             similarity_threshold=float(
                 os.getenv(
                     "REMINISCENCE_SIMILARITY_THRESHOLD",
                     str(defaults.similarity_threshold),
                 )
+            ),
+            context_thresholds=parse_context_thresholds(
+                os.getenv("REMINISCENCE_CONTEXT_THRESHOLDS", "{}")
             ),
             db_uri=os.getenv("REMINISCENCE_DB_URI", defaults.db_uri),
             table_name=os.getenv("REMINISCENCE_TABLE_NAME", defaults.table_name),
@@ -237,12 +247,10 @@ class ReminiscenceConfig:
                     str(defaults.ttl_seconds) if defaults.ttl_seconds else "none",
                 )
             ),
-            # Logging
             log_level=os.getenv("REMINISCENCE_LOG_LEVEL", defaults.log_level).upper(),
             json_logs=parse_bool(
                 os.getenv("REMINISCENCE_JSON_LOGS", str(defaults.json_logs).lower())
             ),
-            # Index
             auto_create_index=parse_bool(
                 os.getenv(
                     "REMINISCENCE_AUTO_CREATE_INDEX",
@@ -261,7 +269,6 @@ class ReminiscenceConfig:
                     str(defaults.index_num_partitions),
                 )
             ),
-            # Limits
             max_entries=parse_int_or_none(
                 os.getenv(
                     "REMINISCENCE_MAX_ENTRIES",
@@ -271,7 +278,6 @@ class ReminiscenceConfig:
             eviction_policy=os.getenv(
                 "REMINISCENCE_EVICTION_POLICY", defaults.eviction_policy
             ).lower(),
-            # Scheduler
             cleanup_interval_seconds=parse_int_or_none(
                 os.getenv(
                     "REMINISCENCE_CLEANUP_INTERVAL_SECONDS",
@@ -286,7 +292,6 @@ class ReminiscenceConfig:
                     str(defaults.cleanup_initial_delay),
                 )
             ),
-            # OpenTelemetry
             otel_enabled=parse_bool(
                 os.getenv(
                     "REMINISCENCE_OTEL_ENABLED",
@@ -310,7 +315,6 @@ class ReminiscenceConfig:
                     str(defaults.otel_export_interval_ms),
                 )
             ),
-            # Encryption
             encryption_enabled=parse_bool(
                 os.getenv(
                     "REMINISCENCE_ENCRYPTION_ENABLED",
@@ -329,7 +333,6 @@ class ReminiscenceConfig:
                     str(defaults.encryption_max_workers),
                 )
             ),
-            # Compression (NEW)
             compression_enabled=parse_bool(
                 os.getenv(
                     "REMINISCENCE_COMPRESSION_ENABLED",

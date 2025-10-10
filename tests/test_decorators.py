@@ -20,7 +20,7 @@ def reminiscence_session_local():
         db_uri="memory://",
         similarity_threshold=0.75,
         enable_metrics=True,
-        log_level="DEBUG",
+        log_level="WARNING",
     )
     return Reminiscence(config)
 

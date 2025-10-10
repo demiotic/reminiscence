@@ -4,7 +4,7 @@ import time
 import json
 from typing import Optional, Dict, Any, List
 
-from .types import LookupResult, CacheEntry
+from .types import LookupResult, CacheEntry, BulkInvalidatePattern
 from .utils.logging import get_logger
 from .utils.query_detection import should_use_exact_mode
 
@@ -22,6 +22,16 @@ class CacheOperations:
         config,
         metrics=None,
     ):
+        """
+        Initialize cache operations.
+
+        Args:
+            storage: Storage backend instance
+            embedder: Embedding model instance
+            eviction: Eviction policy instance
+            config: Configuration object
+            metrics: Optional metrics tracker
+        """
         self.storage = storage
         self.embedder = embedder
         self.eviction = eviction
@@ -85,7 +95,16 @@ class CacheOperations:
             logger.warning("failed_to_sync_eviction_state", error=str(e), exc_info=True)
 
     def _generate_entry_id(self, query: str, context: Any) -> str:
-        """Generate consistent entry ID for eviction tracking."""
+        """
+        Generate consistent entry ID for eviction tracking.
+
+        Args:
+            query: Query text
+            context: Context dict or JSON string
+
+        Returns:
+            Unique entry identifier string
+        """
         if isinstance(context, str):
             context_str = context
         else:
@@ -108,20 +127,22 @@ class CacheOperations:
         context: Optional[Dict[str, Any]] = None,
         similarity_threshold: Optional[float] = None,
         query_mode: str = "semantic",
-        _track_metrics: bool = True,
+        track_metrics: bool = True,
     ) -> LookupResult:
         """
         Search cache by query with exact context matching.
+
+        Supports context-specific similarity thresholds and per-entry TTL checking.
 
         Args:
             query: Query text to search
             context: Context dict for exact matching
             similarity_threshold: Minimum similarity score (overrides config)
-            query_mode: Query matching strategy
-            _track_metrics: Internal flag to control metrics tracking
+            query_mode: Query matching strategy (semantic, exact, auto)
+            track_metrics: Internal flag to control metrics tracking
 
         Returns:
-            LookupResult with hit status and data
+            LookupResult with hit status and cached data if found
         """
         start_time = time.time()
         context = context or {}
@@ -139,17 +160,15 @@ class CacheOperations:
             if cache_count == 0:
                 logger.debug("lookup_miss_empty_cache")
                 return self._miss(
-                    "cache_empty", start_time, track_metrics=_track_metrics
+                    "cache_empty", start_time, track_metrics=track_metrics
                 )
 
             logger.debug("cache_size", entries=cache_count)
 
-            # Handle auto mode with intelligent detection
             actual_mode = query_mode
             if query_mode == "auto":
                 use_exact = should_use_exact_mode(query)
                 actual_mode = "exact" if use_exact else "semantic"
-
                 logger.debug(
                     "auto_mode_detected",
                     query_preview=query[:50],
@@ -157,7 +176,6 @@ class CacheOperations:
                     query_length=len(query),
                 )
 
-            # Generate embedding only for semantic mode
             embedding = None
             if actual_mode == "semantic":
                 embed_start = time.time()
@@ -172,7 +190,18 @@ class CacheOperations:
             else:
                 logger.debug("embedding_skipped_exact_mode")
 
-            threshold = similarity_threshold or self.config.similarity_threshold
+            if similarity_threshold is None:
+                threshold = self.config.get_threshold_for_context(context)
+            else:
+                threshold = similarity_threshold
+
+            logger.debug(
+                "using_threshold",
+                threshold=threshold,
+                source="context_specific"
+                if similarity_threshold is None and self.config.context_thresholds
+                else "default",
+            )
 
             search_start = time.time()
             candidates = self.storage.search(
@@ -193,7 +222,7 @@ class CacheOperations:
                     search_ms=round(search_ms, 1),
                     threshold=threshold,
                 )
-                return self._miss(reason, start_time, track_metrics=_track_metrics)
+                return self._miss(reason, start_time, track_metrics=track_metrics)
 
             logger.debug(
                 "lookup_candidates_found",
@@ -201,7 +230,7 @@ class CacheOperations:
                 search_ms=round(search_ms, 1),
             )
 
-            return self._process_hit(candidates[0], start_time, _track_metrics)
+            return self._process_hit(candidates[0], start_time, track_metrics)
 
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
@@ -214,35 +243,62 @@ class CacheOperations:
                 latency_ms=round(elapsed_ms, 1),
                 exc_info=True,
             )
-            if self.metrics and _track_metrics:
+
+            if self.metrics and track_metrics:
                 self.metrics.misses += 1
                 self.metrics.record_lookup_latency(elapsed_ms)
                 self.metrics.lookup_errors += 1
+
             return LookupResult(hit=False)
 
     def _process_hit(
         self, best: CacheEntry, start_time: float, track_metrics: bool
     ) -> LookupResult:
-        """Process cache hit with TTL check and metrics."""
-        if self._is_expired(best):
-            logger.debug(
-                "lookup_miss_expired",
-                query_preview=best.query_text[:50],
-                age_seconds=round(best.age_seconds, 1) if best.age_seconds else 0,
-                ttl_seconds=self.config.ttl_seconds,
-            )
-            return self._miss("expired", start_time, track_metrics=track_metrics)
+        """
+        Process cache hit with per-entry TTL check and metrics.
+
+        Args:
+            best: Matched cache entry
+            start_time: Lookup start timestamp
+            track_metrics: Whether to track metrics
+
+        Returns:
+            LookupResult with cached data or miss if expired
+        """
+        entry_ttl = (
+            best.ttl_seconds
+            if best.ttl_seconds is not None
+            else self.config.ttl_seconds
+        )
+
+        if entry_ttl is not None:
+            age = best.age_seconds if best.age_seconds else 0
+            if age > entry_ttl:
+                logger.debug(
+                    "lookup_miss_expired",
+                    query_preview=best.query_text[:50],
+                    age_seconds=round(age, 1),
+                    ttl_seconds=entry_ttl,
+                )
+                return self._miss("expired", start_time, track_metrics=track_metrics)
 
         entry_id = self._generate_entry_id(best.query_text, best.context)
         self.eviction.on_access(entry_id)
 
         elapsed_ms = (time.time() - start_time) * 1000
 
+        ttl_remaining = None
+        if entry_ttl is not None:
+            ttl_remaining = max(0.0, entry_ttl - best.age_seconds)
+
         logger.info(
             "cache_hit",
             similarity=round(best.similarity, 3) if best.similarity else 1.0,
             query_preview=best.query_text[:50],
             age_seconds=round(best.age_seconds, 1) if best.age_seconds else 0,
+            ttl_remaining=round(ttl_remaining, 1)
+            if ttl_remaining is not None
+            else None,
             latency_ms=round(elapsed_ms, 1),
         )
 
@@ -251,9 +307,9 @@ class CacheOperations:
             self.metrics.total_latency_saved_ms += 2000
             self.metrics.record_lookup_latency(elapsed_ms)
 
-            self._otel_export_counter += 1
-            if self._otel_export_counter % 100 == 0:
-                self._export_metrics_to_otel()
+        self._otel_export_counter += 1
+        if self._otel_export_counter % 100 == 0:
+            self._export_metrics_to_otel()
 
         return LookupResult(
             hit=True,
@@ -261,18 +317,25 @@ class CacheOperations:
             similarity=best.similarity,
             matched_query=best.query_text,
             age_seconds=best.age_seconds,
-            entry_id=getattr(best, "id", None),
+            entry_id=getattr(best, "_id", None),
             context=best.context,
+            ttl_remaining=ttl_remaining,
         )
 
     def _is_error_result(self, result: Any) -> bool:
-        """Check if result represents an error that shouldn't be cached."""
-        # 1. Exception objects
+        """
+        Check if result represents an error that shouldn't be cached.
+
+        Args:
+            result: Result object to check
+
+        Returns:
+            True if result is an error
+        """
         if isinstance(result, Exception):
             logger.debug("error_detected_exception", error_type=type(result).__name__)
             return True
 
-        # 2. Dict with error keys
         if isinstance(result, dict):
             error_keys = {"error", "exception", "traceback", "error_message", "failed"}
             found_keys = [k for k in error_keys if k in result]
@@ -280,14 +343,12 @@ class CacheOperations:
                 logger.debug("error_detected_dict", error_keys=found_keys)
                 return True
 
-        # 3. String error patterns
         if isinstance(result, str):
             error_patterns = ["error:", "exception:", "traceback:", "failed:"]
             if any(result.lower().startswith(pattern) for pattern in error_patterns):
                 logger.debug("error_detected_string_pattern")
                 return True
 
-        # 4. None results
         if result is None:
             logger.debug("error_detected_none_result")
             return True
@@ -303,16 +364,18 @@ class CacheOperations:
         track_metrics: bool = True,
     ) -> List[LookupResult]:
         """
-        Batch lookup for multiple queries (optimized for embeddings).
+        Batch lookup for multiple queries optimized for embeddings.
 
         Main optimization: generates all embeddings in a single batch call,
         which is 2-3x faster than generating them individually.
 
+        Supports context-specific thresholds per query.
+
         Args:
             queries: List of query texts
             contexts: List of context dicts (one per query)
-            similarity_threshold: Minimum similarity threshold
-            query_mode: Query matching strategy ("semantic", "exact", "auto")
+            similarity_threshold: Minimum similarity threshold (overrides config)
+            query_mode: Query matching strategy (semantic, exact, auto)
             track_metrics: Whether to track metrics
 
         Returns:
@@ -335,7 +398,6 @@ class CacheOperations:
                     for _ in queries
                 ]
 
-            # Determine actual mode for each query (handle "auto" mode)
             actual_modes = []
             for query in queries:
                 if query_mode == "auto":
@@ -344,7 +406,6 @@ class CacheOperations:
                 else:
                     actual_modes.append(query_mode)
 
-            # Group indices by mode for optimization
             semantic_indices = [
                 i for i, mode in enumerate(actual_modes) if mode == "semantic"
             ]
@@ -354,15 +415,12 @@ class CacheOperations:
 
             results = [None] * len(queries)
 
-            # Batch process semantic queries (main optimization)
             if semantic_indices:
                 semantic_queries = [queries[i] for i in semantic_indices]
 
-                # Batch embedding generation (THIS IS THE KEY OPTIMIZATION)
                 embed_start = time.time()
                 embeddings = self.embedder.embed_batch(semantic_queries)
                 embed_ms = (time.time() - embed_start) * 1000
-
                 logger.debug(
                     "batch_embeddings_generated",
                     count=len(semantic_queries),
@@ -370,18 +428,20 @@ class CacheOperations:
                     per_item_ms=round(embed_ms / len(semantic_queries), 2),
                 )
 
-                # Lookup each with pre-generated embedding
                 for idx, embedding in zip(semantic_indices, embeddings):
+                    threshold = similarity_threshold
+                    if threshold is None:
+                        threshold = self.config.get_threshold_for_context(contexts[idx])
+
                     result = self._lookup_with_embedding(
                         queries[idx],
                         contexts[idx],
                         embedding,
-                        similarity_threshold,
+                        threshold,
                         track_metrics=track_metrics,
                     )
                     results[idx] = result
 
-            # Process exact queries (no embeddings needed)
             if exact_indices:
                 for idx in exact_indices:
                     result = self.lookup(
@@ -389,12 +449,11 @@ class CacheOperations:
                         contexts[idx],
                         similarity_threshold,
                         query_mode="exact",
-                        _track_metrics=track_metrics,
+                        track_metrics=track_metrics,
                     )
                     results[idx] = result
 
             batch_ms = (time.time() - batch_start) * 1000
-
             hits = sum(1 for r in results if r.is_hit)
 
             logger.info(
@@ -402,7 +461,7 @@ class CacheOperations:
                 total=len(queries),
                 hits=hits,
                 misses=len(queries) - hits,
-                hit_rate=round(hits / len(queries) * 100, 1),
+                hit_rate=round((hits / len(queries)) * 100, 1),
                 total_ms=round(batch_ms, 1),
                 per_item_ms=round(batch_ms / len(queries), 2),
             )
@@ -419,8 +478,6 @@ class CacheOperations:
                 latency_ms=round(elapsed_ms, 1),
                 exc_info=True,
             )
-
-            # Return misses for all on error
             return [LookupResult(hit=False) for _ in queries]
 
     def _lookup_with_embedding(
@@ -451,9 +508,11 @@ class CacheOperations:
         context = context or {}
 
         try:
-            threshold = similarity_threshold or self.config.similarity_threshold
+            if similarity_threshold is None:
+                threshold = self.config.get_threshold_for_context(context)
+            else:
+                threshold = similarity_threshold
 
-            # Search with pre-computed embedding
             search_start = time.time()
             candidates = self.storage.search(
                 embedding=embedding,
@@ -470,10 +529,10 @@ class CacheOperations:
                     "lookup_with_embedding_miss",
                     query_preview=query[:50],
                     search_ms=round(search_ms, 1),
+                    threshold=threshold,
                 )
                 return self._miss("no_match", start_time, track_metrics=track_metrics)
 
-            # Process hit with TTL check
             return self._process_hit(candidates[0], start_time, track_metrics)
 
         except Exception as e:
@@ -500,8 +559,22 @@ class CacheOperations:
         metadata: Optional[Dict[str, Any]] = None,
         query_mode: str = "semantic",
         allow_errors: bool = False,
+        ttl_seconds: Optional[int] = None,
+        context_threshold: Optional[float] = None,
     ):
-        """Store result in cache with context."""
+        """
+        Store result in cache with context.
+
+        Args:
+            query: Query text
+            context: Context dict
+            result: Result to cache
+            metadata: Additional metadata
+            query_mode: Query mode (semantic/exact/auto)
+            allow_errors: Whether to cache error results
+            ttl_seconds: Per-entry TTL (overrides global config)
+            context_threshold: Per-entry similarity threshold
+        """
         store_start = time.time()
 
         logger.debug(
@@ -511,10 +584,11 @@ class CacheOperations:
             context_keys=list(context.keys()),
             query_mode=query_mode,
             allow_errors=allow_errors,
+            ttl_seconds=ttl_seconds,
+            context_threshold=context_threshold,
         )
 
         try:
-            # Validate result before caching
             if not allow_errors and self._is_error_result(result):
                 logger.debug(
                     "skipping_error_cache",
@@ -536,14 +610,11 @@ class CacheOperations:
                 )
                 self._evict_one()
 
-            # Handle auto mode
             embedding = None
             actual_mode = query_mode
-
             if query_mode == "auto":
                 use_exact = should_use_exact_mode(query)
                 actual_mode = "exact" if use_exact else "semantic"
-
                 logger.debug(
                     "auto_mode_detected",
                     query_preview=query[:50],
@@ -551,7 +622,6 @@ class CacheOperations:
                     query_length=len(query),
                 )
 
-            # Generate embedding only if needed
             if actual_mode == "semantic":
                 embed_start = time.time()
                 embedding = self.embedder.embed(query)
@@ -565,7 +635,6 @@ class CacheOperations:
                 logger.debug("store_embedding_skipped_exact_mode")
 
             timestamp = time.time()
-
             metadata_dict = metadata or {}
             metadata_dict["query_mode"] = actual_mode
 
@@ -576,17 +645,14 @@ class CacheOperations:
                 result=result,
                 timestamp=timestamp,
                 metadata=metadata_dict,
+                ttl_seconds=ttl_seconds,
+                context_threshold=context_threshold,
             )
 
-            # Storage add
             storage_start = time.time()
-            self.storage.add([entry])
+            self.storage.add_entry(entry)
             storage_ms = (time.time() - storage_start) * 1000
-
-            logger.debug(
-                "store_entry_added",
-                storage_ms=round(storage_ms, 1),
-            )
+            logger.debug("store_entry_added", storage_ms=round(storage_ms, 1))
 
             entry_id = self._generate_entry_id(query, context)
             self.eviction.on_insert(entry_id)
@@ -598,7 +664,7 @@ class CacheOperations:
                     self.config.index_num_partitions,
                 )
                 index_ms = (time.time() - index_start) * 1000
-                if index_ms > 1.0:  # Only log if significant
+                if index_ms > 1.0:
                     logger.debug("store_index_check", latency_ms=round(index_ms, 1))
 
             if self.metrics:
@@ -618,6 +684,7 @@ class CacheOperations:
                 query_mode=actual_mode,
                 total_ms=round(total_ms, 1),
                 storage_ms=round(storage_ms, 1),
+                ttl_seconds=ttl_seconds,
             )
 
         except Exception as e:
@@ -643,8 +710,22 @@ class CacheOperations:
         metadata: Optional[List[Dict[str, Any]]] = None,
         query_mode: str = "semantic",
         allow_errors: bool = False,
+        ttl_seconds: Optional[List[Optional[int]]] = None,
+        context_thresholds: Optional[List[Optional[float]]] = None,
     ):
-        """Store multiple results in batch (optimized for embeddings)."""
+        """
+        Store multiple results in batch optimized for embeddings.
+
+        Args:
+            queries: List of query texts
+            contexts: List of context dicts
+            results: List of results to cache
+            metadata: Optional list of metadata dicts
+            query_mode: Query mode (semantic/exact/auto)
+            allow_errors: Whether to cache error results
+            ttl_seconds: Per-entry TTL overrides (one per query)
+            context_thresholds: Per-entry thresholds (one per query)
+        """
         batch_start = time.time()
 
         logger.info(
@@ -654,9 +735,7 @@ class CacheOperations:
             allow_errors=allow_errors,
         )
 
-        # Filter out errors if allow_errors=False
         valid_entries = []
-
         for i, result in enumerate(results):
             if not allow_errors and self._is_error_result(result):
                 logger.debug(
@@ -668,19 +747,20 @@ class CacheOperations:
                 if self.metrics:
                     self.metrics.store_errors += 1
                 continue
-
             valid_entries.append(i)
 
-        # Nothing to store
         if not valid_entries:
             logger.warning("batch_store_skipped_all_errors", total=len(results))
             return
 
-        # Filter to valid entries only
         valid_queries = [queries[i] for i in valid_entries]
         valid_contexts = [contexts[i] for i in valid_entries]
         valid_results = [results[i] for i in valid_entries]
         valid_metadata = [metadata[i] if metadata else None for i in valid_entries]
+        valid_ttls = [ttl_seconds[i] if ttl_seconds else None for i in valid_entries]
+        valid_thresholds = [
+            context_thresholds[i] if context_thresholds else None for i in valid_entries
+        ]
 
         logger.debug(
             "batch_store_valid_entries",
@@ -688,7 +768,6 @@ class CacheOperations:
             skipped=len(results) - len(valid_entries),
         )
 
-        # ← FIX: Detect mode for each query when query_mode="auto"
         actual_modes = []
         for query in valid_queries:
             if query_mode == "auto":
@@ -703,7 +782,6 @@ class CacheOperations:
             else:
                 actual_modes.append(query_mode)
 
-        # Log summary of detected modes
         if query_mode == "auto":
             exact_count = sum(1 for m in actual_modes if m == "exact")
             semantic_count = sum(1 for m in actual_modes if m == "semantic")
@@ -714,18 +792,17 @@ class CacheOperations:
                 semantic=semantic_count,
             )
 
-        # Batch embedding - only for queries that need semantic
         embed_start = time.time()
         embeddings = [None] * len(valid_queries)
 
         semantic_indices = [
             i for i, mode in enumerate(actual_modes) if mode == "semantic"
         ]
+
         if semantic_indices:
             semantic_queries = [valid_queries[i] for i in semantic_indices]
             semantic_embeddings = self.embedder.embed_batch(semantic_queries)
 
-            # Insert embeddings in correct positions
             for idx, emb in zip(semantic_indices, semantic_embeddings):
                 embeddings[idx] = emb
 
@@ -742,13 +819,12 @@ class CacheOperations:
             logger.debug("batch_embeddings_skipped", reason="all_exact_mode")
             embed_ms = 0
 
-        # Build entries with detected mode in metadata
         entries_start = time.time()
         entries = []
+
         for i, query in enumerate(valid_queries):
-            # Add detected mode to metadata
             meta = valid_metadata[i] or {}
-            meta["query_mode"] = actual_modes[i]  # ← Store detected mode
+            meta["query_mode"] = actual_modes[i]
 
             entry = CacheEntry(
                 query_text=query,
@@ -757,22 +833,22 @@ class CacheOperations:
                 result=valid_results[i],
                 timestamp=time.time(),
                 metadata=meta,
+                ttl_seconds=valid_ttls[i],
+                context_threshold=valid_thresholds[i],
             )
             entries.append(entry)
-        entries_ms = (time.time() - entries_start) * 1000
 
+        entries_ms = (time.time() - entries_start) * 1000
         logger.debug(
             "batch_entries_created",
             count=len(entries),
             latency_ms=round(entries_ms, 1),
         )
 
-        # Storage add (this is where serialization happens)
         storage_start = time.time()
         logger.debug("batch_storage_add_start", entries=len(entries))
 
-        # Pass query_mode for logging, but storage will use individual metadata
-        self.storage.add(entries)
+        self.storage.add_entries(entries)
 
         storage_ms = (time.time() - storage_start) * 1000
         logger.debug(
@@ -783,7 +859,6 @@ class CacheOperations:
         )
 
         batch_total_ms = (time.time() - batch_start) * 1000
-
         logger.info(
             "batch_store_complete",
             total_entries=len(entries),
@@ -795,7 +870,12 @@ class CacheOperations:
         )
 
     def cleanup_expired(self) -> int:
-        """Remove expired entries based on TTL."""
+        """
+        Remove expired entries based on TTL.
+
+        Returns:
+            Number of entries deleted
+        """
         if self.config.ttl_seconds is None:
             logger.warning("cleanup_called_no_ttl")
             return 0
@@ -893,7 +973,17 @@ class CacheOperations:
         context: Optional[Dict[str, Any]] = None,
         older_than_seconds: Optional[float] = None,
     ) -> int:
-        """Invalidate cache entries by criteria."""
+        """
+        Invalidate cache entries by criteria.
+
+        Args:
+            query: Query text pattern to match
+            context: Context dict to match exactly
+            older_than_seconds: Delete entries older than this
+
+        Returns:
+            Number of entries deleted
+        """
         if query is None and context is None and older_than_seconds is None:
             logger.warning("invalidate_called_without_criteria")
             return 0
@@ -1018,108 +1108,467 @@ class CacheOperations:
             logger.error("invalidation_failed", error=str(e), exc_info=True)
             return 0
 
-    def get_metrics_report(self) -> Optional[Dict[str, Any]]:
-        """Get current metrics report."""
-        if self.metrics:
-            return self.metrics.report()
-        return None
+    def invalidate_bulk(self, pattern: BulkInvalidatePattern) -> int:
+        """
+        Bulk invalidate entries matching pattern.
 
-    def export_metrics_now(self):
-        """Force immediate export of metrics to OpenTelemetry."""
-        self._export_metrics_to_otel()
+        This is more efficient than calling invalidate() multiple times
+        as it performs pattern matching in a single scan.
 
-    def _is_expired(self, entry: CacheEntry) -> bool:
-        """Check if entry is expired."""
-        if self.config.ttl_seconds is None:
-            return False
-        age = entry.age_seconds if entry.age_seconds else 0
-        return age > self.config.ttl_seconds
+        Args:
+            pattern: BulkInvalidatePattern specification
+
+        Returns:
+            Number of entries invalidated
+        """
+        invalidated_count = 0
+
+        try:
+            import pyarrow.compute as pc
+
+            exact_table = self.storage.exact_table.to_arrow()
+            semantic_table = self.storage.semantic_table.to_arrow()
+
+            entries_to_delete_exact = []
+            entries_to_delete_semantic = []
+
+            for table, delete_list in [
+                (exact_table, entries_to_delete_exact),
+                (semantic_table, entries_to_delete_semantic),
+            ]:
+                if len(table) == 0:
+                    continue
+
+                rows = table.to_pylist()
+                for row in rows:
+                    query_text = row.get("query_text", "")
+                    context_str = row.get("context", "{}")
+                    context = json.loads(context_str) if context_str != "{}" else {}
+                    timestamp = row.get("timestamp", 0)
+                    entry_id = row.get("id", "")
+
+                    age_seconds = time.time() - timestamp
+
+                    if pattern.matches_entry_id(entry_id):
+                        if pattern.matches_query(query_text):
+                            if pattern.matches_context(context):
+                                if pattern.matches_age(age_seconds):
+                                    delete_list.append(entry_id)
+                                    invalidated_count += 1
+
+                                    eviction_id = self._generate_entry_id(
+                                        query_text, context
+                                    )
+                                    try:
+                                        self.eviction.on_evict(eviction_id)
+                                    except Exception:
+                                        pass
+
+            if entries_to_delete_exact:
+                id_list = "', '".join(entries_to_delete_exact)
+                filter_expr = f"id IN ('{id_list}')"
+                self.storage.delete_by_filter(filter_expr)
+
+            if entries_to_delete_semantic:
+                id_list = "', '".join(entries_to_delete_semantic)
+                filter_expr = f"id IN ('{id_list}')"
+                self.storage.delete_by_filter(filter_expr)
+
+            if invalidated_count > 0:
+                logger.info(
+                    "bulk_invalidation_completed",
+                    invalidated=invalidated_count,
+                )
+
+            if self.metrics:
+                if not hasattr(self.metrics, "invalidations"):
+                    self.metrics.invalidations = 0
+                self.metrics.invalidations += invalidated_count
+
+        except Exception as e:
+            logger.error(
+                "bulk_invalidation_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            raise
+
+        return invalidated_count
+
+    def invalidate_by_prefix(self, query_prefix: str) -> int:
+        """
+        Invalidate all entries with query starting with prefix.
+
+        This is a convenience method wrapping invalidate_bulk.
+
+        Args:
+            query_prefix: Prefix to match (e.g., "SELECT")
+
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = BulkInvalidatePattern(query_prefix=query_prefix)
+        return self.invalidate_bulk(pattern)
+
+    def invalidate_by_regex(self, query_regex: str) -> int:
+        """
+        Invalidate all entries matching regex pattern.
+
+        Args:
+            query_regex: Regular expression pattern
+
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = BulkInvalidatePattern(query_regex=query_regex)
+        return self.invalidate_bulk(pattern)
+
+    def invalidate_by_context(self, context_matches: Dict[str, str]) -> int:
+        """
+        Invalidate entries matching context pattern.
+
+        Supports wildcard matching with asterisk (*).
+
+        Args:
+            context_matches: Dict of context patterns to match
+
+        Examples:
+            cache.invalidate_by_context({"model": "gpt-4"})
+            cache.invalidate_by_context({"agent_*": "*"})
+
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = BulkInvalidatePattern(context_matches=context_matches)
+        return self.invalidate_bulk(pattern)
+
+    def invalidate_older_than(self, seconds: float) -> int:
+        """
+        Invalidate all entries older than specified seconds.
+
+        Args:
+            seconds: Age threshold in seconds
+
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = BulkInvalidatePattern(older_than_seconds=seconds)
+        return self.invalidate_bulk(pattern)
+
+    def clear_all(self) -> int:
+        """
+        Clear all cache entries.
+
+        Returns:
+            Number of entries deleted
+        """
+        clear_start = time.time()
+        logger.warning("clearing_all_cache")
+
+        try:
+            before = self.storage.count()
+            self.storage.exact_table.delete("timestamp > 0")
+            self.storage.semantic_table.delete("timestamp > 0")
+
+            if hasattr(self.eviction, "order"):
+                self.eviction.order.clear()
+            if hasattr(self.eviction, "access_times"):
+                self.eviction.access_times.clear()
+            if hasattr(self.eviction, "frequencies"):
+                self.eviction.frequencies.clear()
+
+            cleared = before
+            clear_ms = (time.time() - clear_start) * 1000
+            logger.warning(
+                "cache_cleared",
+                entries_deleted=cleared,
+                latency_ms=round(clear_ms, 1),
+            )
+            return cleared
+
+        except Exception as e:
+            logger.error("clear_all_failed", error=str(e), exc_info=True)
+            return 0
 
     def _evict_one(self):
-        """Evict one entry using configured eviction policy."""
+        """
+        Evict one entry to make space.
+
+        Uses the configured eviction policy to select victim.
+        """
         evict_start = time.time()
         try:
             victim_id = self.eviction.select_victim()
-            logger.debug("eviction_victim_selected", victim_id=victim_id[:50])
+            logger.debug(
+                "evicting_entry",
+                victim_id=victim_id,
+                policy=self.config.eviction_policy,
+            )
 
-            for table, table_name, schema in [
-                (
-                    self.storage.exact_table,
-                    self.storage._exact_table_name,
-                    self.storage.exact_schema,
-                ),
-                (
-                    self.storage.semantic_table,
-                    self.storage._semantic_table_name,
-                    self.storage.semantic_schema,
-                ),
-            ]:
-                arrow_table = table.to_arrow()
-                if len(arrow_table) == 0:
-                    continue
+            self.storage.delete_entry(victim_id)
+            self.eviction.on_evict(victim_id)
 
-                rows = arrow_table.to_pylist()
+            evict_ms = (time.time() - evict_start) * 1000
+            logger.info(
+                "entry_evicted", victim_id=victim_id, latency_ms=round(evict_ms, 1)
+            )
 
-                victim_row = None
-                for row in rows:
-                    entry_id = self._generate_entry_id(
-                        row.get("query_text", ""), row.get("context", "{}")
-                    )
-                    if entry_id == victim_id:
-                        victim_row = row
-                        break
+            if self.metrics:
+                self.metrics.evictions += 1
 
-                if victim_row is not None:
-                    victim_ts = victim_row.get("timestamp")
-
-                    if self.config.db_uri == "memory://":
-                        import pyarrow.compute as pc
-
-                        mask = pc.not_equal(arrow_table["timestamp"], victim_ts)
-                        filtered = arrow_table.filter(mask)
-                        new_table = self.storage.db.create_table(
-                            table_name,
-                            data=filtered if len(filtered) > 0 else None,
-                            schema=schema if len(filtered) == 0 else None,
-                            mode="overwrite",
-                        )
-                        if table_name == self.storage._exact_table_name:
-                            self.storage.exact_table = new_table
-                        else:
-                            self.storage.semantic_table = new_table
-                            self.storage.table = new_table
-                    else:
-                        table.delete(f"timestamp = {victim_ts}")
-
-                    self.eviction.on_evict(victim_id)
-
-                    evict_ms = (time.time() - evict_start) * 1000
-                    logger.info(
-                        "entry_evicted",
-                        policy=self.config.eviction_policy,
-                        victim_id=victim_id[:50],
-                        table=table_name,
-                        latency_ms=round(evict_ms, 1),
-                    )
-                    return
-
-            logger.warning("victim_not_found", victim_id=victim_id)
-
-        except ValueError as e:
-            logger.warning("eviction_failed_no_entries", error=str(e))
         except Exception as e:
-            logger.error("eviction_failed", error=str(e), exc_info=True)
+            logger.error(
+                "eviction_failed",
+                error=str(e),
+                policy=self.config.eviction_policy,
+                exc_info=True,
+            )
 
     def _miss(
         self, reason: str, start_time: float, track_metrics: bool = True
     ) -> LookupResult:
-        """Create miss result with logging."""
-        elapsed_ms = (time.time() - start_time) * 1000
+        """
+        Handle cache miss with metrics tracking.
 
-        logger.debug("lookup_miss", reason=reason, latency_ms=round(elapsed_ms, 1))
+        Args:
+            reason: Miss reason for logging
+            start_time: Lookup start timestamp
+            track_metrics: Whether to track metrics
+
+        Returns:
+            LookupResult indicating miss
+        """
+        elapsed_ms = (time.time() - start_time) * 1000
 
         if self.metrics and track_metrics:
             self.metrics.misses += 1
             self.metrics.record_lookup_latency(elapsed_ms)
 
+        logger.debug("cache_miss", reason=reason, latency_ms=round(elapsed_ms, 2))
+
         return LookupResult(hit=False)
+
+    def stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics.
+
+        Returns:
+            Dict with cache metrics and status
+        """
+        try:
+            exact_count = len(self.storage.exact_table.to_arrow())
+            semantic_count = len(self.storage.semantic_table.to_arrow())
+            total_count = exact_count + semantic_count
+
+            stats_dict = {
+                "total_entries": total_count,
+                "exact_entries": exact_count,
+                "semantic_entries": semantic_count,
+                "max_entries": self.config.max_entries,
+                "ttl_seconds": self.config.ttl_seconds,
+                "eviction_policy": self.config.eviction_policy,
+                "similarity_threshold": self.config.similarity_threshold,
+            }
+
+            if self.metrics:
+                stats_dict.update(self.metrics.report())
+
+            return stats_dict
+
+        except Exception as e:
+            logger.error("stats_failed", error=str(e), exc_info=True)
+            return {"error": str(e)}
+
+    def check_availability(
+        self,
+        query: str,
+        context: Optional[Dict[str, Any]] = None,
+        similarity_threshold: Optional[float] = None,
+        query_mode: str = "semantic",
+    ) -> bool:
+        """
+        Check if cached result exists without retrieving it.
+
+        Lightweight check used by schedulers for availability verification.
+
+        Args:
+            query: Query text
+            context: Context dict
+            similarity_threshold: Minimum similarity threshold
+            query_mode: Query mode (semantic/exact/auto)
+
+        Returns:
+            True if cache entry exists and is valid
+        """
+        start_time = time.time()
+        context = context or {}
+
+        try:
+            cache_count = self.storage.count()
+            if cache_count == 0:
+                return False
+
+            actual_mode = query_mode
+            if query_mode == "auto":
+                use_exact = should_use_exact_mode(query)
+                actual_mode = "exact" if use_exact else "semantic"
+
+            embedding = None
+            if actual_mode == "semantic":
+                embedding = self.embedder.embed(query)
+
+            if similarity_threshold is None:
+                threshold = self.config.get_threshold_for_context(context)
+            else:
+                threshold = similarity_threshold
+
+            candidates = self.storage.search(
+                embedding=embedding,
+                context=context,
+                limit=1,
+                similarity_threshold=threshold,
+                query_mode=actual_mode,
+                query_text=query,
+            )
+
+            if not candidates:
+                return False
+
+            best = candidates[0]
+            entry_ttl = (
+                best.ttl_seconds
+                if best.ttl_seconds is not None
+                else self.config.ttl_seconds
+            )
+
+            if entry_ttl is not None:
+                age = best.age_seconds if best.age_seconds else 0
+                if age > entry_ttl:
+                    return False
+
+            check_ms = (time.time() - start_time) * 1000
+            logger.debug(
+                "availability_check_complete",
+                available=True,
+                latency_ms=round(check_ms, 1),
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(
+                "availability_check_failed",
+                error=str(e),
+                query_preview=query[:50],
+                exc_info=True,
+            )
+            return False
+
+    def get_all_entries(self) -> List[Dict[str, Any]]:
+        """
+        Get all cache entries as list of dicts.
+
+        Returns:
+            List of entry dictionaries
+        """
+        try:
+            arrow_table = self.storage.to_arrow()
+            entries = arrow_table.to_pylist()
+            return entries
+        except Exception as e:
+            logger.error("get_all_entries_failed", error=str(e), exc_info=True)
+            return []
+
+    def export_to_file(self, filepath: str, format: str = "parquet"):
+        """
+        Export cache to file.
+
+        Args:
+            filepath: Output file path
+            format: File format (parquet, json, csv)
+        """
+        try:
+            import pyarrow.parquet as pq
+            import pyarrow.json as pj
+            import pyarrow.csv as pc
+
+            arrow_table = self.storage.to_arrow()
+
+            if format == "parquet":
+                pq.write_table(arrow_table, filepath)
+            elif format == "json":
+                pj.write_json(arrow_table, filepath)
+            elif format == "csv":
+                pc.write_csv(arrow_table, filepath)
+            else:
+                raise ValueError(f"Unsupported format: {format}")
+
+            logger.info(
+                "cache_exported",
+                filepath=filepath,
+                format=format,
+                entries=len(arrow_table),
+            )
+
+        except Exception as e:
+            logger.error(
+                "export_failed",
+                filepath=filepath,
+                format=format,
+                error=str(e),
+                exc_info=True,
+            )
+            raise
+
+    def import_from_file(self, filepath: str, format: str = "parquet"):
+        """
+        Import cache from file.
+
+        Args:
+            filepath: Input file path
+            format: File format (parquet, json, csv)
+        """
+        try:
+            import pyarrow.parquet as pq
+            import pyarrow.json as pj
+            import pyarrow.csv as pc
+
+            if format == "parquet":
+                arrow_table = pq.read_table(filepath)
+            elif format == "json":
+                arrow_table = pj.read_json(filepath)
+            elif format == "csv":
+                arrow_table = pc.read_csv(filepath)
+            else:
+                raise ValueError(f"Unsupported format: {format}")
+
+            entries = arrow_table.to_pylist()
+            for row in entries:
+                entry = CacheEntry(
+                    query_text=row.get("query_text", ""),
+                    context=json.loads(row.get("context", "{}")),
+                    embedding=row.get("embedding"),
+                    result=row.get("result"),
+                    timestamp=row.get("timestamp", time.time()),
+                    metadata=json.loads(row.get("metadata", "{}")),
+                    ttl_seconds=row.get("ttl_seconds"),
+                    context_threshold=row.get("context_threshold"),
+                )
+                self.storage.add_entry(entry)
+
+            logger.info(
+                "cache_imported",
+                filepath=filepath,
+                format=format,
+                entries=len(entries),
+            )
+
+        except Exception as e:
+            logger.error(
+                "import_failed",
+                filepath=filepath,
+                format=format,
+                error=str(e),
+                exc_info=True,
+            )
+            raise

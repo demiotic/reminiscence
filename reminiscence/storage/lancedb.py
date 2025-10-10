@@ -12,6 +12,7 @@ from ..types import CacheEntry
 from ..utils.logging import get_logger
 from ..utils.fingerprint import create_fingerprint
 from ..utils.serde import ResultSerializer
+from ..utils.query_detection import should_use_exact_mode
 
 logger = get_logger(__name__)
 
@@ -38,16 +39,22 @@ class LanceDBBackend(StorageBackend):
     def __init__(self, config, embedding_dim: int, metrics=None):
         """Initialize LanceDB backend with dual tables."""
         if self._initialized:
+            logger.debug("storage_backend_already_initialized", db_uri=config.db_uri)
             return
+
+        init_start = time.perf_counter()
 
         self.config = config
         self.embedding_dim = embedding_dim
         self.metrics = metrics
+
+        logger.debug("connecting_to_lancedb", db_uri=config.db_uri)
         self.db = lancedb.connect(config.db_uri)
 
         self._exact_table_name = f"{config.table_name}_exact"
         self._semantic_table_name = f"{config.table_name}_semantic"
 
+        logger.debug("creating_schemas", embedding_dim=embedding_dim)
         self.exact_schema = self._create_exact_schema()
         self.semantic_schema = self._create_semantic_schema()
 
@@ -62,6 +69,7 @@ class LanceDBBackend(StorageBackend):
         # Initialize encryptor if enabled
         encryptor = None
         if config.encryption_enabled:
+            logger.debug("initializing_encryption", backend=config.encryption_backend)
             if config.encryption_backend == "age":
                 from reminiscence.encryption import AgeEncryption
 
@@ -74,14 +82,20 @@ class LanceDBBackend(StorageBackend):
                     f"Unsupported encryption backend: {config.encryption_backend}. "
                     f"Currently only 'age' is supported."
                 )
-            logger.info("encryption_enabled", backend=config.encryption_backend)
+            logger.info(
+                "encryption_initialized",
+                backend=config.encryption_backend,
+                max_workers=config.encryption_max_workers,
+            )
 
         # Initialize serializer with optional encryptor
+        logger.debug("initializing_serializer", has_encryptor=encryptor is not None)
         self.serializer = ResultSerializer(encryptor=encryptor)
 
         self._index_created = False
         self._initialized = True
 
+        init_ms = (time.perf_counter() - init_start) * 1000
         logger.info(
             "storage_backend_initialized",
             db_uri=config.db_uri,
@@ -89,6 +103,7 @@ class LanceDBBackend(StorageBackend):
             semantic_table=self._semantic_table_name,
             embedding_dim=embedding_dim,
             encryption=config.encryption_enabled,
+            init_ms=round(init_ms, 1),
         )
 
     def _create_exact_schema(self) -> pa.Schema:
@@ -127,7 +142,7 @@ class LanceDBBackend(StorageBackend):
         """Initialize or open a specific table."""
         try:
             table = self.db.open_table(table_name)
-            logger.debug("table_opened", name=table_name)
+            logger.debug("table_opened", name=table_name, rows=table.count_rows())
             return table
         except Exception:
             table = self.db.create_table(table_name, schema=schema, mode="overwrite")
@@ -137,6 +152,7 @@ class LanceDBBackend(StorageBackend):
     @classmethod
     def _clear_instances(cls):
         """Clear all singleton instances (for testing only)."""
+        logger.debug("clearing_storage_instances", count=len(cls._instances))
         cls._instances.clear()
 
     def _compute_query_hash(self, query_text: str, context: Dict[str, Any]) -> str:
@@ -147,16 +163,39 @@ class LanceDBBackend(StorageBackend):
 
     def count(self) -> int:
         """Get total entries across both tables."""
-        return self.exact_table.count_rows() + self.semantic_table.count_rows()
+        exact_count = self.exact_table.count_rows()
+        semantic_count = self.semantic_table.count_rows()
+        total = exact_count + semantic_count
 
-    def add(self, entries: List[CacheEntry], query_mode: str = "semantic"):
-        """Add entries to appropriate table based on query_mode."""
+        logger.debug(
+            "storage_count",
+            exact=exact_count,
+            semantic=semantic_count,
+            total=total,
+        )
+        return total
+
+    def add(self, entries: List[CacheEntry]):
+        """
+        Add entries to appropriate tables.
+
+        Each entry's metadata contains 'query_mode' (resolved upstream).
+        Routes to exact_table or semantic_table based on metadata.
+        """
         start = time.perf_counter()
 
         if not entries:
+            logger.debug("add_skipped_empty_entries")
             return
 
-        # Vectorize common operations
+        logger.debug(
+            "add_start",
+            entries=len(entries),
+            has_encryptor=self.serializer.encryptor is not None,
+        )
+
+        # Prepare data
+        prep_start = time.perf_counter()
         query_texts = [e.query_text for e in entries]
         contexts = [e.context for e in entries]
         timestamps = [e.timestamp for e in entries]
@@ -167,38 +206,50 @@ class LanceDBBackend(StorageBackend):
         # Batch fingerprinting
         context_hashes = [create_fingerprint(c) for c in contexts]
 
-        # Pre-allocate lists
+        prep_ms = (time.perf_counter() - prep_start) * 1000
+        logger.debug(
+            "add_preparation_complete",
+            entries=len(entries),
+            prep_ms=round(prep_ms, 1),
+        )
+
         exact_data = []
         semantic_data = []
 
         # Batch serialize results
-        serialized_results = []
-        for entry in entries:
-            try:
-                ser_result, result_type = self.serializer.serialize(entry.result)
-                serialized_results.append((ser_result, result_type))
-            except TypeError as e:
-                logger.error(
-                    "entry_skipped_unserializable", error=str(e), query=entry.query_text
-                )
-                if self.metrics:
-                    if not hasattr(self.metrics, "storage_add_errors"):
-                        self.metrics.storage_add_errors = 0
-                    self.metrics.storage_add_errors += 1
-                serialized_results.append((None, None))
-                continue
-            except Exception as e:
-                logger.error(
-                    "serialization_failed", error=str(e), entry_query=entry.query_text
-                )
-                if self.metrics:
-                    if not hasattr(self.metrics, "storage_add_errors"):
-                        self.metrics.storage_add_errors = 0
-                    self.metrics.storage_add_errors += 1
-                serialized_results.append((None, None))
-                continue
+        results = [e.result for e in entries]
+        serialize_start = time.perf_counter()
+        logger.debug(
+            "serialization_start",
+            count=len(results),
+            batch=True,
+        )
 
-        # Build data dicts in batch
+        try:
+            serialized_results = self.serializer.serialize_batch(results)
+            serialize_ms = (time.perf_counter() - serialize_start) * 1000
+            logger.debug(
+                "batch_serialization_complete",
+                count=len(serialized_results),
+                latency_ms=round(serialize_ms, 1),
+                per_item_ms=round(serialize_ms / len(results), 2) if results else 0,
+            )
+        except Exception as e:
+            serialize_ms = (time.perf_counter() - serialize_start) * 1000
+            logger.error(
+                "batch_serialization_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                latency_ms=round(serialize_ms, 1),
+            )
+            if self.metrics:
+                if not hasattr(self.metrics, "storage_add_errors"):
+                    self.metrics.storage_add_errors = 0
+                self.metrics.storage_add_errors += 1
+            return
+
+        # Build data dicts - route based on metadata
+        build_start = time.perf_counter()
         for i, entry in enumerate(entries):
             ser_result, result_type = serialized_results[i]
             if ser_result is None:
@@ -215,11 +266,28 @@ class LanceDBBackend(StorageBackend):
                 "metadata": json.dumps(entry.metadata) if entry.metadata else "{}",
             }
 
-            use_exact = query_mode == "exact" or (
-                query_mode == "auto" and len(query_texts[i]) < 200
+            # Read mode from metadata (resolved upstream in store/store_batch)
+            if entry.metadata and "query_mode" in entry.metadata:
+                detected_mode = entry.metadata["query_mode"]
+            else:
+                # Fallback: if no metadata, default to semantic
+                detected_mode = "semantic"
+                logger.warning(
+                    "entry_missing_query_mode",
+                    index=i,
+                    query_preview=query_texts[i][:50],
+                    fallback="semantic",
+                )
+
+            logger.debug(
+                "entry_routing",
+                index=i,
+                query_preview=query_texts[i][:50],
+                mode=detected_mode,
             )
 
-            if use_exact:
+            # Route to appropriate table
+            if detected_mode == "exact":
                 exact_data.append(
                     {
                         **base_data,
@@ -228,7 +296,7 @@ class LanceDBBackend(StorageBackend):
                         ),
                     }
                 )
-            else:
+            else:  # semantic (or fallback)
                 semantic_data.append(
                     {
                         **base_data,
@@ -236,27 +304,63 @@ class LanceDBBackend(StorageBackend):
                     }
                 )
 
+        build_ms = (time.perf_counter() - build_start) * 1000
+        logger.debug(
+            "data_dicts_built",
+            exact=len(exact_data),
+            semantic=len(semantic_data),
+            latency_ms=round(build_ms, 1),
+        )
+
         total_added = 0
 
+        # Add to exact table
         if exact_data:
+            exact_add_start = time.perf_counter()
             try:
                 self.exact_table.add(exact_data)
+                exact_add_ms = (time.perf_counter() - exact_add_start) * 1000
                 total_added += len(exact_data)
-                logger.debug("exact_table_add", count=len(exact_data))
+                logger.debug(
+                    "exact_table_add_success",
+                    count=len(exact_data),
+                    latency_ms=round(exact_add_ms, 1),
+                )
             except Exception as e:
-                logger.error("exact_table_add_failed", error=str(e))
+                exact_add_ms = (time.perf_counter() - exact_add_start) * 1000
+                logger.error(
+                    "exact_table_add_failed",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    latency_ms=round(exact_add_ms, 1),
+                    exc_info=True,
+                )
                 if self.metrics:
                     if not hasattr(self.metrics, "storage_add_errors"):
                         self.metrics.storage_add_errors = 0
                     self.metrics.storage_add_errors += 1
 
+        # Add to semantic table
         if semantic_data:
+            semantic_add_start = time.perf_counter()
             try:
                 self.semantic_table.add(semantic_data)
+                semantic_add_ms = (time.perf_counter() - semantic_add_start) * 1000
                 total_added += len(semantic_data)
-                logger.debug("semantic_table_add", count=len(semantic_data))
+                logger.debug(
+                    "semantic_table_add_success",
+                    count=len(semantic_data),
+                    latency_ms=round(semantic_add_ms, 1),
+                )
             except Exception as e:
-                logger.error("semantic_table_add_failed", error=str(e))
+                semantic_add_ms = (time.perf_counter() - semantic_add_start) * 1000
+                logger.error(
+                    "semantic_table_add_failed",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    latency_ms=round(semantic_add_ms, 1),
+                    exc_info=True,
+                )
                 if self.metrics:
                     if not hasattr(self.metrics, "storage_add_errors"):
                         self.metrics.storage_add_errors = 0
@@ -272,17 +376,18 @@ class LanceDBBackend(StorageBackend):
             if not hasattr(self.metrics, "storage_add_latencies_ms"):
                 self.metrics.storage_add_latencies_ms = []
             self.metrics.storage_add_latencies_ms.append(elapsed_ms)
-
             if len(self.metrics.storage_add_latencies_ms) > 1000:
                 self.metrics.storage_add_latencies_ms = (
                     self.metrics.storage_add_latencies_ms[-1000:]
                 )
 
-        logger.debug(
-            "storage_add_completed",
+        logger.info(
+            "storage_add_complete",
             exact_entries=len(exact_data),
             semantic_entries=len(semantic_data),
-            latency_ms=round(elapsed_ms, 2),
+            total_added=total_added,
+            total_ms=round(elapsed_ms, 1),
+            per_item_ms=round(elapsed_ms / len(entries), 2) if entries else 0,
         )
 
     def search(
@@ -294,23 +399,39 @@ class LanceDBBackend(StorageBackend):
         query_mode: str = "semantic",
         query_text: str = None,
     ) -> List[CacheEntry]:
-        """Search with mode-based routing."""
+        """
+        Search with mode-based routing.
+
+        Mode should be resolved upstream (lookup/lookup_batch applies heuristic).
+        This method expects 'exact' or 'semantic', not 'auto'.
+        """
         start = time.perf_counter()
 
+        logger.debug(
+            "search_start",
+            query_mode=query_mode,
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            has_embedding=embedding is not None,
+            has_query_text=query_text is not None,
+        )
+
+        # Route based on resolved mode
         if query_mode == "exact":
             results = self._search_exact(query_text, context)
         elif query_mode == "semantic":
             results = self._search_semantic(
                 embedding, context, limit, similarity_threshold
             )
-        elif query_mode == "auto":
-            results = self._search_exact(query_text, context)
-            if not results:
-                results = self._search_semantic(
-                    embedding, context, limit, similarity_threshold
-                )
         else:
-            logger.warning("unknown_query_mode", mode=query_mode, fallback="semantic")
+            # Unexpected mode - log warning and fallback
+            logger.warning(
+                "unexpected_query_mode",
+                mode=query_mode,
+                expected=["exact", "semantic"],
+                fallback="semantic",
+                note="Mode should be resolved upstream in lookup/store",
+            )
             results = self._search_semantic(
                 embedding, context, limit, similarity_threshold
             )
@@ -332,7 +453,7 @@ class LanceDBBackend(StorageBackend):
                 )
 
         logger.debug(
-            "storage_search_completed",
+            "search_complete",
             mode=query_mode,
             results_count=len(results),
             latency_ms=round(elapsed_ms, 2),
@@ -345,10 +466,18 @@ class LanceDBBackend(StorageBackend):
     ) -> List[CacheEntry]:
         """Exact match using hash lookup."""
         if not query_text:
+            logger.debug("exact_search_skipped_no_query")
             return []
 
+        search_start = time.perf_counter()
         query_hash = self._compute_query_hash(query_text, context)
         context_hash = create_fingerprint(context)
+
+        logger.debug(
+            "exact_search_start",
+            query_hash=query_hash[:16],
+            context_hash=context_hash[:16],
+        )
 
         try:
             results = (
@@ -360,14 +489,24 @@ class LanceDBBackend(StorageBackend):
                 .to_arrow()
             )
 
+            search_ms = (time.perf_counter() - search_start) * 1000
+
             if len(results) == 0:
+                logger.debug("exact_search_miss", latency_ms=round(search_ms, 1))
                 return []
 
             entry = self._arrow_row_to_cache_entry(results, 0, similarity=1.0)
+            logger.debug("exact_search_hit", latency_ms=round(search_ms, 1))
             return [entry] if entry else []
 
         except Exception as e:
-            logger.error("exact_search_failed", error=str(e))
+            search_ms = (time.perf_counter() - search_start) * 1000
+            logger.error(
+                "exact_search_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                latency_ms=round(search_ms, 1),
+            )
             if self.metrics:
                 if not hasattr(self.metrics, "storage_search_errors"):
                     self.metrics.storage_search_errors = 0
@@ -384,10 +523,18 @@ class LanceDBBackend(StorageBackend):
         """Semantic search with vectorized filtering."""
         import pyarrow.compute as pc
 
+        search_start = time.perf_counter()
         context_hash = (
             create_fingerprint(context) if context else create_fingerprint({})
         )
         where_clause = f"context_hash = '{context_hash}'"
+
+        logger.debug(
+            "semantic_search_start",
+            context_hash=context_hash[:16],
+            limit=limit,
+            threshold=similarity_threshold,
+        )
 
         try:
             query = self.semantic_table.search(embedding).metric("cosine").limit(limit)
@@ -395,6 +542,10 @@ class LanceDBBackend(StorageBackend):
             results = query.to_arrow()
 
             if len(results) == 0:
+                search_ms = (time.perf_counter() - search_start) * 1000
+                logger.debug(
+                    "semantic_search_no_candidates", latency_ms=round(search_ms, 1)
+                )
                 return []
 
             # Vectorized similarity computation
@@ -406,6 +557,12 @@ class LanceDBBackend(StorageBackend):
             filtered_results = results.filter(mask)
 
             if len(filtered_results) == 0:
+                search_ms = (time.perf_counter() - search_start) * 1000
+                logger.debug(
+                    "semantic_search_filtered_out",
+                    candidates=len(results),
+                    latency_ms=round(search_ms, 1),
+                )
                 return []
 
             # Convert to entries
@@ -418,10 +575,26 @@ class LanceDBBackend(StorageBackend):
                     entries.append(entry)
 
             entries.sort(key=lambda x: x.similarity or 0, reverse=True)
+
+            search_ms = (time.perf_counter() - search_start) * 1000
+            logger.debug(
+                "semantic_search_success",
+                candidates=len(results),
+                filtered=len(entries),
+                top_similarity=round(entries[0].similarity, 3) if entries else 0,
+                latency_ms=round(search_ms, 1),
+            )
             return entries
 
         except Exception as e:
-            logger.error("semantic_search_failed", error=str(e), exc_info=True)
+            search_ms = (time.perf_counter() - search_start) * 1000
+            logger.error(
+                "semantic_search_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                latency_ms=round(search_ms, 1),
+                exc_info=True,
+            )
             if self.metrics:
                 if not hasattr(self.metrics, "storage_search_errors"):
                     self.metrics.storage_search_errors = 0
@@ -436,7 +609,17 @@ class LanceDBBackend(StorageBackend):
             context_dict = json.loads(arrow_table["context"][index].as_py())
             result_data = arrow_table["result"][index].as_py()
             result_type = arrow_table["result_type"][index].as_py()
+
+            deserialize_start = time.perf_counter()
             result_obj = self.serializer.deserialize(result_data, result_type)
+            deserialize_ms = (time.perf_counter() - deserialize_start) * 1000
+
+            if deserialize_ms > 10:  # Only log if significant
+                logger.debug(
+                    "deserialization_slow",
+                    latency_ms=round(deserialize_ms, 1),
+                    result_type=result_type,
+                )
 
             metadata_str = arrow_table["metadata"][index].as_py()
             metadata_obj = (
@@ -459,7 +642,13 @@ class LanceDBBackend(StorageBackend):
                 metadata=metadata_obj,
             )
         except Exception as e:
-            logger.error("arrow_conversion_failed", index=index, error=str(e))
+            logger.error(
+                "arrow_conversion_failed",
+                index=index,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return None
 
     def to_arrow(self):
@@ -468,27 +657,50 @@ class LanceDBBackend(StorageBackend):
 
     def delete_by_filter(self, filter_expr: str):
         """Delete entries matching filter from both tables."""
+        delete_start = time.perf_counter()
+        logger.debug("delete_by_filter_start", filter_expr=filter_expr)
+
         if self.config.db_uri == "memory://":
             raise NotImplementedError("Use delete_by_condition for memory://")
         else:
+            deleted_count = 0
             try:
+                before = self.exact_table.count_rows()
                 self.exact_table.delete(filter_expr)
+                after = self.exact_table.count_rows()
+                deleted_count += before - after
+                logger.debug("exact_table_deleted", count=before - after)
             except Exception as e:
                 logger.debug("exact_table_delete_skipped", error=str(e))
 
             try:
+                before = self.semantic_table.count_rows()
                 self.semantic_table.delete(filter_expr)
+                after = self.semantic_table.count_rows()
+                deleted_count += before - after
+                logger.debug("semantic_table_deleted", count=before - after)
             except Exception as e:
                 logger.debug("semantic_table_delete_skipped", error=str(e))
 
             try:
                 self.exact_table.compact_files()
                 self.semantic_table.compact_files()
+                logger.debug("tables_compacted")
             except AttributeError:
                 pass
 
+            delete_ms = (time.perf_counter() - delete_start) * 1000
+            logger.info(
+                "delete_by_filter_complete",
+                deleted=deleted_count,
+                latency_ms=round(delete_ms, 1),
+            )
+
     def delete_by_condition(self, condition_func):
         """Delete by custom condition (for memory mode)."""
+        delete_start = time.perf_counter()
+        logger.debug("delete_by_condition_start")
+
         if self.config.db_uri == "memory://":
             exact_arrow = self.exact_table.to_arrow()
             mask_exact = condition_func(exact_arrow)
@@ -512,11 +724,19 @@ class LanceDBBackend(StorageBackend):
                 mode="overwrite",
             )
             self.table = self.semantic_table
+
+            delete_ms = (time.perf_counter() - delete_start) * 1000
+            logger.info("delete_by_condition_complete", latency_ms=round(delete_ms, 1))
         else:
             raise NotImplementedError("Use delete_by_filter for persistent storage")
 
     def clear(self):
         """Clear all entries from both tables."""
+        clear_start = time.perf_counter()
+        before = self.count()
+
+        logger.debug("clear_start", entries=before)
+
         self.exact_table = self.db.create_table(
             self._exact_table_name,
             schema=self.exact_schema,
@@ -530,12 +750,17 @@ class LanceDBBackend(StorageBackend):
         self.table = self.semantic_table
         self._index_created = False
 
+        clear_ms = (time.perf_counter() - clear_start) * 1000
+        logger.info("storage_cleared", deleted=before, latency_ms=round(clear_ms, 1))
+
     def has_index(self) -> bool:
         """Check if index exists on semantic table."""
         return self._index_created
 
     def create_index(self, num_partitions: int, num_sub_vectors: int):
         """Create IVF-PQ index on semantic table."""
+        index_start = time.perf_counter()
+
         logger.info(
             "creating_index",
             partitions=num_partitions,
@@ -548,7 +773,9 @@ class LanceDBBackend(StorageBackend):
             num_sub_vectors=num_sub_vectors,
         )
         self._index_created = True
-        logger.info("index_created")
+
+        index_ms = (time.perf_counter() - index_start) * 1000
+        logger.info("index_created", latency_ms=round(index_ms, 1))
 
     def maybe_auto_create_index(self, threshold: int, num_partitions: int):
         """Create index if threshold reached on semantic table."""

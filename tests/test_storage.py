@@ -91,7 +91,7 @@ class TestLanceDBBackend:
             embedding=[0.1] * 384,
             result="test result",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
 
         storage.add([entry])
@@ -112,13 +112,17 @@ class TestLanceDBBackend:
             embedding=embedding,
             result="test result",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
         # Search with same context
         results = storage.search(
-            embedding=embedding, context=context, limit=10, similarity_threshold=0.5
+            embedding=embedding,
+            context=context,
+            limit=10,
+            similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) > 0
@@ -137,7 +141,7 @@ class TestLanceDBBackend:
             embedding=[0.1] * 384,
             result="result A",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -147,6 +151,7 @@ class TestLanceDBBackend:
             context={"agent": "B"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 0
@@ -162,7 +167,7 @@ class TestLanceDBBackend:
             embedding=[0.1] * 384,
             result="result",
             timestamp=time.time(),
-            metadata={"key": "value"},
+            metadata={"query_mode": "semantic", "key": "value"},
         )
         storage.add([entry])
 
@@ -186,7 +191,7 @@ class TestLanceDBBackend:
                 embedding=[0.1 * i] * 384,
                 result=f"result {i}",
                 timestamp=time.time(),
-                metadata=None,
+                metadata={"query_mode": "semantic"},
             )
             for i in range(5)
         ]
@@ -213,7 +218,7 @@ class TestLanceDBBackend:
             embedding=[0.1] * 384,
             result=df,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -223,6 +228,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -255,7 +261,7 @@ class TestLanceDBBackend:
             embedding=[0.1] * 384,
             result=nested_result,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -265,6 +271,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -298,7 +305,7 @@ class TestLanceDBBackend:
             embedding=[0.2] * 384,
             result=list_result,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -308,6 +315,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -344,7 +352,7 @@ class TestLanceDBBackend:
             embedding=[0.3] * 384,
             result=nested,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -354,6 +362,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -389,7 +398,7 @@ class TestLanceDBBackend:
             embedding=[0.4] * 384,
             result=arr,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -399,6 +408,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -429,7 +439,7 @@ class TestLanceDBBackend:
             embedding=[0.5] * 384,
             result=mixed_result,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -439,6 +449,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -469,7 +480,7 @@ class TestLanceDBBackend:
             embedding=[0.6] * 384,
             result=df,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -479,6 +490,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -507,7 +519,7 @@ class TestLanceDBBackend:
             embedding=[0.7] * 384,
             result=mixed_list,
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -517,6 +529,7 @@ class TestLanceDBBackend:
             context={"agent": "test"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
 
         assert len(results) == 1
@@ -547,7 +560,7 @@ class TestDualTableArchitecture:
         assert storage.semantic_table is not None
 
     def test_add_to_exact_table(self):
-        """Should add to exact table when query_mode=exact."""
+        """Should add to exact table when metadata has query_mode=exact."""
         config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
@@ -557,16 +570,16 @@ class TestDualTableArchitecture:
             embedding=None,  # No embedding for exact mode
             result="result",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "exact"},
         )
 
-        storage.add([entry], query_mode="exact")
+        storage.add([entry])
 
         assert storage.exact_table.count_rows() == 1
         assert storage.semantic_table.count_rows() == 0
 
     def test_add_to_semantic_table(self):
-        """Should add to semantic table when query_mode=semantic."""
+        """Should add to semantic table when metadata has query_mode=semantic."""
         config = ReminiscenceConfig(db_uri="memory://")
         storage = LanceDBBackend(config, embedding_dim=384)
 
@@ -576,10 +589,10 @@ class TestDualTableArchitecture:
             embedding=[0.1] * 384,
             result="result",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
 
-        storage.add([entry], query_mode="semantic")
+        storage.add([entry])
 
         assert storage.semantic_table.count_rows() == 1
         assert storage.exact_table.count_rows() == 0
@@ -595,10 +608,10 @@ class TestDualTableArchitecture:
             embedding=None,
             result="exact result",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "exact"},
         )
 
-        storage.add([entry], query_mode="exact")
+        storage.add([entry])
 
         results = storage.search(
             embedding=None,
@@ -623,7 +636,7 @@ class TestDualTableArchitecture:
             embedding=None,
             result="r1",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "exact"},
         )
 
         entry2 = CacheEntry(
@@ -632,11 +645,11 @@ class TestDualTableArchitecture:
             embedding=[0.1] * 384,
             result="r2",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
 
-        storage.add([entry1], query_mode="exact")
-        storage.add([entry2], query_mode="semantic")
+        storage.add([entry1])
+        storage.add([entry2])
 
         assert storage.count() == 2
 
@@ -651,7 +664,7 @@ class TestDualTableArchitecture:
             embedding=None,
             result="r1",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "exact"},
         )
 
         entry2 = CacheEntry(
@@ -660,11 +673,11 @@ class TestDualTableArchitecture:
             embedding=[0.1] * 384,
             result="r2",
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
 
-        storage.add([entry1], query_mode="exact")
-        storage.add([entry2], query_mode="semantic")
+        storage.add([entry1])
+        storage.add([entry2])
 
         storage.clear()
 
@@ -689,7 +702,7 @@ class TestEncryptedStorage:
             embedding=[0.1] * 384,
             result={"classified": "data"},
             timestamp=time.time(),
-            metadata=None,
+            metadata={"query_mode": "semantic"},
         )
         storage.add([entry])
 
@@ -698,6 +711,7 @@ class TestEncryptedStorage:
             context={"agent": "secure"},
             limit=10,
             similarity_threshold=0.5,
+            query_mode="semantic",
         )
         assert len(results) == 1
         assert results[0].result == {"classified": "data"}

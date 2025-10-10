@@ -208,8 +208,8 @@ class StorageOperations:
                     result_str = json.dumps(result)
                     result_size = len(result_str.encode("utf-8"))
                     self.metrics.record_result_size(result_size)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("result_size_measurement_failed", error=str(e))
 
             total_ms = (time.time() - store_start) * 1000
             logger.info(

@@ -1,16 +1,16 @@
 """LanceDB storage backend with hybrid exact/semantic tables."""
 
 import json
-import hashlib
 import time
 from typing import List, Dict, Any
 import lancedb
 import pyarrow as pa
 
 from .base import StorageBackend
+from .schemas import create_exact_schema, create_semantic_schema
 from ..types import CacheEntry
 from ..utils.logging import get_logger
-from ..utils.fingerprint import create_fingerprint
+from ..utils.fingerprint import create_fingerprint, compute_query_hash
 from ..serialization import ResultSerializer
 from ..compression import create_compressor
 
@@ -59,12 +59,13 @@ class LanceDBBackend(StorageBackend):
         logger.debug("connecting_to_lancedb", db_uri=config.db_uri)
         self.db = lancedb.connect(config.db_uri)
 
+        # Use imported schema factories
+        logger.debug("creating_schemas", embedding_dim=embedding_dim)
+        self.exact_schema = create_exact_schema()
+        self.semantic_schema = create_semantic_schema(embedding_dim)
+
         self._exact_table_name = f"{config.table_name}_exact"
         self._semantic_table_name = f"{config.table_name}_semantic"
-
-        logger.debug("creating_schemas", embedding_dim=embedding_dim)
-        self.exact_schema = self._create_exact_schema()
-        self.semantic_schema = self._create_semantic_schema()
 
         self.exact_table = self._init_table(self._exact_table_name, self.exact_schema)
         self.semantic_table = self._init_table(
@@ -74,6 +75,7 @@ class LanceDBBackend(StorageBackend):
         self.table = self.semantic_table
         self.schema = self.semantic_schema
 
+        # Initialize encryption if enabled
         encryptor = None
         if config.encryption_enabled:
             logger.debug("initializing_encryption", backend=config.encryption_backend)
@@ -95,6 +97,7 @@ class LanceDBBackend(StorageBackend):
                 max_workers=config.encryption_max_workers,
             )
 
+        # Initialize compression if enabled
         compressor = None
         if config.compression_enabled:
             logger.debug(
@@ -134,38 +137,6 @@ class LanceDBBackend(StorageBackend):
             init_ms=round(init_ms, 1),
         )
 
-    def _create_exact_schema(self) -> pa.Schema:
-        """Schema without embeddings for exact matching."""
-        return pa.schema(
-            [
-                pa.field("id", pa.string()),
-                pa.field("query_text", pa.string()),
-                pa.field("query_hash", pa.string()),
-                pa.field("context", pa.string()),
-                pa.field("context_hash", pa.string()),
-                pa.field("result", pa.string()),
-                pa.field("result_type", pa.string()),
-                pa.field("timestamp", pa.float64()),
-                pa.field("metadata", pa.string()),
-            ]
-        )
-
-    def _create_semantic_schema(self) -> pa.Schema:
-        """Schema with embeddings for semantic search."""
-        return pa.schema(
-            [
-                pa.field("id", pa.string()),
-                pa.field("query_text", pa.string()),
-                pa.field("context", pa.string()),
-                pa.field("context_hash", pa.string()),
-                pa.field("embedding", pa.list_(pa.float32(), self.embedding_dim)),
-                pa.field("result", pa.string()),
-                pa.field("result_type", pa.string()),
-                pa.field("timestamp", pa.float64()),
-                pa.field("metadata", pa.string()),
-            ]
-        )
-
     def _init_table(self, table_name: str, schema: pa.Schema):
         """Initialize or open a specific table."""
         try:
@@ -183,15 +154,9 @@ class LanceDBBackend(StorageBackend):
         logger.debug("clearing_storage_instances", count=len(cls._instances))
         cls._instances.clear()
 
-    def _compute_query_hash(self, query_text: str, context: Dict[str, Any]) -> str:
-        """Compute hash of query + context for exact matching."""
-        context_json = json.dumps(context, sort_keys=True)
-        data = f"{query_text}:{context_json}"
-        return hashlib.sha256(data.encode()).hexdigest()
-
     def _generate_id(self, entry: CacheEntry) -> str:
         """Generate unique ID for entry using SHA256 hash."""
-        return self._compute_query_hash(entry.query_text, entry.context)
+        return compute_query_hash(entry.query_text, entry.context)
 
     def count(self) -> int:
         """Get total entries across both tables."""
@@ -310,9 +275,7 @@ class LanceDBBackend(StorageBackend):
                 exact_data.append(
                     {
                         **base_data,
-                        "query_hash": self._compute_query_hash(
-                            query_texts[i], contexts[i]
-                        ),
+                        "query_hash": compute_query_hash(query_texts[i], contexts[i]),
                     }
                 )
             else:
@@ -475,7 +438,7 @@ class LanceDBBackend(StorageBackend):
             return []
 
         search_start = time.perf_counter()
-        query_hash = self._compute_query_hash(query_text, context)
+        query_hash = compute_query_hash(query_text, context)
         context_hash = create_fingerprint(context)
 
         logger.debug(

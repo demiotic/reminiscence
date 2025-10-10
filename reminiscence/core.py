@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, List, Union
 
 from .config import ReminiscenceConfig
 from .types import LookupResult, AvailabilityCheck
+from .embeddings.base import EmbeddingModel
 from .embeddings import create_embedder
 from .storage import create_storage_backend
 from .eviction import create_eviction_policy
@@ -84,7 +85,11 @@ class Reminiscence:
         ...     return expensive_llm_call(question, model)
     """
 
-    def __init__(self, config: Optional[ReminiscenceConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ReminiscenceConfig] = None,
+        embedder: Optional[EmbeddingModel] = None,
+    ):
         """
         Initialize Reminiscence with all components.
 
@@ -103,7 +108,11 @@ class Reminiscence:
         )
 
         # Initialize components
-        self.embedder = create_embedder(self.config)
+        if embedder is not None:
+            self.embedder = embedder
+            logger.info("using_provided_embedder", model_type=type(embedder).__name__)
+        else:
+            self.embedder = create_embedder(self.config)
 
         # Warm-up embedder if configured
         if self.config.warm_up_embedder:

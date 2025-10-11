@@ -4,7 +4,7 @@
 import time
 import statistics
 from pyrage import x25519
-from reminiscence.utils.serde import ResultSerializer
+from reminiscence.serialization import ResultSerializer
 from reminiscence.encryption import AgeEncryption
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "reminiscence"
-version = "0.4.0"
+version = "0.5.0"
 description = "Semantic caching for LLMs"
 authors = [{ name = "Juan José de las Heras Herrera" }]
 readme = "README.md"

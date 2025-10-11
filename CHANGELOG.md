@@ -314,7 +314,7 @@ All changes are **100% backward compatible**. Existing code works unchanged:
 
 ---
 
-[Unreleased]: https://github.com/yourusername/reminiscence/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/yourusername/reminiscence/releases/tag/v0.4.0
-[0.3.0]: https://github.com/yourusername/reminiscence/releases/tag/v0.3.0
-[0.2.0]: https://github.com/yourusername/reminiscence/releases/tag/v0.2.0
+[Unreleased]: https://github.com/demiotic/reminiscence/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/demiotic/reminiscence/releases/tag/v0.4.0
+[0.3.0]: https://github.com/demiotic/reminiscence/releases/tag/v0.3.0
+[0.2.0]: https://github.com/demiotic/reminiscence/releases/tag/v0.2.0

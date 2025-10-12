@@ -1,9 +1,12 @@
 """Structured logging configuration for Reminiscence."""
 
-import logging
-import structlog
-from datetime import datetime
+from __future__ import annotations
 
+import logging
+from datetime import datetime
+from typing import Any, Dict
+
+import structlog
 
 # ANSI color codes
 COLORS = {
@@ -17,11 +20,18 @@ COLORS = {
 }
 
 
-def _clean_text_renderer(logger, name, event_dict):
-    """
-    Custom renderer for clean, colorized text logs.
+def _clean_text_renderer(logger: Any, name: str, event_dict: Dict[str, Any]) -> str:
+    """Custom renderer for clean, colorized text logs.
 
     Format: [LEVEL] HH:MM:SS - event_name | key=value key=value
+
+    Args:
+        logger: Logger instance (unused).
+        name: Logger name (unused).
+        event_dict: Event dictionary with log data.
+
+    Returns:
+        Formatted log string.
     """
     # Extract core fields
     level = event_dict.pop("level", "info").upper()
@@ -83,11 +93,10 @@ def _clean_text_renderer(logger, name, event_dict):
 
 
 def configure_logging(log_level: str = "INFO", json_logs: bool = False) -> None:
-    """
-    Configure structured logging for Reminiscence.
+    """Configure structured logging for Reminiscence.
 
     Args:
-        log_level: Log level (DEBUG, INFO, WARNING, ERROR)
+        log_level: Log level (DEBUG, INFO, WARNING, ERROR).
         json_logs: If True, output JSON format. If False, use clean colorized text.
 
     Note:
@@ -132,13 +141,12 @@ def configure_logging(log_level: str = "INFO", json_logs: bool = False) -> None:
 
 
 def get_logger(name: str) -> structlog.BoundLogger:
-    """
-    Get a structured logger instance.
+    """Get a structured logger instance.
 
     Args:
-        name: Logger name (typically __name__)
+        name: Logger name (typically __name__).
 
     Returns:
-        Configured structlog logger
+        Configured structlog logger.
     """
     return structlog.get_logger(name)

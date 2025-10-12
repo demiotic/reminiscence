@@ -1,7 +1,10 @@
 """Gzip compression backend."""
 
+from __future__ import annotations
+
 import gzip
 import time
+
 from .base import Compressor
 from ..utils.logging import get_logger
 
@@ -9,8 +12,7 @@ logger = get_logger(__name__)
 
 
 class GzipCompressor(Compressor):
-    """
-    Gzip compression implementation.
+    """Gzip compression implementation.
 
     Gzip is widely supported but slower than zstd.
     Recommended compression levels:
@@ -20,14 +22,13 @@ class GzipCompressor(Compressor):
     """
 
     def __init__(self, level: int = 6):
-        """
-        Initialize Gzip compressor.
+        """Initialize Gzip compressor.
 
         Args:
-            level: Compression level (1-9, default: 6)
+            level: Compression level (1-9, default: 6).
 
         Raises:
-            ValueError: If level out of range
+            ValueError: If level out of range.
         """
         if not (1 <= level <= 9):
             raise ValueError(f"Gzip level must be 1-9, got {level}")
@@ -42,23 +43,33 @@ class GzipCompressor(Compressor):
 
     @property
     def algorithm(self) -> str:
-        """Algorithm name."""
+        """Algorithm name.
+
+        Returns:
+            Algorithm identifier ("gzip").
+        """
         return self._algorithm
 
     @property
     def level(self) -> int:
-        """Compression level."""
+        """Compression level.
+
+        Returns:
+            Configured compression level (1-9).
+        """
         return self._level
 
     def compress(self, data: bytes) -> bytes:
-        """
-        Compress data using Gzip.
+        """Compress data using Gzip.
 
         Args:
-            data: Raw bytes
+            data: Raw bytes to compress.
 
         Returns:
-            Compressed bytes
+            Compressed bytes.
+
+        Raises:
+            TypeError: If data is not bytes.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")
@@ -96,14 +107,16 @@ class GzipCompressor(Compressor):
             raise
 
     def decompress(self, data: bytes) -> bytes:
-        """
-        Decompress Gzip data.
+        """Decompress Gzip data.
 
         Args:
-            data: Compressed bytes
+            data: Compressed bytes.
 
         Returns:
-            Original bytes
+            Decompressed bytes.
+
+        Raises:
+            TypeError: If data is not bytes.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")

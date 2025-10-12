@@ -1,9 +1,11 @@
-"""Cache operations module."""
+"""Cache operations module - Internal operation handlers."""
 
-from .lookup import LookupOperations
-from .storage_ops import StorageOperations
+from __future__ import annotations
+
 from .invalidation import InvalidationOperations
+from .lookup import LookupOperations
 from .maintenance import MaintenanceOperations
+from .store import StorageOperations
 
 __all__ = [
     "LookupOperations",

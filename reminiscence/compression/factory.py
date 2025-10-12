@@ -1,27 +1,29 @@
 """Factory for creating compression backends."""
 
+from __future__ import annotations
+
 from typing import Optional
+
 from .base import Compressor
-from .zstd import ZstdCompressor
 from .gzip import GzipCompressor
+from .zstd import ZstdCompressor
 
 
 def create_compressor(
     algorithm: str = "zstd",
     level: Optional[int] = None,
 ) -> Optional[Compressor]:
-    """
-    Create compressor backend.
+    """Create compressor backend.
 
     Args:
-        algorithm: Algorithm name ("zstd", "gzip", "none")
-        level: Compression level (algorithm-specific, optional)
+        algorithm: Algorithm name ("zstd", "gzip", "none").
+        level: Compression level (algorithm-specific, optional).
 
     Returns:
-        Compressor instance or None if algorithm is "none"
+        Compressor instance or None if algorithm is "none".
 
     Raises:
-        ValueError: If algorithm not supported
+        ValueError: If algorithm not supported.
     """
     algorithm = algorithm.lower()
 

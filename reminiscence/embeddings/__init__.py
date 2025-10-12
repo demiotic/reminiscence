@@ -1,5 +1,7 @@
 """Embedding model abstractions."""
 
+from __future__ import annotations
+
 from .base import EmbeddingModel
 from ..utils.logging import get_logger
 
@@ -7,10 +9,17 @@ logger = get_logger(__name__)
 
 
 def create_embedder(config) -> EmbeddingModel:
-    """
-    Factory to create embedder from config.
+    """Factory to create embedder from config.
 
-    Only FastEmbed is supported.
+    Args:
+        config: Configuration object with embedding_backend attribute.
+
+    Returns:
+        EmbeddingModel instance (currently only FastEmbed).
+
+    Raises:
+        ValueError: If embedding_backend is not supported.
+        ImportError: If required library not installed.
     """
     backend = config.embedding_backend
 
@@ -22,8 +31,18 @@ def create_embedder(config) -> EmbeddingModel:
         )
 
 
-def _create_fastembed(config):
-    """Create FastEmbed embedder."""
+def _create_fastembed(config) -> EmbeddingModel:
+    """Create FastEmbed embedder.
+
+    Args:
+        config: Configuration object.
+
+    Returns:
+        FastEmbedEmbedder instance.
+
+    Raises:
+        ImportError: If fastembed not installed.
+    """
     try:
         from .fastembed import FastEmbedEmbedder
 

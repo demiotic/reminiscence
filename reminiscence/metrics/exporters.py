@@ -1,31 +1,37 @@
 """Metrics exporters for external systems."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from opentelemetry import metrics
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.metrics import Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 
 
 class MetricsExporter(ABC):
     """Abstract base for metrics exporters."""
 
     @abstractmethod
-    def export(self, metrics: Dict[str, Any]):
-        """Export metrics to external system."""
+    def export(self, metrics: Dict[str, Any]) -> None:
+        """Export metrics to external system.
+
+        Args:
+            metrics: Metrics data to export.
+        """
         pass
 
     @classmethod
-    def _clear_instances(cls):
+    def _clear_instances(cls) -> None:
         """Clear all singleton instances (for testing only)."""
         cls._instance = None
 
 
 class OpenTelemetryExporter(MetricsExporter):
-    """
-    OpenTelemetry metrics exporter (Singleton).
+    """OpenTelemetry metrics exporter (Singleton).
 
     Exports Reminiscence cache metrics to OTLP-compatible backends
     (Grafana, Prometheus via OTLP, Jaeger, SigNoz, etc.)
@@ -40,7 +46,7 @@ class OpenTelemetryExporter(MetricsExporter):
         >>> if cache.otel_exporter:
         ...     # Exporter is ready, metrics will be exported automatically
         ...     pass
-
+        >>>
         >>> # Manual creation (not recommended, but safe due to singleton)
         >>> exporter = OpenTelemetryExporter.from_config(config)
         >>> # Second call returns the same instance
@@ -55,14 +61,16 @@ class OpenTelemetryExporter(MetricsExporter):
     - Elastic APM (requires secret token)
     """
 
-    _instance: Optional["OpenTelemetryExporter"] = None
+    _instance: Optional[OpenTelemetryExporter] = None
 
-    def __new__(cls, *args, **kwargs):
-        """
-        Singleton pattern: only one instance globally.
+    def __new__(cls, *args, **kwargs) -> OpenTelemetryExporter:
+        """Singleton pattern: only one instance globally.
 
         Ensures that multiple instantiation attempts return the same object,
         preventing MeterProvider conflicts.
+
+        Returns:
+            The singleton OpenTelemetryExporter instance.
         """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -77,23 +85,21 @@ class OpenTelemetryExporter(MetricsExporter):
         headers: Optional[Dict[str, str]] = None,
         export_interval_ms: int = 60000,
     ):
-        """
-        Initialize OpenTelemetry exporter (only once per process).
+        """Initialize OpenTelemetry exporter (only once per process).
 
         Args:
-            endpoint: OTLP endpoint URL
-            service_name: Service name for telemetry
-            headers: Optional HTTP headers for authentication
+            endpoint: OTLP endpoint URL.
+            service_name: Service name for telemetry.
+            headers: Optional HTTP headers for authentication.
                      Example for Grafana Cloud:
                      {"Authorization": "Basic <base64_token>"}
             export_interval_ms: How often to export metrics in milliseconds
-                                Default: 60000 (60 seconds)
+                                (default: 60000 - 60 seconds).
 
         Note:
             Due to singleton pattern, only the first call to __init__ will
             actually configure the exporter. Subsequent calls are no-ops.
         """
-
         # Only initialize once (check instance flag, not class flag)
         if self._initialized:
             return  # Silent return on subsequent calls
@@ -121,14 +127,13 @@ class OpenTelemetryExporter(MetricsExporter):
         # Mark as initialized
         self._initialized = True
 
-    def _setup_meter_provider(self):
-        """
-        Setup MeterProvider with OTLP exporter BEFORE any meter is created.
+    def _setup_meter_provider(self) -> None:
+        """Setup MeterProvider with OTLP exporter BEFORE any meter is created.
 
         This ensures we configure OpenTelemetry correctly before any
         instrumentation code tries to use it.
         """
-        from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 
         # Check current state
         current = metrics.get_meter_provider()
@@ -164,9 +169,8 @@ class OpenTelemetryExporter(MetricsExporter):
         # Set it globally BEFORE calling get_meter()
         metrics.set_meter_provider(provider)
 
-    def _create_instruments(self):
+    def _create_instruments(self) -> None:
         """Create OpenTelemetry instruments for metrics."""
-
         # Counters for cumulative values
         self.hits_counter = self.meter.create_counter(
             name="cache_hits",
@@ -208,8 +212,12 @@ class OpenTelemetryExporter(MetricsExporter):
         # Observable gauge for hit rate
         self._current_hit_rate = 0.0
 
-        def get_hit_rate(options):
-            """Callback that returns list of Observations."""
+        def get_hit_rate(options) -> list:
+            """Callback that returns list of Observations.
+
+            Returns:
+                List containing single Observation with current hit rate.
+            """
             return [Observation(value=self._current_hit_rate)]
 
         self.hit_rate_gauge = self.meter.create_observable_gauge(
@@ -219,15 +227,14 @@ class OpenTelemetryExporter(MetricsExporter):
             unit="1",
         )
 
-    def export(self, metrics_data: Dict[str, Any]):
-        """
-        Export metrics from CacheMetrics.report() to OpenTelemetry.
+    def export(self, metrics_data: Dict[str, Any]) -> None:
+        """Export metrics from CacheMetrics.report() to OpenTelemetry.
 
         This method is called periodically by the metrics export scheduler
         (if enabled via start_scheduler()) or can be called manually.
 
         Args:
-            metrics_data: Output from CacheMetrics.report()
+            metrics_data: Output from CacheMetrics.report().
 
         Note:
             Metrics are sent using delta aggregation for counters, meaning
@@ -304,15 +311,14 @@ class OpenTelemetryExporter(MetricsExporter):
         )
 
     @classmethod
-    def from_config(cls, config) -> Optional["OpenTelemetryExporter"]:
-        """
-        Create exporter from ReminiscenceConfig.
+    def from_config(cls, config) -> Optional[OpenTelemetryExporter]:
+        """Create exporter from ReminiscenceConfig.
 
         Args:
-            config: ReminiscenceConfig instance
+            config: ReminiscenceConfig instance.
 
         Returns:
-            OpenTelemetryExporter instance or None if disabled
+            OpenTelemetryExporter instance or None if disabled.
 
         Example:
             >>> config = ReminiscenceConfig.load()
@@ -340,9 +346,8 @@ class OpenTelemetryExporter(MetricsExporter):
         )
 
     @classmethod
-    def reset(cls):
-        """
-        Reset the singleton instance (mainly for testing).
+    def reset(cls) -> None:
+        """Reset the singleton instance (mainly for testing).
 
         Warning:
             This should only be used in tests. In production, the singleton
@@ -357,8 +362,7 @@ class OpenTelemetryExporter(MetricsExporter):
 
 
 class PrometheusExporter(MetricsExporter):
-    """
-    Prometheus metrics exporter.
+    """Prometheus metrics exporter.
 
     TODO: Implement prometheus_client integration.
 
@@ -376,5 +380,13 @@ class PrometheusExporter(MetricsExporter):
         >>>         self.cache_misses.inc(metrics['misses'])
     """
 
-    def export(self, metrics: Dict[str, Any]):
+    def export(self, metrics: Dict[str, Any]) -> None:
+        """Export metrics to Prometheus.
+
+        Args:
+            metrics: Metrics data to export.
+
+        Raises:
+            NotImplementedError: Prometheus exporter not yet implemented.
+        """
         raise NotImplementedError("Prometheus exporter not yet implemented")

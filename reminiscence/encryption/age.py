@@ -1,32 +1,33 @@
 """Age encryption backend using pyrage with batch support."""
 
-from typing import List
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
+from typing import List
 
 try:
-    from pyrage import x25519, encrypt, decrypt
+    from pyrage import decrypt, encrypt, x25519
 except ImportError:
     raise ImportError(
         "pyrage is required for age encryption. Install with: pip install pyrage"
     )
 
-from .base import EncryptionBackend, EncryptionError, DecryptionError
+from .base import DecryptionError, EncryptionBackend, EncryptionError
 
 
 class AgeEncryption(EncryptionBackend):
-    """
-    Age encryption backend with batch support.
+    """Age encryption backend with batch support.
 
     Uses age (https://age-encryption.org/) for encryption.
     Works with bytes directly (no JSON serialization).
 
     Example:
         >>> enc = AgeEncryption(key="AGE-SECRET-KEY-...")
-
+        >>>
         >>> # Single encryption
         >>> encrypted = enc.encrypt(b"sensitive data")
         >>> decrypted = enc.decrypt(encrypted)
-
+        >>>
         >>> # Batch encryption (parallel)
         >>> data_list = [b"data1", b"data2", b"data3"]
         >>> encrypted_list = enc.encrypt_batch(data_list)
@@ -34,15 +35,14 @@ class AgeEncryption(EncryptionBackend):
     """
 
     def __init__(self, key: str, max_workers: int = 4):
-        """
-        Initialize age encryption.
+        """Initialize age encryption.
 
         Args:
-            key: Age public/private key string
-            max_workers: Max threads for batch operations
+            key: Age public/private key string.
+            max_workers: Max threads for batch operations.
 
         Raises:
-            ValueError: If key format is invalid
+            ValueError: If key format is invalid.
         """
         self.key = key
         self.max_workers = max_workers
@@ -64,17 +64,17 @@ class AgeEncryption(EncryptionBackend):
             self.recipient = self.identity.to_public()
 
     def encrypt(self, data: bytes) -> bytes:
-        """
-        Encrypt bytes.
+        """Encrypt bytes.
 
         Args:
-            data: Raw bytes to encrypt
+            data: Raw bytes to encrypt.
 
         Returns:
-            Encrypted bytes
+            Encrypted bytes.
 
         Raises:
-            EncryptionError: If encryption fails
+            TypeError: If data is not bytes.
+            EncryptionError: If encryption fails.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")
@@ -86,17 +86,17 @@ class AgeEncryption(EncryptionBackend):
             raise EncryptionError(f"Age encryption failed: {e}") from e
 
     def decrypt(self, encrypted_data: bytes) -> bytes:
-        """
-        Decrypt bytes.
+        """Decrypt bytes.
 
         Args:
-            encrypted_data: Encrypted bytes
+            encrypted_data: Encrypted bytes.
 
         Returns:
-            Decrypted bytes
+            Decrypted bytes.
 
         Raises:
-            DecryptionError: If decryption fails or no private key
+            TypeError: If encrypted_data is not bytes.
+            DecryptionError: If decryption fails or no private key.
         """
         if not self.is_private:
             raise DecryptionError(
@@ -113,24 +113,25 @@ class AgeEncryption(EncryptionBackend):
             raise DecryptionError(f"Age decryption failed: {e}") from e
 
     def encrypt_batch(self, data_list: List[bytes]) -> List[bytes]:
-        """
-        Encrypt multiple byte sequences in parallel.
+        """Encrypt multiple byte sequences in parallel.
 
         Args:
-            data_list: List of bytes to encrypt
+            data_list: List of bytes to encrypt.
 
         Returns:
-            List of encrypted bytes (same order as input)
+            List of encrypted bytes (same order as input).
 
         Raises:
-            EncryptionError: If any encryption fails
+            EncryptionError: If any encryption fails.
         """
         if not data_list:
             return []
 
+        # Sequential for small batches
         if len(data_list) <= 3:
             return [self.encrypt(data) for data in data_list]
 
+        # Parallel for larger batches
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 encrypted_list = list(executor.map(self.encrypt, data_list))
@@ -139,17 +140,16 @@ class AgeEncryption(EncryptionBackend):
             raise EncryptionError(f"Batch encryption failed: {e}") from e
 
     def decrypt_batch(self, encrypted_list: List[bytes]) -> List[bytes]:
-        """
-        Decrypt multiple encrypted byte sequences in parallel.
+        """Decrypt multiple encrypted byte sequences in parallel.
 
         Args:
-            encrypted_list: List of encrypted bytes
+            encrypted_list: List of encrypted bytes.
 
         Returns:
-            List of decrypted bytes (same order as input)
+            List of decrypted bytes (same order as input).
 
         Raises:
-            DecryptionError: If any decryption fails or no private key
+            DecryptionError: If any decryption fails or no private key.
         """
         if not encrypted_list:
             return []
@@ -159,9 +159,11 @@ class AgeEncryption(EncryptionBackend):
                 "Decryption requires a private key (AGE-SECRET-KEY-...)"
             )
 
+        # Sequential for small batches
         if len(encrypted_list) <= 3:
             return [self.decrypt(data) for data in encrypted_list]
 
+        # Parallel for larger batches
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 decrypted_list = list(executor.map(self.decrypt, encrypted_list))
@@ -170,5 +172,10 @@ class AgeEncryption(EncryptionBackend):
             raise DecryptionError(f"Batch decryption failed: {e}") from e
 
     def __repr__(self) -> str:
+        """String representation.
+
+        Returns:
+            String showing key type and max workers.
+        """
         key_type = "public" if self.is_public else "private"
         return f"AgeEncryption(key_type={key_type}, max_workers={self.max_workers})"

@@ -1,46 +1,51 @@
 """FIFO eviction policy with metrics instrumentation."""
 
+from __future__ import annotations
+
 import time
+from typing import Any, Dict, List, Optional
+
 from .base import EvictionPolicy
 
 
 class FIFOPolicy(EvictionPolicy):
     """First In First Out eviction policy."""
 
-    def __init__(self, metrics=None):
-        """
-        Initialize FIFO policy.
+    def __init__(self, metrics: Optional[Any] = None):
+        """Initialize FIFO policy.
 
         Args:
-            metrics: Optional CacheMetrics instance for tracking
+            metrics: Optional CacheMetrics instance for tracking.
         """
-        self.queue = []
+        self.queue: List[str] = []
         self.metrics = metrics
-        self.insertion_times = {}  # Track when entries were added
+        self.insertion_times: Dict[str, float] = {}
 
     def on_access(self, entry_id: str) -> None:
-        """FIFO doesn't track accesses."""
+        """FIFO doesn't track accesses.
+
+        Args:
+            entry_id: Entry that was accessed.
+        """
         pass
 
     def on_insert(self, entry_id: str) -> None:
-        """
-        Track new entry insertion.
+        """Track new entry insertion.
 
         Args:
-            entry_id: Unique identifier for cache entry
+            entry_id: Unique identifier for cache entry.
         """
         self.queue.append(entry_id)
         self.insertion_times[entry_id] = time.time()
 
     def select_victim(self) -> str:
-        """
-        Select oldest entry for eviction.
+        """Select oldest entry for eviction.
 
         Returns:
-            Entry ID to evict
+            Entry ID to evict.
 
         Raises:
-            ValueError: If no entries exist
+            ValueError: If no entries exist.
         """
         if not self.queue:
             raise ValueError("No entries to evict")
@@ -64,11 +69,10 @@ class FIFOPolicy(EvictionPolicy):
         return victim_id
 
     def on_evict(self, entry_id: str) -> None:
-        """
-        Remove evicted entry from tracking.
+        """Remove evicted entry from tracking.
 
         Args:
-            entry_id: Entry that was evicted
+            entry_id: Entry that was evicted.
         """
         if entry_id in self.queue:
             self.queue.remove(entry_id)
@@ -88,12 +92,11 @@ class FIFOPolicy(EvictionPolicy):
                 self.metrics.evictions_by_policy["fifo"] = 0
             self.metrics.evictions_by_policy["fifo"] += 1
 
-    def get_policy_stats(self) -> dict:
-        """
-        Get FIFO-specific statistics.
+    def get_policy_stats(self) -> Dict[str, Any]:
+        """Get FIFO-specific statistics.
 
         Returns:
-            Dict with policy statistics
+            Dict with policy statistics.
         """
         if not self.queue:
             return {

@@ -1,11 +1,13 @@
 """Transformation pipeline for compression and encryption."""
 
+from __future__ import annotations
+
 import time
-from typing import List, Tuple, Callable, Dict
+from typing import Callable, Dict, List, Tuple
+
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
-
 
 # Mapping of reverse operations to their forward counterparts
 REVERSE_STAGE_MAP: Dict[str, str] = {
@@ -15,8 +17,7 @@ REVERSE_STAGE_MAP: Dict[str, str] = {
 
 
 class TransformationPipeline:
-    """
-    Composable pipeline for data transformations.
+    """Composable pipeline for data transformations.
 
     Pipeline order: compress → encrypt
     Reverse order: decrypt → decompress
@@ -29,12 +30,11 @@ class TransformationPipeline:
     """
 
     def __init__(self, compressor=None, encryptor=None):
-        """
-        Initialize pipeline with optional transformers.
+        """Initialize pipeline with optional transformers.
 
         Args:
-            compressor: Compression backend (must have compress/decompress methods)
-            encryptor: Encryption backend (must have encrypt/decrypt methods)
+            compressor: Compression backend (must have compress/decompress methods).
+            encryptor: Encryption backend (must have encrypt/decrypt methods).
         """
         self.compressor = compressor
         self.encryptor = encryptor
@@ -58,18 +58,17 @@ class TransformationPipeline:
         )
 
     def transform(self, data: bytes) -> Tuple[bytes, List[str]]:
-        """
-        Apply all transformations in forward order.
+        """Apply all transformations in forward order.
 
         Args:
-            data: Raw bytes to transform
+            data: Raw bytes to transform.
 
         Returns:
-            Tuple of (transformed_bytes, list_of_applied_stage_names)
+            Tuple of (transformed_bytes, list_of_applied_stage_names).
 
         Raises:
-            TypeError: If data is not bytes
-            Exception: If any transformation fails
+            TypeError: If data is not bytes.
+            Exception: If any transformation fails.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")
@@ -126,20 +125,20 @@ class TransformationPipeline:
         return current, applied
 
     def reverse(self, data: bytes, applied_transformations: List[str]) -> bytes:
-        """
-        Reverse all transformations in reverse order.
+        """Reverse all transformations in reverse order.
 
         Args:
-            data: Transformed bytes
-            applied_transformations: List of transformation names that were applied during forward pass
+            data: Transformed bytes.
+            applied_transformations: List of transformation names that were
+                                   applied during forward pass.
 
         Returns:
-            Original bytes
+            Original bytes.
 
         Raises:
-            TypeError: If data is not bytes
-            ValueError: If applied_transformations is invalid
-            Exception: If any reverse transformation fails
+            TypeError: If data is not bytes.
+            ValueError: If applied_transformations is invalid.
+            Exception: If any reverse transformation fails.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")
@@ -206,7 +205,11 @@ class TransformationPipeline:
         return current
 
     def __repr__(self) -> str:
-        """String representation of pipeline."""
+        """String representation of pipeline.
+
+        Returns:
+            Pipeline description with active stages.
+        """
         stages = []
         if self.compressor:
             stages.append(f"compress({self.compressor.algorithm})")

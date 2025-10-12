@@ -227,7 +227,7 @@ All changes are **100% backward compatible**. Existing code works unchanged:
   - Embeddings now generated for all query modes (semantic, exact, auto)
   - Exact mode now uses threshold 0.9999 instead of nullable embeddings
 - **API improvements**
-  - Renamed decorator parameters: `query_param` → `query`, `strict_params` → `context_params`
+  - Renamed decorator parameters: `query_param` → `query`, `strict_params` → `context`
   - Added `similarity_threshold` parameter to decorator
 - **Test performance** - 10x faster test suite
   - Module-scoped fixtures reuse embedding model across tests

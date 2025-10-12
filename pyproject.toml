@@ -1,10 +1,10 @@
 [project]
 name = "reminiscence"
-version = "0.5.0"
-description = "Semantic caching for LLMs"
+version = "0.6.0"
+description = "Semantic caching for LLMs with multimodal support"
 authors = [{ name = "Juan José de las Heras Herrera" }]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 dependencies = [
     "lancedb>=0.25.1",
@@ -25,7 +25,14 @@ otel = [
     "opentelemetry-sdk>=1.20.0,<2.0.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0,<2.0.0",
 ]
-dev = ["pytest>=7.4.0", "pytest-cov>=4.1.0", "pandas>=2.0.0"]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pandas>=2.0.0",
+    "mypy>=1.18.2",
+    "ruff>=0.1.9",
+    "types-PyYAML>=6.0.0",
+]
 full = [
     "pandas>=2.0.0",
     "polars>=0.19.0",
@@ -44,17 +51,158 @@ where = ["."]
 include = ["reminiscence*"]
 
 [tool.setuptools.package-data]
-reminiscence = ["embeddings/*.yaml"]
+reminiscence = ["embeddings/*.yaml", "py.typed"]
 
+# ============================================================================
+# Mypy Configuration
+# ============================================================================
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+show_error_codes = true
+pretty = true
+
+# Ignore missing imports for third-party libraries without stubs
+[[tool.mypy.overrides]]
+module = [
+    "lancedb",
+    "lancedb.*",
+    "pyarrow",
+    "pyarrow.*",
+    "fastembed",
+    "fastembed.*",
+    "pyrage",
+    "structlog",
+    "structlog.*",
+    "pybase64",
+    "yaml",
+]
+ignore_missing_imports = true
+
+# Relax checks for internal operations (complex logic)
+[[tool.mypy.overrides]]
+module = "reminiscence.operations.*"
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# Relax checks for storage mixins (complex duck typing)
+[[tool.mypy.overrides]]
+module = "reminiscence.storage.lancedb.*"
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# Relax checks for serialization (complex types)
+[[tool.mypy.overrides]]
+module = "reminiscence.serialization.*"
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# Relax checks for decorators (complex metaprogramming)
+[[tool.mypy.overrides]]
+module = "reminiscence.decorators"
+disallow_untyped_defs = false
+check_untyped_defs = false
+warn_return_any = false
+disallow_any_generics = false
+disable_error_code = ["return-value", "type-arg", "no-any-return"]
+
+# Relax checks for scheduler (context managers)
+[[tool.mypy.overrides]]
+module = "reminiscence.scheduler"
+disallow_untyped_defs = false
+
+# Relax checks for metrics exporters (singleton pattern)
+[[tool.mypy.overrides]]
+module = "reminiscence.metrics.exporters"
+disallow_untyped_defs = false
+
+# Relax checks for embeddings (third-party integration)
+[[tool.mypy.overrides]]
+module = "reminiscence.embeddings.*"
+disallow_untyped_defs = false
+
+# Relax checks for storage (complex types)
+[[tool.mypy.overrides]]
+module = "reminiscence.storage.*"
+disallow_untyped_defs = false
+
+# Relax checks for cache (facade)
+[[tool.mypy.overrides]]
+module = "reminiscence.cache"
+disallow_untyped_defs = false
+
+# Relax checks for core (facade)
+[[tool.mypy.overrides]]
+module = "reminiscence.core"
+disallow_untyped_defs = false
+
+# ============================================================================
+# Ruff Configuration
+# ============================================================================
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["reminiscence"]
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-v"]
+addopts = ["-v", "--strict-markers", "--tb=short"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
+# ============================================================================
+# Coverage Configuration (if pytest-cov installed)
+# ============================================================================
+[tool.coverage.run]
+source = ["reminiscence"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+# ============================================================================
+# Development Dependencies (uv-style)
+# ============================================================================
 [dependency-groups]
 dev = [
     "bandit>=1.8.6",
+    "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "pytest-xdist>=3.8.0",
     "responses>=0.25.8",
+    "ruff>=0.1.9",
+    "types-PyYAML>=6.0.0",
 ]

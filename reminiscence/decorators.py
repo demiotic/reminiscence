@@ -1,11 +1,14 @@
 """Decorator utilities for automatic caching with hybrid matching."""
 
+from __future__ import annotations
+
 import functools
 import inspect
 import json
-from typing import Any, Callable, Dict, Optional, TypeVar, List, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
 from .core import Reminiscence
+from .types import LookupRequest, MultiModalInput, QueryMode, StoreRequest
 from .utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -14,17 +17,16 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _serialize_strict(value: Any) -> Any:
-    """
-    Serialize value for exact matching in context.
+    """Serialize value for exact matching in context.
 
     Converts complex types (lists, dicts, objects) to JSON strings
     for consistent exact matching.
 
     Args:
-        value: Value to serialize
+        value: Value to serialize.
 
     Returns:
-        Serialized value (primitives as-is, complex types as JSON)
+        Serialized value (primitives as-is, complex types as JSON).
     """
     if isinstance(value, (str, int, float, bool, type(None))):
         return value
@@ -38,36 +40,34 @@ def _serialize_strict(value: Any) -> Any:
 
 
 def _normalize_to_batch(value: Any) -> tuple[List[Any], bool]:
-    """
-    Normalize input to batch format.
+    """Normalize input to batch format.
 
     Args:
-        value: Single item or list of items
+        value: Single item or list of items.
 
     Returns:
-        (list_of_values, was_single_item)
+        (list_of_values, was_single_item).
     """
     if isinstance(value, list):
         return value, False
     return [value], True
 
 
-def _normalize_context_params(params: Union[str, List[str], None]) -> List[str]:
-    """
-    Normalize context_params to list format.
+def _normalize_context(params: Union[str, List[str], None]) -> List[str]:
+    """Normalize context to list format.
 
     Args:
-        params: Single param name, list of param names, or None
+        params: Single param name, list of param names, or None.
 
     Returns:
-        List of param names (empty if None)
+        List of param names (empty if None).
 
     Examples:
-        >>> _normalize_context_params("model")
+        >>> _normalize_context("model")
         ['model']
-        >>> _normalize_context_params(["model", "agent_id"])
+        >>> _normalize_context(["model", "agent_id"])
         ['model', 'agent_id']
-        >>> _normalize_context_params(None)
+        >>> _normalize_context(None)
         []
     """
     if params is None:
@@ -77,58 +77,83 @@ def _normalize_context_params(params: Union[str, List[str], None]) -> List[str]:
     return params
 
 
-def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
+def _to_multimodal_input(value: Any) -> MultiModalInput:
+    """Convert value to MultiModalInput.
+
+    Accepts MultiModalInput, str, or dict and normalizes to MultiModalInput.
+
+    Args:
+        value: Value to convert (MultiModalInput, str, or dict).
+
+    Returns:
+        MultiModalInput instance.
+
+    Raises:
+        ValueError: If value cannot be converted.
     """
-    Create a caching decorator bound to a Reminiscence instance.
+    if isinstance(value, MultiModalInput):
+        return value
+    if isinstance(value, str):
+        return MultiModalInput(text=value)
+    if isinstance(value, dict):
+        return MultiModalInput(**value)
+    raise ValueError(
+        f"Cannot convert {type(value).__name__} to MultiModalInput. "
+        "Expected MultiModalInput, str, or dict."
+    )
+
+
+def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
+    """Create a caching decorator bound to a Reminiscence instance.
 
     Uses batch operations by default for optimal performance (~4.5% overhead).
 
     Args:
-        reminiscence: Reminiscence instance to use for caching
+        reminiscence: Reminiscence instance to use for caching.
 
     Returns:
-        Decorator function
+        Decorator function.
 
     Example:
+        >>> from reminiscence import Reminiscence, QueryMode
         >>> reminiscence = Reminiscence()
         >>> cached = create_cached_decorator(reminiscence)
         >>>
         >>> # Single context param (most common)
-        >>> @cached(query="prompt", context_params="model")
+        >>> @cached(query="prompt", context="model")
         >>> def call_llm(prompt: str, model: str):
         ...     return expensive_llm_call(prompt, model)
         >>>
-        >>> # Multiple context params
-        >>> @cached(query="prompt", context_params=["model", "agent_id"])
-        >>> def call_agent(prompt: str, model: str, agent_id: str):
-        ...     return agent_call(prompt, model, agent_id)
+        >>> # Multimodal query
+        >>> @cached(query="query", context="model")
+        >>> def analyze_image(query: MultiModalInput, model: str):
+        ...     return vision_model(query, model)
     """
 
     def decorator(
         query: str = "query",
-        query_mode: str = "semantic",
-        context_params: Union[str, List[str], None] = None,
+        mode: QueryMode = QueryMode.AUTO,
+        context: Union[str, List[str], None] = None,
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
         similarity_threshold: Optional[float] = None,
         allow_errors: bool = False,
         batch_mode: bool = True,
     ) -> Callable[[F], F]:
-        """
-        Decorator to cache function results with hybrid matching.
+        """Decorator to cache function results with hybrid matching.
 
         Args:
-            query: Name of the query parameter
-            query_mode: Query matching strategy ("semantic", "exact", "auto")
-            context_params: Single param name OR list of param names for context matching
-            static_context: Static context dict
-            auto_strict: Auto-detect non-string params as context
-            similarity_threshold: Minimum similarity score (overrides config)
-            allow_errors: If False (default), don't cache error results
-            batch_mode: Use batch operations internally (default: True, ~4.5% overhead)
+            query: Name of the query parameter.
+            mode: Query matching strategy (default: QueryMode.AUTO).
+            context: Single param name OR list of param names for context.
+            static_context: Static context dict.
+            auto_strict: Auto-detect non-string params as context.
+            similarity_threshold: Minimum similarity score (overrides config).
+            allow_errors: If False (default), don't cache error results.
+            batch_mode: Use batch operations internally (default: True).
 
         Returns:
-            Decorated function
+            Decorated function.
         """
 
         def decorator_func(func: F) -> F:
@@ -141,15 +166,15 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     f"Available parameters: {params}"
                 )
 
-            # Normalize context_params to list
-            context_list = _normalize_context_params(context_params)
+            # Normalize context to list
+            context_list = _normalize_context(context)
 
             logger.debug(
                 "decorator_configured",
                 function=func.__name__,
                 query_param=query,
-                query_mode=query_mode,
-                context_params=context_list,
+                mode=mode.value,
+                context=context_list,
                 batch_mode=batch_mode,
                 similarity_threshold=similarity_threshold,
             )
@@ -171,7 +196,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     detected_params=context_list,
                 )
 
-            def build_context(bound_args) -> Dict[str, Any]:
+            def build_context(bound_args: Any) -> Dict[str, Any]:
                 """Build cache context from bound arguments."""
                 cache_context = {}
 
@@ -192,7 +217,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
             if batch_mode:
 
                 @functools.wraps(func)
-                def wrapper(*args, **kwargs) -> Any:
+                def wrapper(*args: Any, **kwargs: Any) -> Any:
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
 
@@ -209,24 +234,40 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                     # Normalize to batch format
                     queries, is_single = _normalize_to_batch(query_value)
 
+                    # Convert all queries to MultiModalInput
+                    try:
+                        multimodal_queries = [_to_multimodal_input(q) for q in queries]
+                    except ValueError as e:
+                        logger.warning(
+                            f"Failed to convert queries to MultiModalInput: {e}. "
+                            "Executing without caching."
+                        )
+                        return func(*args, **kwargs)
+
                     logger.debug(
                         "decorator_batch_call",
                         function=func.__name__,
                         is_single=is_single,
                         num_queries=len(queries),
-                        query_preview=queries[0][:50] if queries else "",
+                        query_preview=str(multimodal_queries[0])[:50]
+                        if multimodal_queries
+                        else "",
                         context=cache_context,
-                        query_mode=query_mode,
+                        mode=mode.value,
                     )
 
-                    # Batch lookup (always use batch internally)
+                    # Batch lookup with typed requests
                     lookup_start = __import__("time").time()
-                    results = reminiscence.lookup_batch(
-                        queries,
-                        cache_context,  # Shared context
-                        similarity_threshold=similarity_threshold,
-                        query_mode=query_mode,
-                    )
+                    lookup_requests = [
+                        LookupRequest(
+                            query=q,
+                            context=cache_context,
+                            similarity_threshold=similarity_threshold,
+                            mode=mode,
+                        )
+                        for q in multimodal_queries
+                    ]
+                    results = reminiscence.lookup_batch(lookup_requests)
                     lookup_ms = (__import__("time").time() - lookup_start) * 1000
 
                     logger.debug(
@@ -247,7 +288,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                                 "decorator_cache_hit",
                                 function=func.__name__,
                                 index=i,
-                                query_preview=queries[i][:50],
+                                query_preview=str(multimodal_queries[i])[:50],
                                 similarity=round(result.similarity, 3)
                                 if result.similarity
                                 else None,
@@ -258,7 +299,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                                 "decorator_cache_miss",
                                 function=func.__name__,
                                 index=i,
-                                query_preview=queries[i][:50],
+                                query_preview=str(multimodal_queries[i])[:50],
                             )
 
                     # All hits - return immediately
@@ -285,7 +326,6 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                         exec_start = __import__("time").time()
 
                         if is_single:
-                            # Original call with single item - ONLY ONE CALL
                             logger.debug(
                                 "decorator_executing_single",
                                 function=func.__name__,
@@ -294,7 +334,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             output = func(*args, **kwargs)
                             outputs = [output]
                         else:
-                            # Call with only missing queries
+                            # Call with only missing queries (original format, not MultiModalInput)
                             missing_queries = [queries[i] for i in missing_indices]
                             modified_kwargs = kwargs.copy()
                             modified_kwargs[query] = missing_queries
@@ -317,23 +357,27 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             latency_ms=round(exec_ms, 2),
                         )
 
-                        # Store batch (always use batch internally)
-                        missing_queries = [queries[i] for i in missing_indices]
+                        # Store batch with typed requests
+                        missing_multimodal = [
+                            multimodal_queries[i] for i in missing_indices
+                        ]
 
                         store_start = __import__("time").time()
-                        reminiscence.store_batch(
-                            missing_queries,
-                            cache_context,  # Shared context
-                            outputs,
-                            query_mode=query_mode,
-                            allow_errors=allow_errors,
-                        )
+                        store_requests = [
+                            StoreRequest(
+                                query=missing_multimodal[i],
+                                context=cache_context,
+                                result=outputs[i],
+                            )
+                            for i in range(len(missing_multimodal))
+                        ]
+                        reminiscence.store_batch(store_requests, allow_errors=allow_errors)
                         store_ms = (__import__("time").time() - store_start) * 1000
 
                         logger.debug(
                             "decorator_store_batch_complete",
                             function=func.__name__,
-                            num_stored=len(missing_queries),
+                            num_stored=len(missing_multimodal),
                             latency_ms=round(store_ms, 2),
                         )
 
@@ -378,7 +422,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
             else:
 
                 @functools.wraps(func)
-                def wrapper(*args, **kwargs) -> Any:
+                def wrapper(*args: Any, **kwargs: Any) -> Any:
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
 
@@ -389,25 +433,33 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             f"Must provide a value for '{query}'."
                         )
 
+                    # Convert to MultiModalInput
+                    try:
+                        multimodal_query = _to_multimodal_input(query_value)
+                    except ValueError as e:
+                        logger.warning(
+                            f"Failed to convert query to MultiModalInput: {e}. "
+                            "Executing without caching."
+                        )
+                        return func(*args, **kwargs)
+
                     cache_context = build_context(bound)
 
                     logger.debug(
                         "decorator_single_call",
                         function=func.__name__,
-                        query_preview=query_value[:50]
-                        if isinstance(query_value, str)
-                        else str(query_value)[:50],
+                        query_preview=str(multimodal_query)[:50],
                         context=cache_context,
-                        query_mode=query_mode,
+                        mode=mode.value,
                     )
 
                     # Single lookup
                     lookup_start = __import__("time").time()
                     result = reminiscence.lookup(
-                        query_value,
+                        multimodal_query,
                         cache_context,
                         similarity_threshold=similarity_threshold,
-                        query_mode=query_mode,
+                        mode=mode,
                     )
                     lookup_ms = (__import__("time").time() - lookup_start) * 1000
 
@@ -442,10 +494,9 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                         # Store result
                         store_start = __import__("time").time()
                         reminiscence.store(
-                            query_value,
+                            multimodal_query,
                             cache_context,
                             output,
-                            query_mode=query_mode,
                             allow_errors=allow_errors,
                         )
                         store_ms = (__import__("time").time() - store_start) * 1000
@@ -473,7 +524,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                 if batch_mode:
 
                     @functools.wraps(func)
-                    async def async_wrapper(*args, **kwargs) -> Any:
+                    async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                         bound = sig.bind(*args, **kwargs)
                         bound.apply_defaults()
 
@@ -487,6 +538,18 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                         cache_context = build_context(bound)
                         queries, is_single = _normalize_to_batch(query_value)
 
+                        # Convert to MultiModalInput
+                        try:
+                            multimodal_queries = [
+                                _to_multimodal_input(q) for q in queries
+                            ]
+                        except ValueError as e:
+                            logger.warning(
+                                f"Failed to convert queries: {e}. "
+                                "Executing without caching."
+                            )
+                            return await func(*args, **kwargs)
+
                         logger.debug(
                             "decorator_async_batch_call",
                             function=func.__name__,
@@ -494,13 +557,17 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             num_queries=len(queries),
                         )
 
-                        # Batch lookup
-                        results = reminiscence.lookup_batch(
-                            queries,
-                            cache_context,
-                            similarity_threshold=similarity_threshold,
-                            query_mode=query_mode,
-                        )
+                        # Batch lookup with typed requests
+                        lookup_requests = [
+                            LookupRequest(
+                                query=q,
+                                context=cache_context,
+                                similarity_threshold=similarity_threshold,
+                                mode=mode,
+                            )
+                            for q in multimodal_queries
+                        ]
+                        results = reminiscence.lookup_batch(lookup_requests)
 
                         cached_results = {}
                         missing_indices = []
@@ -541,15 +608,19 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                                 if not isinstance(outputs, list):
                                     outputs = [outputs]
 
-                            missing_queries = [queries[i] for i in missing_indices]
+                            missing_multimodal = [
+                                multimodal_queries[i] for i in missing_indices
+                            ]
 
-                            reminiscence.store_batch(
-                                missing_queries,
-                                cache_context,
-                                outputs,
-                                query_mode=query_mode,
-                                allow_errors=allow_errors,
-                            )
+                            store_requests = [
+                                StoreRequest(
+                                    query=missing_multimodal[i],
+                                    context=cache_context,
+                                    result=outputs[i],
+                                )
+                                for i in range(len(missing_multimodal))
+                            ]
+                            reminiscence.store_batch(store_requests, allow_errors=allow_errors)
 
                             if is_single:
                                 return outputs[0]
@@ -578,7 +649,7 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                 else:
                     # Original async non-batch implementation
                     @functools.wraps(func)
-                    async def async_wrapper(*args, **kwargs) -> Any:
+                    async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                         bound = sig.bind(*args, **kwargs)
                         bound.apply_defaults()
 
@@ -589,21 +660,26 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                                 f"Must provide a value for '{query}'."
                             )
 
+                        # Convert to MultiModalInput
+                        try:
+                            multimodal_query = _to_multimodal_input(query_value)
+                        except ValueError as e:
+                            logger.warning(f"Failed to convert query: {e}")
+                            return await func(*args, **kwargs)
+
                         cache_context = build_context(bound)
 
                         logger.debug(
                             "decorator_async_single_call",
                             function=func.__name__,
-                            query_preview=query_value[:50]
-                            if isinstance(query_value, str)
-                            else str(query_value)[:50],
+                            query_preview=str(multimodal_query)[:50],
                         )
 
                         result = reminiscence.lookup(
-                            query_value,
+                            multimodal_query,
                             cache_context,
                             similarity_threshold=similarity_threshold,
-                            query_mode=query_mode,
+                            mode=mode,
                         )
 
                         if result.is_hit:
@@ -622,10 +698,9 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             output = await func(*args, **kwargs)
 
                             reminiscence.store(
-                                query_value,
+                                multimodal_query,
                                 cache_context,
                                 output,
-                                query_mode=query_mode,
                                 allow_errors=allow_errors,
                             )
 
@@ -651,31 +726,31 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
 
 
 class ReminiscenceDecorator:
-    """
-    Class-based decorator interface for Reminiscence.
+    """Class-based decorator interface for Reminiscence.
 
     Provides an alternative API for creating cached decorators.
 
     Example:
+        >>> from reminiscence import Reminiscence, ReminiscenceDecorator
+        >>> reminiscence = Reminiscence()
         >>> decorator = ReminiscenceDecorator(reminiscence)
         >>>
-        >>> # Single context param (most common)
-        >>> @decorator.cached(query="prompt", context_params="model")
+        >>> # Text query
+        >>> @decorator.cached(query="prompt", context="model")
         >>> def my_function(prompt: str, model: str):
-        >>>     return expensive_computation(prompt, model)
+        ...     return expensive_computation(prompt, model)
         >>>
-        >>> # Multiple context params
-        >>> @decorator.cached(query="query", context_params=["model", "agent_id"])
-        >>> def another_function(query: str, model: str, agent_id: str):
-        >>>     return expensive_computation(query, model, agent_id)
+        >>> # Multimodal query
+        >>> @decorator.cached(query="query", context="model")
+        >>> def analyze(query: MultiModalInput, model: str):
+        ...     return vision_model(query, model)
     """
 
     def __init__(self, reminiscence: Reminiscence):
-        """
-        Initialize decorator with Reminiscence instance.
+        """Initialize decorator with Reminiscence instance.
 
         Args:
-            reminiscence: Reminiscence instance to use for caching
+            reminiscence: Reminiscence instance to use for caching.
         """
         self.reminiscence = reminiscence
         self._cached_decorator = create_cached_decorator(reminiscence)
@@ -683,34 +758,33 @@ class ReminiscenceDecorator:
     def cached(
         self,
         query: str = "query",
-        query_mode: str = "semantic",
-        context_params: Union[str, List[str], None] = None,
+        mode: QueryMode = QueryMode.AUTO,
+        context: Union[str, List[str], None] = None,
         static_context: Optional[Dict[str, Any]] = None,
         auto_strict: bool = False,
         similarity_threshold: Optional[float] = None,
         allow_errors: bool = False,
         batch_mode: bool = True,
     ) -> Callable[[F], F]:
-        """
-        Create a cached decorator with hybrid matching.
+        """Create a cached decorator with hybrid matching.
 
         Args:
-            query: Name of the query parameter
-            query_mode: Query matching strategy ("semantic", "exact", "auto")
-            context_params: Single param name OR list of param names for context
-            static_context: Static context dict
-            auto_strict: Auto-detect non-string params as context
-            similarity_threshold: Minimum similarity score (overrides config)
-            allow_errors: If False (default), don't cache error results
-            batch_mode: Use batch operations internally (default: True)
+            query: Name of the query parameter.
+            mode: Query matching strategy (default: QueryMode.AUTO).
+            context: Single param name OR list of param names for context.
+            static_context: Static context dict.
+            auto_strict: Auto-detect non-string params as context.
+            similarity_threshold: Minimum similarity score (overrides config).
+            allow_errors: If False (default), don't cache error results.
+            batch_mode: Use batch operations internally (default: True).
 
         Returns:
-            Decorator function
+            Decorator function.
         """
         return self._cached_decorator(
             query=query,
-            query_mode=query_mode,
-            context_params=context_params,
+            mode=mode,
+            context=context,
             static_context=static_context,
             auto_strict=auto_strict,
             similarity_threshold=similarity_threshold,

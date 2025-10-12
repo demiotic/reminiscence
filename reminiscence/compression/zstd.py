@@ -1,6 +1,9 @@
 """Zstandard compression backend."""
 
+from __future__ import annotations
+
 import time
+
 from .base import Compressor
 from ..utils.logging import get_logger
 
@@ -8,8 +11,7 @@ logger = get_logger(__name__)
 
 
 class ZstdCompressor(Compressor):
-    """
-    Zstandard compression implementation.
+    """Zstandard compression implementation.
 
     Zstandard offers excellent compression ratios with fast decompression.
     Recommended compression levels:
@@ -19,15 +21,14 @@ class ZstdCompressor(Compressor):
     """
 
     def __init__(self, level: int = 3):
-        """
-        Initialize Zstandard compressor.
+        """Initialize Zstandard compressor.
 
         Args:
-            level: Compression level (1-22, default: 3)
+            level: Compression level (1-22, default: 3).
 
         Raises:
-            ImportError: If zstandard library not installed
-            ValueError: If level out of range
+            ImportError: If zstandard library not installed.
+            ValueError: If level out of range.
         """
         if not (1 <= level <= 22):
             raise ValueError(f"Zstandard level must be 1-22, got {level}")
@@ -52,23 +53,33 @@ class ZstdCompressor(Compressor):
 
     @property
     def algorithm(self) -> str:
-        """Algorithm name."""
+        """Algorithm name.
+
+        Returns:
+            Algorithm identifier ("zstd").
+        """
         return self._algorithm
 
     @property
     def level(self) -> int:
-        """Compression level."""
+        """Compression level.
+
+        Returns:
+            Configured compression level (1-22).
+        """
         return self._level
 
     def compress(self, data: bytes) -> bytes:
-        """
-        Compress data using Zstandard.
+        """Compress data using Zstandard.
 
         Args:
-            data: Raw bytes
+            data: Raw bytes to compress.
 
         Returns:
-            Compressed bytes
+            Compressed bytes.
+
+        Raises:
+            TypeError: If data is not bytes.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")
@@ -106,14 +117,16 @@ class ZstdCompressor(Compressor):
             raise
 
     def decompress(self, data: bytes) -> bytes:
-        """
-        Decompress Zstandard data.
+        """Decompress Zstandard data.
 
         Args:
-            data: Compressed bytes
+            data: Compressed bytes.
 
         Returns:
-            Original bytes
+            Decompressed bytes.
+
+        Raises:
+            TypeError: If data is not bytes.
         """
         if not isinstance(data, bytes):
             raise TypeError(f"Expected bytes, got {type(data).__name__}")

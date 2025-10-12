@@ -3,6 +3,7 @@
 import pytest
 import time
 from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.types import MultiModalInput
 
 
 # ============================================================================
@@ -59,14 +60,14 @@ class TestErrorHandling:
 
     def test_lookup_handles_embedding_failure(self, reminiscence, monkeypatch):
         """Lookup should return MISS if embedding fails."""
-        reminiscence.store("dummy query", {"agent": "test"}, "dummy result")
+        reminiscence.store(MultiModalInput(text="dummy query"), {"agent": "test"}, "dummy result")
 
         def failing_embed(text):
             raise RuntimeError("Embedding model crashed")
 
         monkeypatch.setattr(reminiscence.embedder, "embed", failing_embed)
 
-        result = reminiscence.lookup("test query", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="test query"), {"agent": "test"})
 
         assert result.is_miss
         assert result.result is None
@@ -76,18 +77,18 @@ class TestErrorHandling:
         """Storage should handle unserializable types gracefully."""
         import threading
 
-        # Un objeto que no es JSON serializable
+        # Object that is not JSON serializable
         unserializable = threading.Lock()
 
-        # No debería crashear, solo loggear error
+        # Should not crash, just log error
         reminiscence.store(
-            query="test with unserializable",
+            MultiModalInput(text="test with unserializable"),
             context={"agent": "test"},
             result=unserializable,
         )
 
-        # El entry no debería haberse guardado
-        result = reminiscence.lookup("test with unserializable", {"agent": "test"})
+        # Entry should not have been saved
+        result = reminiscence.lookup(MultiModalInput(text="test with unserializable"), {"agent": "test"})
         assert not result.is_hit
 
 
@@ -96,7 +97,7 @@ class TestLookupAndStore:
 
     def test_lookup_miss_empty_cache(self, reminiscence):
         """Lookup on empty cache should return miss."""
-        result = reminiscence.lookup("test query", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="test query"), {"agent": "test"})
 
         assert result.is_miss
         assert result.result is None
@@ -108,10 +109,10 @@ class TestLookupAndStore:
         context = {"agent": "llm"}
         expected = "Python is a programming language"
 
-        reminiscence.store(query, context, expected)
+        reminiscence.store(MultiModalInput(text=query), context, expected)
         assert reminiscence.backend.count() == 1
 
-        result = reminiscence.lookup(query, context)
+        result = reminiscence.lookup(MultiModalInput(text=query), context)
 
         assert result.is_hit
         assert result.result == expected
@@ -120,13 +121,12 @@ class TestLookupAndStore:
 
     def test_store_and_lookup_semantic(self, reminiscence):
         """Semantic similar query should HIT."""
-        reminiscence.store(
-            "What is machine learning?",
+        reminiscence.store(MultiModalInput(text="What is machine learning?"),
             {"agent": "test"},
             "Machine learning explanation",
         )
 
-        result = reminiscence.lookup("Explain machine learning", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="Explain machine learning"), {"agent": "test"})
 
         assert result.is_hit
         assert result.result == "Machine learning explanation"
@@ -134,8 +134,8 @@ class TestLookupAndStore:
 
     def test_lookup_different_context_miss(self, reminiscence):
         """Different context should cause MISS."""
-        reminiscence.store("test", {"agent": "A"}, "result A")
-        result = reminiscence.lookup("test", {"agent": "B"})
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "A"}, "result A")
+        result = reminiscence.lookup(MultiModalInput(text="test"), {"agent": "B"})
 
         assert result.is_miss
 
@@ -143,8 +143,8 @@ class TestLookupAndStore:
         """Store and retrieve dict data."""
         data = {"key": "value", "number": 42}
 
-        reminiscence.store("query", {"agent": "test"}, data)
-        result = reminiscence.lookup("query", {"agent": "test"})
+        reminiscence.store(MultiModalInput(text="query"), {"agent": "test"}, data)
+        result = reminiscence.lookup(MultiModalInput(text="query"), {"agent": "test"})
 
         assert result.is_hit
         assert result.result == data
@@ -153,30 +153,28 @@ class TestLookupAndStore:
         """Store and retrieve list data."""
         data = [1, 2, 3, "text", {"nested": "dict"}]
 
-        reminiscence.store("query", {"agent": "test"}, data)
-        result = reminiscence.lookup("query", {"agent": "test"})
+        reminiscence.store(MultiModalInput(text="query"), {"agent": "test"}, data)
+        result = reminiscence.lookup(MultiModalInput(text="query"), {"agent": "test"})
 
         assert result.is_hit
         assert result.result == data
 
     def test_lookup_below_threshold(self, reminiscence):
         """Query below similarity threshold should MISS."""
-        reminiscence.store("What is Python?", {"agent": "test"}, "Python explanation")
+        reminiscence.store(MultiModalInput(text="What is Python?"), {"agent": "test"}, "Python explanation")
 
-        result = reminiscence.lookup("What is the weather?", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="What is the weather?"), {"agent": "test"})
 
         assert result.is_miss
 
     def test_lookup_custom_threshold(self, reminiscence):
         """Custom threshold should be respected."""
-        reminiscence.store(
-            "What is machine learning?",
+        reminiscence.store(MultiModalInput(text="What is machine learning?"),
             {"agent": "test"},
             "Machine learning explanation",
         )
 
-        result = reminiscence.lookup(
-            "Explain machine learning", {"agent": "test"}, similarity_threshold=0.6
+        result = reminiscence.lookup(MultiModalInput(text="Explain machine learning"), {"agent": "test"}, similarity_threshold=0.6
         )
 
         assert result.is_hit
@@ -188,16 +186,16 @@ class TestLookupAndStore:
         except ImportError:
             pytest.skip("Pandas not installed")
 
-        # DataFrame grande (> 100KB)
+        # Large DataFrame (> 100KB)
         large_df = pd.DataFrame({"col1": range(10000), "col2": ["text" * 10] * 10000})
 
-        # Debería guardarse sin problemas
+        # Should store without problems
         reminiscence.store(
-            query="Get large dataset", context={"agent": "test"}, result=large_df
+            MultiModalInput(text="Get large dataset"), context={"agent": "test"}, result=large_df
         )
 
-        # Debería recuperarse correctamente
-        result = reminiscence.lookup("Get large dataset", {"agent": "test"})
+        # Should retrieve correctly
+        result = reminiscence.lookup(MultiModalInput(text="Get large dataset"), {"agent": "test"})
         assert result.is_hit
         assert isinstance(result.result, pd.DataFrame)
         assert len(result.result) == 10000
@@ -215,18 +213,19 @@ class TestSizeLimitsAndEviction:
             log_level="WARNING",
         )
         reminiscence = Reminiscence(config)
+        reminiscence.clear()  # Clear any previous test data
 
         for i in range(4):
-            reminiscence.store(f"query {i}", {"agent": "test"}, f"result {i}")
+            reminiscence.store(MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}")
             time.sleep(0.01)
 
         assert reminiscence.backend.count() == 3
 
-        result = reminiscence.lookup("query 0", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="query 0"), {"agent": "test"})
         assert result.is_miss
 
         for i in range(1, 4):
-            result = reminiscence.lookup(f"query {i}", {"agent": "test"})
+            result = reminiscence.lookup(MultiModalInput(text=f"query {i}"), {"agent": "test"})
             assert result.is_hit
 
 
@@ -242,8 +241,9 @@ class TestTTLAndCleanup:
             log_level="WARNING",
         )
         reminiscence = Reminiscence(config)
+        reminiscence.clear()  # Clear any previous test data
 
-        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "test"}, "result")
         time.sleep(1.1)
 
         deleted = reminiscence.cleanup_expired()
@@ -251,24 +251,28 @@ class TestTTLAndCleanup:
         assert deleted == 1
         assert reminiscence.backend.count() == 0
 
-    def test_lookup_respects_ttl(self):
+    def test_lookup_respects_ttl(self, temp_cache_dir):
         """Lookup should not return expired entries."""
+        from reminiscence.types import QueryMode
+        from pathlib import Path
+
         config = ReminiscenceConfig(
-            db_uri="memory://",
+            db_uri=str(Path(temp_cache_dir) / "ttl_test.db"),
             ttl_seconds=0.5,
             enable_metrics=True,
             log_level="WARNING",
+            warm_up_embedder=True,  # Ensure embedder is ready
         )
         reminiscence = Reminiscence(config)
 
-        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "ttl_test"}, "result", mode=QueryMode.EXACT)
 
-        result = reminiscence.lookup("test", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="test"), {"agent": "ttl_test"}, mode=QueryMode.EXACT)
         assert result.is_hit
 
         time.sleep(0.6)
 
-        result = reminiscence.lookup("test", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="test"), {"agent": "ttl_test"}, mode=QueryMode.EXACT)
         assert result.is_miss
 
 
@@ -277,9 +281,9 @@ class TestInvalidation:
 
     def test_invalidate_by_context(self, reminiscence):
         """Invalidate by context should remove matching entries."""
-        reminiscence.store("q1", {"agent": "A"}, "r1")
-        reminiscence.store("q2", {"agent": "B"}, "r2")
-        reminiscence.store("q3", {"agent": "A"}, "r3")
+        reminiscence.store(MultiModalInput(text="q1"), {"agent": "A"}, "r1")
+        reminiscence.store(MultiModalInput(text="q2"), {"agent": "B"}, "r2")
+        reminiscence.store(MultiModalInput(text="q3"), {"agent": "A"}, "r3")
 
         deleted = reminiscence.invalidate(context={"agent": "A"})
 
@@ -288,7 +292,7 @@ class TestInvalidation:
 
     def test_invalidate_by_age(self, reminiscence):
         """Invalidate by age should remove old entries."""
-        reminiscence.store("old query", {"agent": "test"}, "old result")
+        reminiscence.store(MultiModalInput(text="old query"), {"agent": "test"}, "old result")
 
         time.sleep(0.1)
 
@@ -299,7 +303,7 @@ class TestInvalidation:
 
     def test_invalidate_without_criteria(self, reminiscence):
         """Invalidate without criteria should do nothing."""
-        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "test"}, "result")
 
         deleted = reminiscence.invalidate()
 
@@ -312,15 +316,15 @@ class TestAvailabilityCheck:
 
     def test_check_availability_miss(self, reminiscence):
         """Check availability for missing entry should return unavailable."""
-        check = reminiscence.check_availability("test", {"agent": "test"})
+        check = reminiscence.check_availability(MultiModalInput(text="test"), {"agent": "test"})
 
         assert not check.available
 
     def test_check_availability_hit(self, reminiscence):
         """Check availability for existing entry should return available."""
-        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "test"}, "result")
 
-        check = reminiscence.check_availability("test", {"agent": "test"})
+        check = reminiscence.check_availability(MultiModalInput(text="test"), {"agent": "test"})
 
         assert check.available
         assert check.age_seconds is not None
@@ -336,9 +340,9 @@ class TestAvailabilityCheck:
         )
         reminiscence = Reminiscence(config)
 
-        reminiscence.store("test", {"agent": "test"}, "result")
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "test"}, "result")
 
-        check = reminiscence.check_availability("test", {"agent": "test"})
+        check = reminiscence.check_availability(MultiModalInput(text="test"), {"agent": "test"})
 
         assert check.available
         assert check.ttl_remaining_seconds is not None
@@ -350,12 +354,11 @@ class TestStatistics:
 
     def test_get_stats_with_data(self, reminiscence):
         """Stats should include hits and misses."""
-        reminiscence.store(
-            "What is Python programming?", {"agent": "test"}, "it's something cool"
+        reminiscence.store(MultiModalInput(text="What is Python programming?"), {"agent": "test"}, "it's something cool"
         )
-        reminiscence.store("How to bake a cake?", {"agent": "test"}, "With love")
-        reminiscence.lookup("Explain me what's python about", {"agent": "test"})
-        reminiscence.lookup("What is the weather in Almeria?", {"agent": "test"})
+        reminiscence.store(MultiModalInput(text="How to bake a cake?"), {"agent": "test"}, "With love")
+        reminiscence.lookup(MultiModalInput(text="Explain me what's python about"), {"agent": "test"})
+        reminiscence.lookup(MultiModalInput(text="What is the weather in Almeria?"), {"agent": "test"})
 
         stats = reminiscence.get_stats()
 
@@ -366,8 +369,8 @@ class TestStatistics:
 
     def test_metrics_track_latency(self, reminiscence):
         """Metrics should track lookup latency."""
-        reminiscence.store("test", {"agent": "test"}, "result")
-        reminiscence.lookup("test", {"agent": "test"})
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "test"}, "result")
+        reminiscence.lookup(MultiModalInput(text="test"), {"agent": "test"})
 
         stats = reminiscence.get_stats()
 
@@ -389,8 +392,8 @@ class TestHealthCheck:
 
     def test_health_check_includes_metrics(self, reminiscence):
         """Health check should include metrics."""
-        reminiscence.store("test", {"agent": "test"}, "result")
-        reminiscence.lookup("test", {"agent": "test"})
+        reminiscence.store(MultiModalInput(text="test"), {"agent": "test"}, "result")
+        reminiscence.lookup(MultiModalInput(text="test"), {"agent": "test"})
 
         health = reminiscence.health_check()
 

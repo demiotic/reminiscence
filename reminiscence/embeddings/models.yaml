@@ -1,4 +1,12 @@
 # Default models for each backend
-
 default:
   fastembed: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  sentence_transformers: sentence-transformers/all-MiniLM-L6-v2
+
+# Model metadata (For the future)
+models:
+  sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2:
+    backend: fastembed
+    dim: 384
+    multilingual: true
+    recommended_for: ["multilingual", "small"]

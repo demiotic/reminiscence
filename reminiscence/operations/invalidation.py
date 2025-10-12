@@ -1,10 +1,12 @@
-"""Invalidation and deletion operations."""
+"""Invalidation and deletion operations with multimodal support."""
 
-import time
+from __future__ import annotations
+
 import json
-from typing import Optional, Dict, Any
+import time
+from typing import Any, Dict, Optional
 
-from ..types import BulkInvalidatePattern
+from ..types import BulkInvalidatePattern, MultiModalInput
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -17,13 +19,13 @@ class InvalidationOperations:
         """Initialize invalidation operations.
 
         Args:
-            storage: Storage backend instance
-            eviction: Eviction policy instance
-            config: Configuration object
-            metrics: Optional metrics tracker
+            storage: Storage backend instance.
+            eviction: Eviction policy instance.
+            config: Configuration object.
+            metrics: Optional metrics tracker.
         """
         self.storage = storage
-        self.eviction = eviction
+        self.eviction = eviction  # Required for state sync
         self.config = config
         self.metrics = metrics
 
@@ -31,11 +33,11 @@ class InvalidationOperations:
         """Generate consistent entry ID for eviction tracking.
 
         Args:
-            query: Query text
-            context: Context dict or JSON string
+            query: Query text.
+            context: Context dict or JSON string.
 
         Returns:
-            Unique entry identifier string
+            Unique entry identifier string.
         """
         if isinstance(context, str):
             context_str = context
@@ -45,19 +47,19 @@ class InvalidationOperations:
 
     def invalidate(
         self,
-        query: Optional[str] = None,
+        query: Optional[MultiModalInput] = None,
         context: Optional[Dict[str, Any]] = None,
         older_than_seconds: Optional[float] = None,
     ) -> int:
         """Invalidate cache entries by criteria.
 
         Args:
-            query: Query text pattern to match
-            context: Context dict to match exactly
-            older_than_seconds: Delete entries older than this
+            query: MultiModalInput to match (optional).
+            context: Context dict to match exactly (optional).
+            older_than_seconds: Delete entries older than this (optional).
 
         Returns:
-            Number of entries deleted
+            Number of entries deleted.
         """
         if query is None and context is None and older_than_seconds is None:
             logger.warning("invalidate_called_without_criteria")
@@ -70,6 +72,9 @@ class InvalidationOperations:
             has_context=context is not None,
             older_than_seconds=older_than_seconds,
         )
+
+        # Extract text from MultiModalInput if provided
+        query_text = query.text if query is not None else None
 
         try:
             import pyarrow.compute as pc
@@ -160,11 +165,11 @@ class InvalidationOperations:
                         table.delete(f"context = '{context_json}'")
 
             # Query-based invalidation not implemented
-            elif query is not None:
+            elif query_text is not None:
                 logger.warning("semantic_invalidation_not_implemented")
                 return 0
 
-            # Notify eviction policy
+            # Notify eviction policy of removed entries
             for row in entries_to_remove:
                 entry_id = self._generate_entry_id(
                     row.get("query_text", ""), row.get("context", "{}")
@@ -173,7 +178,7 @@ class InvalidationOperations:
                     self.eviction.on_evict(entry_id)
                 except Exception as e:
                     logger.debug(
-                        "eviction_state_cleanup_failed_during_invalidation",
+                        "eviction_state_cleanup_failed",
                         entry_id=entry_id,
                         error=str(e),
                     )
@@ -191,26 +196,20 @@ class InvalidationOperations:
             logger.error("invalidation_failed", error=str(e), exc_info=True)
             return 0
 
-    def invalidate_bulk(self, pattern: BulkInvalidatePattern) -> int:
+    def bulk_invalidate(self, pattern: BulkInvalidatePattern) -> int:
         """Bulk invalidate entries matching pattern using efficient batch deletion.
 
         This method scans all entries once, collects IDs of entries matching
-        the pattern, and then deletes them in batch. Much more efficient than
-        deleting one-by-one.
+        the pattern, and then deletes them in batch.
 
         Args:
-            pattern: BulkInvalidatePattern with matching criteria
+            pattern: BulkInvalidatePattern with matching criteria.
 
         Returns:
-            Number of entries invalidated
+            Number of entries invalidated.
 
         Raises:
-            Exception: Re-raises any exception after logging
-
-        Performance:
-            - Single-pass scan: O(n) where n = total entries
-            - Batch deletion: O(k) where k = matched entries
-            - Total: O(n + k) vs O(n * k) for naive approach
+            Exception: Re-raises any exception after logging.
         """
         bulk_start = time.time()
         invalidated_count = 0
@@ -227,7 +226,6 @@ class InvalidationOperations:
                 rows = arrow_table.to_pylist()
 
                 for row in rows:
-                    # Extract entry data
                     entry_id = row.get("id")
                     query_text = row.get("query_text", "")
                     context_str = row.get("context", "{}")
@@ -338,28 +336,26 @@ class InvalidationOperations:
     def invalidate_by_prefix(self, query_prefix: str) -> int:
         """Invalidate all entries with query starting with prefix.
 
-        This is a convenience method wrapping invalidate_bulk.
-
         Args:
-            query_prefix: Prefix to match (e.g., "SELECT")
+            query_prefix: Prefix to match (e.g., "SELECT").
 
         Returns:
-            Number of entries invalidated
+            Number of entries invalidated.
         """
         pattern = BulkInvalidatePattern(query_prefix=query_prefix)
-        return self.invalidate_bulk(pattern)
+        return self.bulk_invalidate(pattern)
 
     def invalidate_by_regex(self, query_regex: str) -> int:
         """Invalidate all entries matching regex pattern.
 
         Args:
-            query_regex: Regular expression pattern
+            query_regex: Regular expression pattern.
 
         Returns:
-            Number of entries invalidated
+            Number of entries invalidated.
         """
         pattern = BulkInvalidatePattern(query_regex=query_regex)
-        return self.invalidate_bulk(pattern)
+        return self.bulk_invalidate(pattern)
 
     def invalidate_by_context(self, context_matches: Dict[str, str]) -> int:
         """Invalidate entries matching context pattern.
@@ -367,35 +363,31 @@ class InvalidationOperations:
         Supports wildcard matching with asterisk (*).
 
         Args:
-            context_matches: Dict of context patterns to match
-
-        Examples:
-            cache.invalidate_by_context({"model": "gpt-4"})
-            cache.invalidate_by_context({"agent_*": "*"})
+            context_matches: Dict of context patterns to match.
 
         Returns:
-            Number of entries invalidated
+            Number of entries invalidated.
         """
         pattern = BulkInvalidatePattern(context_matches=context_matches)
-        return self.invalidate_bulk(pattern)
+        return self.bulk_invalidate(pattern)
 
     def invalidate_older_than(self, seconds: float) -> int:
         """Invalidate all entries older than specified seconds.
 
         Args:
-            seconds: Age threshold in seconds
+            seconds: Age threshold in seconds.
 
         Returns:
-            Number of entries invalidated
+            Number of entries invalidated.
         """
         pattern = BulkInvalidatePattern(older_than_seconds=seconds)
-        return self.invalidate_bulk(pattern)
+        return self.bulk_invalidate(pattern)
 
     def clear_all(self) -> int:
-        """Clear all cache entries.
+        """Clear all cache entries and eviction state.
 
         Returns:
-            Number of entries deleted
+            Number of entries deleted.
         """
         clear_start = time.time()
         logger.warning("clearing_all_cache")

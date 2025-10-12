@@ -1,8 +1,10 @@
-# reminiscence/embeddings/model_registry.py
-"""Model registry - only defaults."""
+"""Model registry - default models configuration."""
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+
 import yaml
 
 from ..utils.logging import get_logger
@@ -13,7 +15,14 @@ _defaults: Optional[dict] = None
 
 
 def get_default_model(backend: str) -> str:
-    """Get default model for backend."""
+    """Get default model for backend.
+
+    Args:
+        backend: Backend name (e.g., "fastembed", "sentence_transformers").
+
+    Returns:
+        Default model name for the specified backend.
+    """
     global _defaults
 
     if _defaults is None:

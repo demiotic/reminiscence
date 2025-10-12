@@ -3,6 +3,7 @@
 import time
 import pytest
 from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.types import MultiModalInput, QueryMode
 
 
 class TestEndToEnd:
@@ -10,16 +11,16 @@ class TestEndToEnd:
 
     def test_complete_workflow(self, reminiscence):
         """Test complete cache workflow with exact matches."""
-        # 1. Empty cache (fixture ya lo limpió)
+        # Empty cache (fixture already cleared it)
         stats = reminiscence.get_stats()
         assert stats["total_entries"] == 0
 
         # 2. Store multiple entries
         for i in range(5):
-            reminiscence.store(f"query {i}", {"agent": "test"}, f"result {i}")
+            reminiscence.store(MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}")
 
         # 3. Lookup exact
-        result = reminiscence.lookup("query 0", {"agent": "test"})
+        result = reminiscence.lookup(MultiModalInput(text="query 0"), {"agent": "test"})
         assert result.is_hit
         assert result.result == "result 0"
 
@@ -36,15 +37,13 @@ class TestEndToEnd:
     def test_semantic_similarity_workflow(self, reminiscence):
         """Test semantic similarity matching."""
         # Store detailed query
-        reminiscence.store(
-            "What is machine learning and how does it work?",
+        reminiscence.store(MultiModalInput(text="What is machine learning and how does it work?"),
             {"agent": "qa"},
             "Machine learning explanation",
         )
 
         # Lookup with similar wording
-        result = reminiscence.lookup(
-            "Explain how machine learning works", {"agent": "qa"}
+        result = reminiscence.lookup(MultiModalInput(text="Explain how machine learning works"), {"agent": "qa"}
         )
 
         assert result.is_hit
@@ -61,11 +60,11 @@ class TestEndToEnd:
         ]
 
         for ctx in contexts:
-            reminiscence.store("test query", ctx, f"result for {ctx}")
+            reminiscence.store(MultiModalInput(text="test query"), ctx, f"result for {ctx}")
 
         # Lookup should respect context
         for ctx in contexts:
-            result = reminiscence.lookup("test query", ctx)
+            result = reminiscence.lookup(MultiModalInput(text="test query"), ctx)
             assert result.is_hit
             assert str(ctx) in str(result.result)
 
@@ -78,19 +77,19 @@ class TestEndToEnd:
         # First instance - store data
         config1 = ReminiscenceConfig(db_uri=db_path, log_level="WARNING")
         cache1 = Reminiscence(config1)
-        cache1.store("persistent query", {"agent": "test"}, "persistent result")
+        cache1.store(MultiModalInput(text="persistent query"), {"agent": "test"}, "persistent result")
 
         # Second instance - should find data
         config2 = ReminiscenceConfig(db_uri=db_path, log_level="WARNING")
         cache2 = Reminiscence(config2)
 
-        result = cache2.lookup("persistent query", {"agent": "test"})
+        result = cache2.lookup(MultiModalInput(text="persistent query"), {"agent": "test"})
         assert result.is_hit
         assert result.result == "persistent result"
 
     def test_ttl_workflow(self, reminiscence):
         """Test TTL expiration workflow."""
-        # Necesita config específico con TTL
+        # Needs specific config with TTL
         config = ReminiscenceConfig(
             db_uri="memory://",
             ttl_seconds=1,
@@ -99,17 +98,17 @@ class TestEndToEnd:
         cache = Reminiscence(config)
 
         # Store entry
-        cache.store("expiring query", {"agent": "test"}, "temporary result")
+        cache.store(MultiModalInput(text="expiring query"), {"agent": "test"}, "temporary result")
 
         # Should hit immediately
-        result = cache.lookup("expiring query", {"agent": "test"})
+        result = cache.lookup(MultiModalInput(text="expiring query"), {"agent": "test"})
         assert result.is_hit
 
         # Wait for expiration
         time.sleep(1.2)
 
         # Should miss after TTL
-        result = cache.lookup("expiring query", {"agent": "test"})
+        result = cache.lookup(MultiModalInput(text="expiring query"), {"agent": "test"})
         assert result.is_miss
 
     def test_decorator_workflow(self, reminiscence):
@@ -133,7 +132,7 @@ class TestEndToEnd:
 
     def test_eviction_workflow(self, reminiscence):
         """Test eviction policy workflow."""
-        # Necesita config específico con max_entries
+        # Needs specific config with max_entries
         config = ReminiscenceConfig(
             db_uri="memory://",
             max_entries=3,
@@ -143,7 +142,7 @@ class TestEndToEnd:
         )
         cache = Reminiscence(config)
 
-        # Store 4 entries con queries MUY diferentes
+        # Store 4 entries with very different queries
         queries = [
             ("What is Python programming?", "Python explanation"),
             ("How to cook Italian pasta?", "Pasta recipe"),
@@ -152,19 +151,19 @@ class TestEndToEnd:
         ]
 
         for query, result in queries:
-            cache.store(query, {"agent": "test"}, result)
+            cache.store(MultiModalInput(text=query), {"agent": "test"}, result)
             time.sleep(0.01)
 
         # Should have evicted oldest
         assert cache.backend.count() == 3
 
         # First entry should be gone
-        result = cache.lookup("What is Python programming?", {"agent": "test"})
+        result = cache.lookup(MultiModalInput(text="What is Python programming?"), {"agent": "test"})
         assert result.is_miss
 
         # Newer entries should exist
         for query, expected_result in queries[1:]:
-            result = cache.lookup(query, {"agent": "test"})
+            result = cache.lookup(MultiModalInput(text=query), {"agent": "test"})
             assert result.is_hit
             assert result.result == expected_result
 
@@ -175,16 +174,14 @@ class TestQueryModesEndToEnd:
     def test_semantic_mode_workflow(self, reminiscence):
         """Test semantic mode end-to-end workflow."""
         # Store with semantic mode (default)
-        reminiscence.store(
-            "What is artificial intelligence?",
+        reminiscence.store(MultiModalInput(text="What is artificial intelligence?"),
             {"agent": "qa"},
             "AI is the simulation of human intelligence",
-            query_mode="semantic",
+            mode=QueryMode.SEMANTIC,
         )
 
         # Lookup with semantic mode - similar query should hit
-        result = reminiscence.lookup(
-            "Explain artificial intelligence", {"agent": "qa"}, query_mode="semantic"
+        result = reminiscence.lookup(MultiModalInput(text="Explain artificial intelligence"), {"agent": "qa"}, mode=QueryMode.SEMANTIC
         )
 
         assert result.is_hit
@@ -195,16 +192,13 @@ class TestQueryModesEndToEnd:
         """Test exact mode end-to-end workflow."""
         # Store with exact mode
         sql_query = "SELECT * FROM users WHERE id = 1"
-        reminiscence.store(
-            sql_query,
-            {"database": "prod"},
+        reminiscence.store(MultiModalInput(text=sql_query), {"database": "prod"},
             [{"id": 1, "name": "Alice"}],
-            query_mode="exact",
+            mode=QueryMode.EXACT,
         )
 
         # Exact same query should hit
-        result = reminiscence.lookup(
-            sql_query, {"database": "prod"}, query_mode="exact"
+        result = reminiscence.lookup(MultiModalInput(text=sql_query), {"database": "prod"}, mode=QueryMode.EXACT
         )
 
         assert result.is_hit
@@ -212,8 +206,7 @@ class TestQueryModesEndToEnd:
         assert result.result == [{"id": 1, "name": "Alice"}]
 
         # Slightly different query should miss (exact mode)
-        result = reminiscence.lookup(
-            "SELECT * FROM users WHERE id = 2", {"database": "prod"}, query_mode="exact"
+        result = reminiscence.lookup(MultiModalInput(text="SELECT * FROM users WHERE id = 2"), {"database": "prod"}, mode=QueryMode.EXACT
         )
 
         assert result.is_miss
@@ -221,24 +214,21 @@ class TestQueryModesEndToEnd:
     def test_auto_mode_workflow(self, reminiscence):
         """Test auto mode workflow (exact → semantic fallback)."""
         # Store with auto mode (generates embeddings)
-        reminiscence.store(
-            "What is deep learning?",
+        reminiscence.store(MultiModalInput(text="What is deep learning?"),
             {"agent": "qa"},
             "Deep learning explanation",
-            query_mode="auto",
+            mode=QueryMode.AUTO,
         )
 
         # Exact same query - should hit via exact match first
-        result = reminiscence.lookup(
-            "What is deep learning?", {"agent": "qa"}, query_mode="auto"
+        result = reminiscence.lookup(MultiModalInput(text="What is deep learning?"), {"agent": "qa"}, mode=QueryMode.AUTO
         )
 
         assert result.is_hit
         assert result.similarity >= 0.9999
 
         # Similar query - should hit via semantic fallback
-        result = reminiscence.lookup(
-            "Explain deep learning concepts", {"agent": "qa"}, query_mode="auto"
+        result = reminiscence.lookup(MultiModalInput(text="Explain deep learning concepts"), {"agent": "qa"}, mode=QueryMode.AUTO
         )
 
         assert result.is_hit
@@ -248,31 +238,27 @@ class TestQueryModesEndToEnd:
     def test_mixed_modes_coexistence(self, reminiscence):
         """Test that entries with different modes coexist correctly."""
         # Store semantic entry
-        reminiscence.store(
-            "What is Python?",
+        reminiscence.store(MultiModalInput(text="What is Python?"),
             {"agent": "qa"},
             "Python explanation",
-            query_mode="semantic",
+            mode=QueryMode.SEMANTIC,
         )
 
         # Store exact entry
-        reminiscence.store(
-            "SELECT COUNT(*) FROM orders",
+        reminiscence.store(MultiModalInput(text="SELECT COUNT(*) FROM orders"),
             {"database": "analytics"},
             {"count": 1000},
-            query_mode="exact",
+            mode=QueryMode.EXACT,
         )
 
         assert reminiscence.backend.count() == 2
 
         # Both should be retrievable
-        result1 = reminiscence.lookup(
-            "Explain Python", {"agent": "qa"}, query_mode="semantic"
+        result1 = reminiscence.lookup(MultiModalInput(text="Explain Python"), {"agent": "qa"}, mode=QueryMode.SEMANTIC
         )
         assert result1.is_hit
 
-        result2 = reminiscence.lookup(
-            "SELECT COUNT(*) FROM orders", {"database": "analytics"}, query_mode="exact"
+        result2 = reminiscence.lookup(MultiModalInput(text="SELECT COUNT(*) FROM orders"), {"database": "analytics"}, mode=QueryMode.EXACT
         )
         assert result2.is_hit
 
@@ -286,13 +272,11 @@ class TestQueryModesEndToEnd:
         df = pd.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
 
         # Store DataFrame with exact mode
-        reminiscence.store(
-            "SELECT * FROM products", {"database": "prod"}, df, query_mode="exact"
+        reminiscence.store(MultiModalInput(text="SELECT * FROM products"), {"database": "prod"}, df, mode=QueryMode.EXACT
         )
 
         # Retrieve with exact mode
-        result = reminiscence.lookup(
-            "SELECT * FROM products", {"database": "prod"}, query_mode="exact"
+        result = reminiscence.lookup(MultiModalInput(text="SELECT * FROM products"), {"database": "prod"}, mode=QueryMode.EXACT
         )
 
         assert result.is_hit
@@ -304,7 +288,7 @@ class TestQueryModesEndToEnd:
         call_count = 0
 
         @reminiscence.cached(
-            query="question", query_mode="semantic", context_params=["user"]
+            query="question", mode=QueryMode.SEMANTIC, context=["user"]
         )
         def ask_semantic(question: str, user: str):
             nonlocal call_count
@@ -325,7 +309,7 @@ class TestQueryModesEndToEnd:
         call_count = 0
 
         @reminiscence.cached(
-            query="sql", query_mode="exact", context_params=["database"]
+            query="sql", mode=QueryMode.EXACT, context=["database"]
         )
         def run_sql(sql: str, database: str):
             nonlocal call_count
@@ -352,42 +336,41 @@ class TestQueryModesEndToEnd:
         result_data = {"count": 10000}
 
         # Store
-        reminiscence.store(query, context, result_data, query_mode="exact")
+        reminiscence.store(MultiModalInput(text=query), context, result_data, mode=QueryMode.EXACT)
 
         # Exact same query should hit
-        result = reminiscence.lookup(query, context, query_mode="exact")
+        result = reminiscence.lookup(MultiModalInput(text=query), context, mode=QueryMode.EXACT)
         assert result.is_hit
         assert result.similarity >= 0.9999
 
         # Slightly different query should miss
         result = reminiscence.lookup(
-            query + " WHERE id > 5", context, query_mode="exact"
+            MultiModalInput(text=query + " WHERE id > 5"), context, mode=QueryMode.EXACT
         )
         assert result.is_miss
 
     def test_query_mode_with_ttl(self, reminiscence):
         """Test query modes work correctly with TTL."""
-        # Necesita config específico
+        # Needs specific config
         config = ReminiscenceConfig(
             db_uri="memory://", ttl_seconds=1, log_level="WARNING"
         )
         cache = Reminiscence(config)
 
-        cache.store(
-            "SELECT * FROM users", {"db": "prod"}, [{"id": 1}], query_mode="exact"
+        cache.store(MultiModalInput(text="SELECT * FROM users"), {"db": "prod"}, [{"id": 1}], mode=QueryMode.EXACT
         )
 
-        result = cache.lookup("SELECT * FROM users", {"db": "prod"}, query_mode="exact")
+        result = cache.lookup(MultiModalInput(text="SELECT * FROM users"), {"db": "prod"}, mode=QueryMode.EXACT)
         assert result.is_hit
 
         time.sleep(1.2)
 
-        result = cache.lookup("SELECT * FROM users", {"db": "prod"}, query_mode="exact")
+        result = cache.lookup(MultiModalInput(text="SELECT * FROM users"), {"db": "prod"}, mode=QueryMode.EXACT)
         assert result.is_miss
 
     def test_query_mode_with_eviction(self, reminiscence):
         """Test query modes work correctly with eviction."""
-        # Necesita config específico
+        # Needs specific config
         config = ReminiscenceConfig(
             db_uri="memory://",
             max_entries=3,
@@ -396,56 +379,50 @@ class TestQueryModesEndToEnd:
         )
         cache = Reminiscence(config)
 
-        cache.store("query1", {"agent": "test"}, "r1", query_mode="exact")
+        cache.store(MultiModalInput(text="query1"), {"agent": "test"}, "r1", mode=QueryMode.EXACT)
         time.sleep(0.01)
-        cache.store("query2", {"agent": "test"}, "r2", query_mode="semantic")
+        cache.store(MultiModalInput(text="query2"), {"agent": "test"}, "r2", mode=QueryMode.SEMANTIC)
         time.sleep(0.01)
-        cache.store("query3", {"agent": "test"}, "r3", query_mode="exact")
+        cache.store(MultiModalInput(text="query3"), {"agent": "test"}, "r3", mode=QueryMode.EXACT)
         time.sleep(0.01)
 
         assert cache.backend.count() == 3
 
-        cache.store("query4", {"agent": "test"}, "r4", query_mode="semantic")
+        cache.store(MultiModalInput(text="query4"), {"agent": "test"}, "r4", mode=QueryMode.SEMANTIC)
 
         assert cache.backend.count() == 3
 
-        result = cache.lookup("query1", {"agent": "test"}, query_mode="exact")
+        result = cache.lookup(MultiModalInput(text="query1"), {"agent": "test"}, mode=QueryMode.EXACT)
         assert result.is_miss
 
     def test_stats_with_query_modes(self, reminiscence):
         """Test stats reporting works with mixed query modes."""
-        reminiscence.store(
-            "What is Python programming language?",
+        reminiscence.store(MultiModalInput(text="What is Python programming language?"),
             {"agent": "qa"},
             "Python info",
-            query_mode="semantic",
+            mode=QueryMode.SEMANTIC,
         )
-        reminiscence.store(
-            "How to cook pasta carbonara?",
+        reminiscence.store(MultiModalInput(text="How to cook pasta carbonara?"),
             {"agent": "qa"},
             "Pasta recipe",
-            query_mode="exact",
+            mode=QueryMode.EXACT,
         )
-        reminiscence.store(
-            "Explain quantum mechanics basics",
+        reminiscence.store(MultiModalInput(text="Explain quantum mechanics basics"),
             {"agent": "qa"},
             "Quantum info",
-            query_mode="semantic",
+            mode=QueryMode.SEMANTIC,
         )
 
-        reminiscence.lookup(
-            "What is Python programming language?",
+        reminiscence.lookup(MultiModalInput(text="What is Python programming language?"),
             {"agent": "qa"},
-            query_mode="semantic",
+            mode=QueryMode.SEMANTIC,
         )
-        reminiscence.lookup(
-            "How to cook pasta carbonara?", {"agent": "qa"}, query_mode="exact"
+        reminiscence.lookup(MultiModalInput(text="How to cook pasta carbonara?"), {"agent": "qa"}, mode=QueryMode.EXACT
         )
 
-        reminiscence.lookup(
-            "Best travel destinations in Europe 2025",
+        reminiscence.lookup(MultiModalInput(text="Best travel destinations in Europe 2025"),
             {"agent": "qa"},
-            query_mode="auto",
+            mode=QueryMode.AUTO,
         )
 
         stats = reminiscence.get_stats()

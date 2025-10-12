@@ -7,6 +7,7 @@ from reminiscence import (
     Reminiscence,
     ReminiscenceConfig,
 )
+from reminiscence.types import QueryMode
 
 # ============================================================================
 # LOCAL SESSION FIXTURES (solo para este archivo)
@@ -96,12 +97,12 @@ class TestSyncFunctions:
         assert result1 != result2
 
     def test_context_params(self, reminiscence_memory):
-        """context_params should enforce exact matching."""
+        """context should enforce exact matching."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(static_context={"agent": "test"}, context_params=["model"])  # ← CHANGED
+        @cached(static_context={"agent": "test"}, context=["model"])
         def compute(query: str, model: str, temperature: float):
             nonlocal call_count
             call_count += 1
@@ -127,9 +128,7 @@ class TestSyncFunctions:
 
         call_count = 0
 
-        @cached(
-            query="prompt", auto_strict=True
-        )  # ← CHANGED: query instead of query_param
+        @cached(query="prompt", auto_strict=True)
         def generate(prompt: str, temperature: float, max_tokens: int):
             nonlocal call_count
             call_count += 1
@@ -154,7 +153,7 @@ class TestSyncFunctions:
 
         call_count = 0
 
-        @cached(static_context={"agent": "test"}, query="prompt")  # ← CHANGED
+        @cached(static_context={"agent": "test"}, query="prompt")
         def generate(prompt: str, style: str):
             nonlocal call_count
             call_count += 1
@@ -172,7 +171,7 @@ class TestSyncFunctions:
 
         with pytest.raises(ValueError, match="not found"):
 
-            @cached(static_context={"agent": "test"}, query="nonexistent")  # ← CHANGED
+            @cached(static_context={"agent": "test"}, query="nonexistent")
             def compute(query: str):
                 return "result"
 
@@ -226,7 +225,7 @@ class TestContextHandling:
     """Context handling tests."""
 
     def test_static_context_only(self, reminiscence_memory):
-        """Static context with no context params - query is semantic key."""
+        """Static context with no context - query is semantic key."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
@@ -247,12 +246,12 @@ class TestContextHandling:
         assert call_count == 1
 
     def test_complex_context_param(self, reminiscence_memory):
-        """Complex types in context_params should serialize correctly."""
+        """Complex types in context should serialize correctly."""
         cached = create_cached_decorator(reminiscence_memory)
 
         call_count = 0
 
-        @cached(context_params=["tools"])  # ← CHANGED
+        @cached(context=["tools"])
         def call_agent(query: str, tools: list):
             nonlocal call_count
             call_count += 1
@@ -382,7 +381,7 @@ class TestEdgeCases:
 
         call_count = 0
 
-        @cached(context_params=["optional"])  # ← CHANGED
+        @cached(context=["optional"])
         def compute(query: str, optional: str = None):
             nonlocal call_count
             call_count += 1
@@ -410,7 +409,7 @@ class TestDecoratorQueryModes:
 
         call_count = 0
 
-        @cached(query="question", query_mode="semantic", context_params=["user"])
+        @cached(query="question", mode=QueryMode.SEMANTIC, context=["user"])
         def ask_llm(question: str, user: str):
             nonlocal call_count
             call_count += 1
@@ -431,7 +430,7 @@ class TestDecoratorQueryModes:
 
         call_count = 0
 
-        @cached(query="sql", query_mode="exact", context_params=["database"])
+        @cached(query="sql", mode=QueryMode.EXACT, context=["database"])
         def run_query(sql: str, database: str):
             nonlocal call_count
             call_count += 1
@@ -457,7 +456,7 @@ class TestDecoratorQueryModes:
 
         call_count = 0
 
-        @cached(query="prompt", query_mode="auto")
+        @cached(query="prompt", mode=QueryMode.AUTO)
         def generate_text(prompt: str):
             nonlocal call_count
             call_count += 1

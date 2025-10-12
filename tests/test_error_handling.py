@@ -1,6 +1,7 @@
 """Tests for error result handling in cache."""
 
 import pytest
+from reminiscence.types import MultiModalInput, QueryMode, StoreRequest
 
 
 class TestErrorDetection:
@@ -52,10 +53,10 @@ class TestStoreErrorValidation:
     def test_store_skips_errors_by_default(self, reminiscence):
         """store() should skip error results by default."""
         # Try to store an error
-        reminiscence.store("query", {}, {"error": "failed"})
+        reminiscence.store(MultiModalInput(text="query"), {}, {"error": "failed"})
 
         # Should not be cached - verify via lookup
-        result = reminiscence.lookup("query", {})
+        result = reminiscence.lookup(MultiModalInput(text="query"), {})
         assert result.is_miss
 
         # Metrics should track the skip
@@ -63,34 +64,34 @@ class TestStoreErrorValidation:
 
     def test_store_skips_none_by_default(self, reminiscence):
         """store() should skip None results by default."""
-        reminiscence.store("query", {}, None)
+        reminiscence.store(MultiModalInput(text="query"), {}, None)
 
-        result = reminiscence.lookup("query", {})
+        result = reminiscence.lookup(MultiModalInput(text="query"), {})
         assert result.is_miss
         assert reminiscence.metrics.store_errors == 1
 
     def test_store_skips_exceptions_by_default(self, reminiscence):
         """store() should skip Exception objects by default."""
-        reminiscence.store("query", {}, ValueError("test"))
+        reminiscence.store(MultiModalInput(text="query"), {}, ValueError("test"))
 
-        result = reminiscence.lookup("query", {})
+        result = reminiscence.lookup(MultiModalInput(text="query"), {})
         assert result.is_miss
         assert reminiscence.metrics.store_errors == 1
 
     def test_store_allows_errors_when_explicit(self, reminiscence):
         """store() should cache errors when allow_errors=True."""
-        reminiscence.store("query", {}, {"error": "failed"}, allow_errors=True)
+        reminiscence.store(MultiModalInput(text="query"), {}, {"error": "failed"}, allow_errors=True)
 
         # Can retrieve it
-        result = reminiscence.lookup("query", {})
+        result = reminiscence.lookup(MultiModalInput(text="query"), {})
         assert result.is_hit
         assert result.result == {"error": "failed"}
 
     def test_store_caches_valid_results(self, reminiscence):
         """store() should cache valid results normally."""
-        reminiscence.store("query", {}, {"data": "valid"})
+        reminiscence.store(MultiModalInput(text="query"), {}, {"data": "valid"})
 
-        result = reminiscence.lookup("query", {})
+        result = reminiscence.lookup(MultiModalInput(text="query"), {})
         assert result.is_hit
         assert result.result == {"data": "valid"}
 
@@ -100,61 +101,52 @@ class TestStoreBatchErrorValidation:
 
     def test_store_batch_filters_errors(self, reminiscence):
         """store_batch() should filter out errors by default."""
-        queries = ["q1", "q2", "q3", "q4"]
-        contexts = [{}, {}, {}, {}]
-        results = [
-            {"data": "valid1"},  # OK
-            {"error": "failed"},  # Error - skip
-            {"data": "valid2"},  # OK
-            None,  # Error - skip
+        requests = [
+            StoreRequest(query=MultiModalInput(text="q1"), context={}, result={"data": "valid1"}),
+            StoreRequest(query=MultiModalInput(text="q2"), context={}, result={"error": "failed"}),
+            StoreRequest(query=MultiModalInput(text="q3"), context={}, result={"data": "valid2"}),
+            StoreRequest(query=MultiModalInput(text="q4"), context={}, result=None),
         ]
 
-        reminiscence.store_batch(
-            queries, contexts, results, query_mode="exact"
-        )  # ← EXACT
+        reminiscence.store_batch(requests, mode=QueryMode.EXACT)
 
         # Only 2 valid entries - check via lookups
-        assert reminiscence.lookup("q1", {}, query_mode="exact").is_hit
-        assert reminiscence.lookup(
-            "q2", {}, query_mode="exact"
+        assert reminiscence.lookup(MultiModalInput(text="q1"), {}, mode=QueryMode.EXACT).is_hit
+        assert reminiscence.lookup(MultiModalInput(text="q2"), {}, mode=QueryMode.EXACT
         ).is_miss  # Error skipped
-        assert reminiscence.lookup("q3", {}, query_mode="exact").is_hit
-        assert reminiscence.lookup("q4", {}, query_mode="exact").is_miss  # None skipped
+        assert reminiscence.lookup(MultiModalInput(text="q3"), {}, mode=QueryMode.EXACT).is_hit
+        assert reminiscence.lookup(MultiModalInput(text="q4"), {}, mode=QueryMode.EXACT).is_miss  # None skipped
 
         # Errors tracked
         assert reminiscence.metrics.store_errors == 2
 
     def test_store_batch_with_allow_errors(self, reminiscence):
         """store_batch() should store all when allow_errors=True."""
-        queries = ["q1", "q2"]
-        contexts = [{}, {}]
-        results = [
-            {"data": "valid"},
-            {"error": "failed"},
+        requests = [
+            StoreRequest(query=MultiModalInput(text="q1"), context={}, result={"data": "valid"}),
+            StoreRequest(query=MultiModalInput(text="q2"), context={}, result={"error": "failed"}),
         ]
 
-        reminiscence.store_batch(queries, contexts, results, allow_errors=True)
+        reminiscence.store_batch(requests, allow_errors=True)
 
         # Both stored
-        assert reminiscence.lookup("q1", {}).is_hit
-        assert reminiscence.lookup("q2", {}).is_hit
+        assert reminiscence.lookup(MultiModalInput(text="q1"), {}).is_hit
+        assert reminiscence.lookup(MultiModalInput(text="q2"), {}).is_hit
 
     def test_store_batch_all_errors_skipped(self, reminiscence):
         """store_batch() should handle all-errors case gracefully."""
-        queries = ["q1", "q2", "q3"]
-        contexts = [{}, {}, {}]
-        results = [
-            {"error": "failed1"},
-            None,
-            {"exception": "timeout"},
+        requests = [
+            StoreRequest(query=MultiModalInput(text="q1"), context={}, result={"error": "failed1"}),
+            StoreRequest(query=MultiModalInput(text="q2"), context={}, result=None),
+            StoreRequest(query=MultiModalInput(text="q3"), context={}, result={"exception": "timeout"}),
         ]
 
-        reminiscence.store_batch(queries, contexts, results)
+        reminiscence.store_batch(requests)
 
         # Nothing stored
-        assert reminiscence.lookup("q1", {}).is_miss
-        assert reminiscence.lookup("q2", {}).is_miss
-        assert reminiscence.lookup("q3", {}).is_miss
+        assert reminiscence.lookup(MultiModalInput(text="q1"), {}).is_miss
+        assert reminiscence.lookup(MultiModalInput(text="q2"), {}).is_miss
+        assert reminiscence.lookup(MultiModalInput(text="q3"), {}).is_miss
         assert reminiscence.metrics.store_errors == 3
 
 
@@ -176,8 +168,7 @@ class TestDecoratorErrorHandling:
             failing_function("test prompt")
 
         # Nothing cached - verify via lookup
-        result = reminiscence.lookup(
-            "test prompt", {"__function__": "failing_function"}
+        result = reminiscence.lookup(MultiModalInput(text="test prompt"), {"__function__": "failing_function"}
         )
         assert result.is_miss
 
@@ -201,7 +192,7 @@ class TestDecoratorErrorHandling:
         assert result == {"error": "rate limited"}
 
         # But NOT cached
-        lookup = reminiscence.lookup("test prompt", {"__function__": "returns_error"})
+        lookup = reminiscence.lookup(MultiModalInput(text="test prompt"), {"__function__": "returns_error"})
         assert lookup.is_miss
 
     def test_decorator_caches_with_allow_errors(self, reminiscence):
@@ -217,7 +208,7 @@ class TestDecoratorErrorHandling:
         result = returns_error("test prompt")
 
         # Verify it's cached
-        lookup = reminiscence.lookup("test prompt", {"__function__": "returns_error"})
+        lookup = reminiscence.lookup(MultiModalInput(text="test prompt"), {"__function__": "returns_error"})
         assert lookup.is_hit
         assert lookup.result == {"error": "rate limited"}
 
@@ -265,8 +256,7 @@ class TestAsyncDecoratorErrorHandling:
             await failing_async_function("test prompt")
 
         # Nothing cached
-        result = reminiscence.lookup(
-            "test prompt", {"__function__": "failing_async_function"}
+        result = reminiscence.lookup(MultiModalInput(text="test prompt"), {"__function__": "failing_async_function"}
         )
         assert result.is_miss
 
@@ -285,7 +275,6 @@ class TestAsyncDecoratorErrorHandling:
 
         assert result == {"error": "timeout"}
 
-        lookup = reminiscence.lookup(
-            "test prompt", {"__function__": "async_returns_error"}
+        lookup = reminiscence.lookup(MultiModalInput(text="test prompt"), {"__function__": "async_returns_error"}
         )
         assert lookup.is_miss

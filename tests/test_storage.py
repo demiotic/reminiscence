@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from reminiscence.storage import create_storage_backend, LanceDBBackend
-from reminiscence.types import CacheEntry
+from reminiscence.types import CacheEntry, MultiModalInput
 from reminiscence import ReminiscenceConfig
 
 
@@ -68,7 +68,7 @@ class TestLanceDBBackend:
         assert cache1.backend is cache2.backend
 
         # Store in cache1
-        cache1.store("query1", {"agent": "test"}, "result1")
+        cache1.store(MultiModalInput(text="query1"), {"agent": "test"}, "result1")
 
         # Should be visible in cache2 (shared storage)
         assert cache2.backend.count() == 1
@@ -86,7 +86,7 @@ class TestLanceDBBackend:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
-            query_text="test query",
+            query=MultiModalInput(text="test query"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result="test result",
@@ -107,7 +107,7 @@ class TestLanceDBBackend:
         embedding = [0.1] * 384
         context = {"agent": "test"}
         entry = CacheEntry(
-            query_text="test query",
+            query=MultiModalInput(text="test query"),
             context=context,
             embedding=embedding,
             result="test result",
@@ -126,7 +126,7 @@ class TestLanceDBBackend:
         )
 
         assert len(results) > 0
-        assert results[0].query_text == "test query"
+        assert results[0].query.text == "test query"
         assert results[0].result == "test result"
 
     def test_search_different_context_returns_empty(self):
@@ -136,7 +136,7 @@ class TestLanceDBBackend:
 
         # Add entry with context A
         entry = CacheEntry(
-            query_text="test",
+            query=MultiModalInput(text="test"),
             context={"agent": "A"},
             embedding=[0.1] * 384,
             result="result A",
@@ -162,7 +162,7 @@ class TestLanceDBBackend:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
-            query_text="test",
+            query=MultiModalInput(text="test"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result="result",
@@ -186,7 +186,7 @@ class TestLanceDBBackend:
 
         entries = [
             CacheEntry(
-                query_text=f"query {i}",
+                query=MultiModalInput(text=f"query {i}"),
                 context={"agent": "test"},
                 embedding=[0.1 * i] * 384,
                 result=f"result {i}",
@@ -213,7 +213,7 @@ class TestLanceDBBackend:
         df = pd.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
 
         entry = CacheEntry(
-            query_text="get dataframe",
+            query=MultiModalInput(text="get dataframe"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result=df,
@@ -256,7 +256,7 @@ class TestLanceDBBackend:
         }
 
         entry = CacheEntry(
-            query_text="get nested result",
+            query=MultiModalInput(text="get nested result"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result=nested_result,
@@ -300,7 +300,7 @@ class TestLanceDBBackend:
         list_result = [df1, df2, "some string", 123]
 
         entry = CacheEntry(
-            query_text="get list of dataframes",
+            query=MultiModalInput(text="get list of dataframes"),
             context={"agent": "test"},
             embedding=[0.2] * 384,
             result=list_result,
@@ -347,7 +347,7 @@ class TestLanceDBBackend:
         }
 
         entry = CacheEntry(
-            query_text="deeply nested",
+            query=MultiModalInput(text="deeply nested"),
             context={"agent": "test"},
             embedding=[0.3] * 384,
             result=nested,
@@ -393,7 +393,7 @@ class TestLanceDBBackend:
         arr = np.array([[1, 2, 3], [4, 5, 6]])
 
         entry = CacheEntry(
-            query_text="get numpy array",
+            query=MultiModalInput(text="get numpy array"),
             context={"agent": "test"},
             embedding=[0.4] * 384,
             result=arr,
@@ -434,7 +434,7 @@ class TestLanceDBBackend:
         mixed_result = {"dataframe": df, "array": arr, "scalar": 42, "text": "hello"}
 
         entry = CacheEntry(
-            query_text="mixed types",
+            query=MultiModalInput(text="mixed types"),
             context={"agent": "test"},
             embedding=[0.5] * 384,
             result=mixed_result,
@@ -475,7 +475,7 @@ class TestLanceDBBackend:
         df = pl.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
 
         entry = CacheEntry(
-            query_text="get polars dataframe",
+            query=MultiModalInput(text="get polars dataframe"),
             context={"agent": "test"},
             embedding=[0.6] * 384,
             result=df,
@@ -514,7 +514,7 @@ class TestLanceDBBackend:
         mixed_list = [df, arr, "string", 123, {"nested": "dict"}, [1, 2, 3], None]
 
         entry = CacheEntry(
-            query_text="mixed list",
+            query=MultiModalInput(text="mixed list"),
             context={"agent": "test"},
             embedding=[0.7] * 384,
             result=mixed_list,
@@ -565,7 +565,7 @@ class TestDualTableArchitecture:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
-            query_text="test",
+            query=MultiModalInput(text="test"),
             context={"agent": "test"},
             embedding=None,  # No embedding for exact mode
             result="result",
@@ -584,7 +584,7 @@ class TestDualTableArchitecture:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
-            query_text="test",
+            query=MultiModalInput(text="test"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result="result",
@@ -603,7 +603,7 @@ class TestDualTableArchitecture:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
-            query_text="exact query",
+            query=MultiModalInput(text="exact query"),
             context={"agent": "test"},
             embedding=None,
             result="exact result",
@@ -631,7 +631,7 @@ class TestDualTableArchitecture:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry1 = CacheEntry(
-            query_text="exact",
+            query=MultiModalInput(text="exact"),
             context={"agent": "test"},
             embedding=None,
             result="r1",
@@ -640,7 +640,7 @@ class TestDualTableArchitecture:
         )
 
         entry2 = CacheEntry(
-            query_text="semantic",
+            query=MultiModalInput(text="semantic"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result="r2",
@@ -659,7 +659,7 @@ class TestDualTableArchitecture:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry1 = CacheEntry(
-            query_text="exact",
+            query=MultiModalInput(text="exact"),
             context={"agent": "test"},
             embedding=None,
             result="r1",
@@ -668,7 +668,7 @@ class TestDualTableArchitecture:
         )
 
         entry2 = CacheEntry(
-            query_text="semantic",
+            query=MultiModalInput(text="semantic"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result="r2",
@@ -697,7 +697,7 @@ class TestEncryptedStorage:
         storage = LanceDBBackend(config, embedding_dim=384)
 
         entry = CacheEntry(
-            query_text="secret query",
+            query=MultiModalInput(text="secret query"),
             context={"agent": "secure"},
             embedding=[0.1] * 384,
             result={"classified": "data"},
@@ -738,7 +738,7 @@ class TestCompressedStorage:
         large_data = {"data": "x" * 10000}
 
         entry = CacheEntry(
-            query_text="compressed query",
+            query=MultiModalInput(text="compressed query"),
             context={"agent": "test"},
             embedding=[0.1] * 384,
             result=large_data,
@@ -777,7 +777,7 @@ class TestCompressedStorage:
         df = pd.DataFrame({"col" + str(i): range(100) for i in range(10)})
 
         entry = CacheEntry(
-            query_text="compressed df",
+            query=MultiModalInput(text="compressed df"),
             context={"agent": "test"},
             embedding=[0.2] * 384,
             result=df,
@@ -814,7 +814,7 @@ class TestCompressedStorage:
         data = {"message": "hello" * 1000}
 
         entry = CacheEntry(
-            query_text="gzip query",
+            query=MultiModalInput(text="gzip query"),
             context={"agent": "test"},
             embedding=[0.3] * 384,
             result=data,
@@ -854,7 +854,7 @@ class TestCompressedStorage:
         sensitive_data = {"secret": "classified" * 1000, "level": "top"}
 
         entry = CacheEntry(
-            query_text="encrypted+compressed",
+            query=MultiModalInput(text="encrypted+compressed"),
             context={"agent": "secure"},
             embedding=[0.4] * 384,
             result=sensitive_data,
@@ -888,7 +888,7 @@ class TestCompressedStorage:
         assert storage.serializer.compressor is None
 
         entry = CacheEntry(
-            query_text="uncompressed",
+            query=MultiModalInput(text="uncompressed"),
             context={"agent": "test"},
             embedding=[0.5] * 384,
             result={"data": "value"},
@@ -945,7 +945,7 @@ class TestCompressedStorage:
 
         entries = [
             CacheEntry(
-                query_text=f"query {i}",
+                query=MultiModalInput(text=f"query {i}"),
                 context={"agent": "test"},
                 embedding=[0.1 * i] * 384,
                 result={"data": "x" * 1000, "index": i},

@@ -4,6 +4,7 @@ import time
 import pytest
 from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.scheduler import CleanupScheduler, SchedulerManager
+from reminiscence.types import MultiModalInput
 
 
 class TestCleanupScheduler:
@@ -262,8 +263,8 @@ class TestReminiscenceSchedulerIntegration:
         cache = Reminiscence(config)
 
         # Store some entries
-        cache.store("q1", {"agent": "test"}, "r1")
-        cache.store("q2", {"agent": "test"}, "r2")
+        cache.store(MultiModalInput(text="q1"), {"agent": "test"}, "r1")
+        cache.store(MultiModalInput(text="q2"), {"agent": "test"}, "r2")
 
         assert cache.backend.count() == 2
 
@@ -416,7 +417,7 @@ class TestReminiscenceSchedulerIntegration:
 
         # Store entries
         for i in range(10):
-            cache.store(f"query {i}", {"agent": "test"}, f"result {i}")
+            cache.store(MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}")
 
         assert cache.backend.count() == 10
 
@@ -449,8 +450,8 @@ class TestReminiscenceSchedulerIntegration:
         cache = Reminiscence(config)
 
         # Perform some operations
-        cache.store("q1", {"agent": "test"}, "r1")
-        result = cache.lookup("q1", {"agent": "test"})
+        cache.store(MultiModalInput(text="q1"), {"agent": "test"}, "r1")
+        result = cache.lookup(MultiModalInput(text="q1"), {"agent": "test"})
 
         assert result.is_hit
 

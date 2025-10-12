@@ -1,8 +1,10 @@
 """Result serialization with transformation pipeline support."""
 
+from __future__ import annotations
+
 import json
 import time
-from typing import Any, Tuple, List
+from typing import Any, List, Tuple
 
 try:
     import orjson
@@ -21,15 +23,16 @@ except ImportError:
     HAS_PYBASE64 = False
 
 import pyarrow as pa
+
+from .base import Serializer
 from .pipeline import TransformationPipeline
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class ResultSerializer:
-    """
-    Serialize/deserialize cache results with optional transformations.
+class ResultSerializer(Serializer):
+    """Serialize/deserialize cache results with optional transformations.
 
     Architecture:
     1. Serialization: Python object → bytes
@@ -44,12 +47,11 @@ class ResultSerializer:
     """
 
     def __init__(self, encryptor=None, compressor=None):
-        """
-        Initialize serializer with optional transformers.
+        """Initialize serializer with optional transformers.
 
         Args:
-            encryptor: Optional encryption backend
-            compressor: Optional compression backend
+            encryptor: Optional encryption backend.
+            compressor: Optional compression backend.
         """
         self.encryptor = encryptor
         self.compressor = compressor
@@ -480,7 +482,6 @@ class ResultSerializer:
 
         return flat_array.reshape(shape).astype(dtype)
 
-    # Los métodos _serialize_* permanecen sin cambios (ya óptimos con orjson/arrow)
     def _serialize_json(self, result: Any) -> Tuple[str, str]:
         """Serialize JSON-compatible objects."""
         try:

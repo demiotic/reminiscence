@@ -1,16 +1,17 @@
 """Cache configuration."""
 
-import os
+from __future__ import annotations
+
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 
 @dataclass
 class ReminiscenceConfig:
-    """
-    Configuration for Reminiscence semantic cache.
+    """Configuration for Reminiscence semantic cache.
 
     Environment variables:
     - REMINISCENCE_MODEL_NAME: Embedding model (optional, uses backend default)
@@ -88,8 +89,12 @@ class ReminiscenceConfig:
     compression_algorithm: str = "zstd"
     compression_level: int = 3
 
-    def __post_init__(self):
-        """Validate configuration after initialization."""
+    def __post_init__(self) -> None:
+        """Validate configuration after initialization.
+
+        Raises:
+            ValueError: If configuration is invalid.
+        """
         if self.encryption_enabled and not self.encryption_key:
             raise ValueError("encryption_key is required when encryption_enabled=True")
 
@@ -128,7 +133,14 @@ class ReminiscenceConfig:
                 )
 
     def _detect_encryption_backend(self) -> str:
-        """Auto-detect encryption backend from encryption_key format."""
+        """Auto-detect encryption backend from encryption_key format.
+
+        Returns:
+            Detected backend name.
+
+        Raises:
+            ValueError: If backend cannot be auto-detected.
+        """
         if not self.encryption_key:
             raise ValueError("Cannot detect backend: encryption_key is None")
 
@@ -167,11 +179,16 @@ class ReminiscenceConfig:
         )
 
     def get_threshold_for_context(self, context: Dict[str, Any]) -> float:
-        """
-        Get similarity threshold for given context.
+        """Get similarity threshold for given context.
 
         Matches context keys against configured thresholds.
         Returns most specific match or default similarity_threshold.
+
+        Args:
+            context: Context dict to match against.
+
+        Returns:
+            Similarity threshold for the given context.
         """
         if not self.context_thresholds:
             return self.similarity_threshold
@@ -187,20 +204,28 @@ class ReminiscenceConfig:
         return self.similarity_threshold
 
     @classmethod
-    def load(cls) -> "ReminiscenceConfig":
-        """Load configuration from environment variables."""
+    def load(cls) -> ReminiscenceConfig:
+        """Load configuration from environment variables.
+
+        Returns:
+            ReminiscenceConfig instance populated from environment.
+        """
         defaults = cls()
 
         def parse_bool(value: str) -> bool:
+            """Parse boolean from string."""
             return value.lower() in ("true", "1", "yes", "on")
 
         def parse_int_or_none(value: str) -> Optional[int]:
+            """Parse int or None from string."""
             return None if value.lower() == "none" else int(value)
 
         def parse_str_or_none(value: str) -> Optional[str]:
+            """Parse string or None."""
             return None if value.lower() in ("none", "") else value
 
         def parse_context_thresholds(value: str) -> Dict[str, float]:
+            """Parse context thresholds JSON."""
             if not value or value.lower() == "none":
                 return {}
             try:

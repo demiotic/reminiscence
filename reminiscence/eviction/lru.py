@@ -1,19 +1,21 @@
 """LRU eviction policy with metrics instrumentation."""
 
+from __future__ import annotations
+
 import time
-from typing import Dict
+from typing import Any, Dict, Optional
+
 from .base import EvictionPolicy
 
 
 class LRUPolicy(EvictionPolicy):
     """Least Recently Used eviction policy."""
 
-    def __init__(self, metrics=None):
-        """
-        Initialize LRU policy.
+    def __init__(self, metrics: Optional[Any] = None):
+        """Initialize LRU policy.
 
         Args:
-            metrics: Optional CacheMetrics instance for tracking
+            metrics: Optional CacheMetrics instance for tracking.
         """
         self.access_times: Dict[str, float] = {}
         self.insertion_times: Dict[str, float] = {}
@@ -21,11 +23,10 @@ class LRUPolicy(EvictionPolicy):
         self.total_accesses = 0
 
     def on_access(self, entry_id: str) -> None:
-        """
-        Update access time on hit.
+        """Update access time on hit.
 
         Args:
-            entry_id: Entry that was accessed
+            entry_id: Entry that was accessed.
         """
         self.access_times[entry_id] = time.time()
         self.total_accesses += 1
@@ -37,25 +38,23 @@ class LRUPolicy(EvictionPolicy):
             self.metrics.lru_total_accesses += 1
 
     def on_insert(self, entry_id: str) -> None:
-        """
-        Record insertion time for new entry.
+        """Record insertion time for new entry.
 
         Args:
-            entry_id: New entry being inserted
+            entry_id: New entry being inserted.
         """
         current_time = time.time()
         self.access_times[entry_id] = current_time
         self.insertion_times[entry_id] = current_time
 
     def select_victim(self) -> str:
-        """
-        Select least recently used entry for eviction.
+        """Select least recently used entry for eviction.
 
         Returns:
-            Entry ID to evict
+            Entry ID to evict.
 
         Raises:
-            ValueError: If no entries exist
+            ValueError: If no entries exist.
         """
         if not self.access_times:
             raise ValueError("No entries to evict")
@@ -96,11 +95,10 @@ class LRUPolicy(EvictionPolicy):
         return victim_id
 
     def on_evict(self, entry_id: str) -> None:
-        """
-        Remove evicted entry from tracking.
+        """Remove evicted entry from tracking.
 
         Args:
-            entry_id: Entry that was evicted
+            entry_id: Entry that was evicted.
         """
         if entry_id in self.access_times:
             del self.access_times[entry_id]
@@ -120,12 +118,11 @@ class LRUPolicy(EvictionPolicy):
                 self.metrics.evictions_by_policy["lru"] = 0
             self.metrics.evictions_by_policy["lru"] += 1
 
-    def get_policy_stats(self) -> dict:
-        """
-        Get LRU-specific statistics.
+    def get_policy_stats(self) -> Dict[str, Any]:
+        """Get LRU-specific statistics.
 
         Returns:
-            Dict with policy statistics
+            Dict with policy statistics.
         """
         if not self.access_times:
             return {

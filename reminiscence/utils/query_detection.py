@@ -1,11 +1,12 @@
 """Query type detection for auto mode."""
 
+from __future__ import annotations
+
 import re
 
 
 def should_use_exact_mode(query: str) -> bool:
-    """
-    Detect if query should use exact matching or semantic.
+    """Detect if query should use exact matching or semantic.
 
     Exact mode is used for:
     - SQL queries
@@ -20,10 +21,10 @@ def should_use_exact_mode(query: str) -> bool:
     - Conversational text
 
     Args:
-        query: Query text to analyze
+        query: Query text to analyze.
 
     Returns:
-        True if exact mode should be used, False for semantic
+        True if exact mode should be used, False for semantic.
     """
     if not query or len(query.strip()) == 0:
         return False

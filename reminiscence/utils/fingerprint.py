@@ -1,15 +1,16 @@
 """Fingerprinting utilities for context hashing."""
 
-import json
+from __future__ import annotations
+
 import hashlib
-from typing import Dict, Any
+import json
 from functools import lru_cache
+from typing import Any, Dict
 
 
 @lru_cache(maxsize=2048)
 def _compute_fingerprint(context_json: str) -> str:
-    """
-    Compute SHA256 fingerprint from JSON string (cached).
+    """Compute SHA256 fingerprint from JSON string (cached).
 
     LRU cache is safe here because:
     - Context strings are immutable
@@ -17,25 +18,24 @@ def _compute_fingerprint(context_json: str) -> str:
     - Common in batch operations (repeated contexts)
 
     Args:
-        context_json: JSON-serialized context string
+        context_json: JSON-serialized context string.
 
     Returns:
-        SHA256 hex digest
+        SHA256 hex digest.
     """
     return hashlib.sha256(context_json.encode("utf-8")).hexdigest()
 
 
 def create_fingerprint(context: Dict[str, Any]) -> str:
-    """
-    Create deterministic fingerprint from context.
+    """Create deterministic fingerprint from context.
 
     Uses LRU cache for performance when contexts repeat.
 
     Args:
-        context: Context dictionary
+        context: Context dictionary.
 
     Returns:
-        SHA256 fingerprint (hex string)
+        SHA256 fingerprint (hex string).
 
     Examples:
         >>> ctx = {"agent": "test", "session": "123"}
@@ -48,9 +48,8 @@ def create_fingerprint(context: Dict[str, Any]) -> str:
     return _compute_fingerprint(context_json)
 
 
-def clear_fingerprint_cache():
-    """
-    Clear fingerprint cache (useful for testing).
+def clear_fingerprint_cache() -> None:
+    """Clear fingerprint cache (useful for testing).
 
     In production, you rarely need this since LRU evicts automatically.
     """
@@ -58,11 +57,10 @@ def clear_fingerprint_cache():
 
 
 def get_fingerprint_cache_info():
-    """
-    Get cache statistics.
+    """Get cache statistics.
 
     Returns:
-        CacheInfo with hits, misses, maxsize, currsize
+        CacheInfo with hits, misses, maxsize, currsize.
 
     Examples:
         >>> info = get_fingerprint_cache_info()
@@ -72,7 +70,15 @@ def get_fingerprint_cache_info():
 
 
 def compute_query_hash(query_text: str, context: Dict[str, Any]) -> str:
-    """Compute hash of query + context for exact matching."""
+    """Compute hash of query + context for exact matching.
+
+    Args:
+        query_text: Query text string.
+        context: Context dictionary.
+
+    Returns:
+        SHA256 hex digest of query + context.
+    """
     context_json = json.dumps(context, sort_keys=True)
     data = f"{query_text}:{context_json}"
     return hashlib.sha256(data.encode()).hexdigest()

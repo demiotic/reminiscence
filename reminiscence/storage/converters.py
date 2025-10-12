@@ -1,8 +1,11 @@
 """Arrow table conversion utilities."""
 
+from __future__ import annotations
+
 import json
 import time
 from typing import Optional
+
 import pyarrow as pa
 
 from ..types import CacheEntry
@@ -17,13 +20,13 @@ def arrow_row_to_cache_entry(
     """Convert Arrow row to CacheEntry.
 
     Args:
-        arrow_table: Arrow table containing the row
-        index: Row index to convert
-        similarity: Similarity score for this entry
-        serializer: ResultSerializer instance for deserialization
+        arrow_table: Arrow table containing the row.
+        index: Row index to convert.
+        similarity: Similarity score for this entry.
+        serializer: ResultSerializer instance for deserialization.
 
     Returns:
-        CacheEntry or None if conversion fails
+        CacheEntry or None if conversion fails.
     """
     try:
         context_dict = json.loads(arrow_table["context"][index].as_py())

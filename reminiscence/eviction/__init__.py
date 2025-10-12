@@ -1,27 +1,48 @@
 """Eviction policy abstractions."""
 
-from .base import EvictionPolicy
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from ..types import EvictionPolicy as EvictionPolicyEnum
+from .base import EvictionPolicy as EvictionPolicyBase
 from .fifo import FIFOPolicy
-from .lru import LRUPolicy
 from .lfu import LFUPolicy
+from .lru import LRUPolicy
 
 
-def create_eviction_policy(policy_name: str) -> EvictionPolicy:
-    """Factory to create eviction policy from name."""
+def create_eviction_policy(
+    policy: EvictionPolicyEnum, metrics: Optional[Any] = None
+) -> EvictionPolicyBase:
+    """Factory to create eviction policy from enum.
+
+    Args:
+        policy: EvictionPolicy enum value.
+        metrics: Optional CacheMetrics instance for tracking.
+
+    Returns:
+        EvictionPolicy instance.
+
+    Raises:
+        ValueError: If policy not supported.
+    """
     policies = {
-        "fifo": FIFOPolicy,
-        "lru": LRUPolicy,
-        "lfu": LFUPolicy,
+        EvictionPolicyEnum.FIFO: FIFOPolicy,
+        EvictionPolicyEnum.LRU: LRUPolicy,
+        EvictionPolicyEnum.LFU: LFUPolicy,
     }
 
-    policy_class = policies.get(policy_name.lower())
+    policy_class = policies.get(policy)
     if not policy_class:
         raise ValueError(
-            f"Unknown eviction policy: {policy_name}. "
-            f"Supported: {list(policies.keys())}"
+            f"Unknown eviction policy: {policy}. Supported: {list(EvictionPolicyEnum)}"
         )
 
-    return policy_class()
+    # mypy doesn't understand that policy_class is a concrete implementation
+    return policy_class(metrics=metrics)  # type: ignore[abstract]
 
 
-__all__ = ["EvictionPolicy", "create_eviction_policy"]
+__all__ = [
+    "EvictionPolicyBase",
+    "create_eviction_policy",
+]

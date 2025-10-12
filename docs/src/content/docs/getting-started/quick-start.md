@@ -45,7 +45,7 @@ from reminiscence import Reminiscence
 
 cache = Reminiscence()
 
-@cache.cached(query="prompt", context_params=["model"])
+@cache.cached(query="prompt", context=["model"])
 def ask_llm(prompt: str, model: str) -> str:
     """Expensive LLM call with automatic caching."""
     return openai.ChatCompletion.create(
@@ -113,12 +113,12 @@ eu = cache.lookup("Analyze sales", context={"region": "EU", "year": 2024})
 
 ## Decorator with Context
 
-Use `context_params` to automatically extract context from function arguments:
+Use `context` to automatically extract context from function arguments:
 
 ```python
 @cache.cached(
 query="sql_query",
-context_params=["database", "user_id"],
+context=["database", "user_id"],
 query_mode="exact"
 )
 def execute_query(sql_query: str, database: str, user_id: int):

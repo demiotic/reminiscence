@@ -1,10 +1,12 @@
-"""Lookup and matching operations."""
+"""Lookup and matching operations with multimodal support."""
 
-import time
+from __future__ import annotations
+
 import json
-from typing import Optional, Dict, Any, List
+import time
+from typing import Any, Dict, List, Optional
 
-from ..types import LookupResult, CacheEntry
+from ..types import CacheEntry, LookupResult, MultiModalInput
 from ..utils.logging import get_logger
 from ..utils.query_detection import should_use_exact_mode
 
@@ -12,17 +14,17 @@ logger = get_logger(__name__)
 
 
 class LookupOperations:
-    """Handles cache lookup and matching operations."""
+    """Handles cache lookup and matching operations with multimodal support."""
 
     def __init__(self, storage, embedder, eviction, config, metrics):
         """Initialize lookup operations.
 
         Args:
-            storage: Storage backend instance
-            embedder: Embedding model instance
-            eviction: Eviction policy instance
-            config: Configuration object
-            metrics: Optional metrics tracker
+            storage: Storage backend instance.
+            embedder: Embedding model instance.
+            eviction: Eviction policy instance.
+            config: Configuration object.
+            metrics: Optional metrics tracker.
         """
         self.storage = storage
         self.embedder = embedder
@@ -44,7 +46,7 @@ class LookupOperations:
 
         self._sync_eviction_state()
 
-    def _sync_eviction_state(self):
+    def _sync_eviction_state(self) -> None:
         """Sync eviction policy with existing entries on startup."""
         sync_start = time.time()
         try:
@@ -83,11 +85,11 @@ class LookupOperations:
         """Generate consistent entry ID for eviction tracking.
 
         Args:
-            query: Query text
-            context: Context dict or JSON string
+            query: Query text.
+            context: Context dict or JSON string.
 
         Returns:
-            Unique entry identifier string
+            Unique entry identifier string.
         """
         if isinstance(context, str):
             context_str = context
@@ -95,7 +97,7 @@ class LookupOperations:
             context_str = json.dumps(context, sort_keys=True)
         return f"{query[:30]}:{context_str[:30]}"
 
-    def _export_metrics_to_otel(self):
+    def _export_metrics_to_otel(self) -> None:
         """Export metrics to OpenTelemetry periodically."""
         if self.otel_exporter and self.metrics:
             try:
@@ -107,35 +109,41 @@ class LookupOperations:
 
     def lookup(
         self,
-        query: str,
+        query: MultiModalInput,
         context: Optional[Dict[str, Any]] = None,
         similarity_threshold: Optional[float] = None,
         query_mode: str = "semantic",
         track_metrics: bool = True,
     ) -> LookupResult:
-        """Search cache by query with exact context matching.
+        """Search cache by multimodal query with exact context matching.
 
         Supports context-specific similarity thresholds and per-entry TTL checking.
 
         Args:
-            query: Query text to search
-            context: Context dict for exact matching
-            similarity_threshold: Minimum similarity score (overrides config)
-            query_mode: Query matching strategy (semantic, exact, auto)
-            track_metrics: Internal flag to control metrics tracking
+            query: MultiModalInput to search.
+            context: Context dict for exact matching.
+            similarity_threshold: Minimum similarity score (overrides config).
+            query_mode: Query matching strategy (semantic, exact, auto).
+            track_metrics: Internal flag to control metrics tracking.
 
         Returns:
-            LookupResult with hit status and cached data if found
+            LookupResult with hit status and cached data if found.
         """
         start_time = time.time()
         context = context or {}
 
+        # Extract text from MultiModalInput
+        query_text = query.text
+
         logger.debug(
             "lookup_start",
-            query_preview=query[:50],
-            query_length=len(query),
+            query_preview=query_text[:50],
+            query_length=len(query_text),
             context_keys=list(context.keys()),
             query_mode=query_mode,
+            has_image=query.image is not None,
+            has_video=query.video is not None,
+            has_audio=query.audio is not None,
         )
 
         try:
@@ -151,25 +159,25 @@ class LookupOperations:
             # Auto-detect query mode if requested
             actual_mode = query_mode
             if query_mode == "auto":
-                use_exact = should_use_exact_mode(query)
+                use_exact = should_use_exact_mode(query_text)
                 actual_mode = "exact" if use_exact else "semantic"
                 logger.debug(
                     "auto_mode_detected",
-                    query_preview=query[:50],
+                    query_preview=query_text[:50],
                     detected_mode=actual_mode,
-                    query_length=len(query),
+                    query_length=len(query_text),
                 )
 
             # Generate embedding for semantic search
             embedding = None
             if actual_mode == "semantic":
                 embed_start = time.time()
-                embedding = self.embedder.embed(query)
+                embedding = self.embedder.embed(query_text)
                 embed_ms = (time.time() - embed_start) * 1000
                 logger.debug(
                     "embedding_generated",
                     latency_ms=round(embed_ms, 1),
-                    text_length=len(query),
+                    text_length=len(query_text),
                     embedding_dim=len(embedding) if embedding else 0,
                 )
             else:
@@ -197,7 +205,7 @@ class LookupOperations:
                 limit=1,
                 similarity_threshold=threshold,
                 query_mode=actual_mode,
-                query_text=query,
+                query_text=query_text,
             )
             search_ms = (time.time() - search_start) * 1000
 
@@ -225,7 +233,7 @@ class LookupOperations:
                 "cache_lookup_error",
                 error_type=type(e).__name__,
                 error_message=str(e),
-                query_preview=query[:50],
+                query_preview=query_text[:50],
                 query_mode=query_mode,
                 latency_ms=round(elapsed_ms, 1),
                 exc_info=True,
@@ -244,12 +252,12 @@ class LookupOperations:
         """Process cache hit with per-entry TTL check and metrics.
 
         Args:
-            best: Matched cache entry
-            start_time: Lookup start timestamp
-            track_metrics: Whether to track metrics
+            best: Matched cache entry.
+            start_time: Lookup start timestamp.
+            track_metrics: Whether to track metrics.
 
         Returns:
-            LookupResult with cached data or miss if expired
+            LookupResult with cached data or miss if expired.
         """
         entry_ttl = (
             best.ttl_seconds
@@ -317,12 +325,12 @@ class LookupOperations:
         """Handle cache miss with metrics tracking.
 
         Args:
-            reason: Miss reason for logging
-            start_time: Lookup start timestamp
-            track_metrics: Whether to track metrics
+            reason: Miss reason for logging.
+            start_time: Lookup start timestamp.
+            track_metrics: Whether to track metrics.
 
         Returns:
-            LookupResult indicating miss
+            LookupResult indicating miss.
         """
         elapsed_ms = (time.time() - start_time) * 1000
 
@@ -335,13 +343,13 @@ class LookupOperations:
 
     def lookup_batch(
         self,
-        queries: List[str],
+        queries: List[MultiModalInput],
         contexts: List[Dict[str, Any]],
         similarity_threshold: Optional[float] = None,
         query_mode: str = "semantic",
         track_metrics: bool = True,
     ) -> List[LookupResult]:
-        """Batch lookup for multiple queries optimized for embeddings.
+        """Batch lookup for multiple multimodal queries optimized for embeddings.
 
         Main optimization: generates all embeddings in a single batch call,
         which is 2-3x faster than generating them individually.
@@ -349,16 +357,19 @@ class LookupOperations:
         Supports context-specific thresholds per query.
 
         Args:
-            queries: List of query texts
-            contexts: List of context dicts (one per query)
-            similarity_threshold: Minimum similarity threshold (overrides config)
-            query_mode: Query matching strategy (semantic, exact, auto)
-            track_metrics: Whether to track metrics
+            queries: List of MultiModalInput objects.
+            contexts: List of context dicts (one per query).
+            similarity_threshold: Minimum similarity threshold (overrides config).
+            query_mode: Query matching strategy (semantic, exact, auto).
+            track_metrics: Whether to track metrics.
 
         Returns:
-            List of LookupResult objects (one per query)
+            List of LookupResult objects (one per query).
         """
         batch_start = time.time()
+
+        # Extract text from all MultiModalInputs
+        query_texts = [q.text for q in queries]
 
         logger.debug(
             "batch_lookup_start",
@@ -377,9 +388,9 @@ class LookupOperations:
 
             # Determine actual mode for each query
             actual_modes = []
-            for query in queries:
+            for query_text in query_texts:
                 if query_mode == "auto":
-                    use_exact = should_use_exact_mode(query)
+                    use_exact = should_use_exact_mode(query_text)
                     actual_modes.append("exact" if use_exact else "semantic")
                 else:
                     actual_modes.append(query_mode)
@@ -396,16 +407,16 @@ class LookupOperations:
 
             # Batch process semantic queries
             if semantic_indices:
-                semantic_queries = [queries[i] for i in semantic_indices]
+                semantic_texts = [query_texts[i] for i in semantic_indices]
 
                 embed_start = time.time()
-                embeddings = self.embedder.embed_batch(semantic_queries)
+                embeddings = self.embedder.embed_batch(semantic_texts)
                 embed_ms = (time.time() - embed_start) * 1000
                 logger.debug(
                     "batch_embeddings_generated",
-                    count=len(semantic_queries),
+                    count=len(semantic_texts),
                     latency_ms=round(embed_ms, 1),
-                    per_item_ms=round(embed_ms / len(semantic_queries), 2),
+                    per_item_ms=round(embed_ms / len(semantic_texts), 2),
                 )
 
                 for idx, embedding in zip(semantic_indices, embeddings):
@@ -414,7 +425,7 @@ class LookupOperations:
                         threshold = self.config.get_threshold_for_context(contexts[idx])
 
                     result = self._lookup_with_embedding(
-                        queries[idx],
+                        query_texts[idx],
                         contexts[idx],
                         embedding,
                         threshold,
@@ -475,14 +486,14 @@ class LookupOperations:
         This is a performance optimization for batch operations.
 
         Args:
-            query: Query text (for logging/context only)
-            context: Context dict for exact matching
-            embedding: Pre-computed embedding vector
-            similarity_threshold: Minimum similarity score
-            track_metrics: Whether to track metrics
+            query: Query text (for logging/context only).
+            context: Context dict for exact matching.
+            embedding: Pre-computed embedding vector.
+            similarity_threshold: Minimum similarity score.
+            track_metrics: Whether to track metrics.
 
         Returns:
-            LookupResult with hit status and data
+            LookupResult with hit status and data.
         """
         start_time = time.time()
         context = context or {}
@@ -533,7 +544,7 @@ class LookupOperations:
 
     def check_availability(
         self,
-        query: str,
+        query: MultiModalInput,
         context: Optional[Dict[str, Any]] = None,
         similarity_threshold: Optional[float] = None,
         query_mode: str = "semantic",
@@ -543,16 +554,19 @@ class LookupOperations:
         Lightweight check used by schedulers for availability verification.
 
         Args:
-            query: Query text
-            context: Context dict
-            similarity_threshold: Minimum similarity threshold
-            query_mode: Query mode (semantic/exact/auto)
+            query: MultiModalInput to check.
+            context: Context dict.
+            similarity_threshold: Minimum similarity threshold.
+            query_mode: Query mode (semantic/exact/auto).
 
         Returns:
-            True if cache entry exists and is valid
+            True if cache entry exists and is valid.
         """
         start_time = time.time()
         context = context or {}
+
+        # Extract text from MultiModalInput
+        query_text = query.text
 
         try:
             cache_count = self.storage.count()
@@ -562,13 +576,13 @@ class LookupOperations:
             # Auto-detect mode
             actual_mode = query_mode
             if query_mode == "auto":
-                use_exact = should_use_exact_mode(query)
+                use_exact = should_use_exact_mode(query_text)
                 actual_mode = "exact" if use_exact else "semantic"
 
             # Generate embedding if needed
             embedding = None
             if actual_mode == "semantic":
-                embedding = self.embedder.embed(query)
+                embedding = self.embedder.embed(query_text)
 
             # Determine threshold
             if similarity_threshold is None:
@@ -583,7 +597,7 @@ class LookupOperations:
                 limit=1,
                 similarity_threshold=threshold,
                 query_mode=actual_mode,
-                query_text=query,
+                query_text=query_text,
             )
 
             if not candidates:
@@ -614,7 +628,7 @@ class LookupOperations:
             logger.error(
                 "availability_check_failed",
                 error=str(e),
-                query_preview=query[:50],
+                query_preview=query_text[:50],
                 exc_info=True,
             )
             return False

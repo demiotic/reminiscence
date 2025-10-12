@@ -1,8 +1,10 @@
 """Maintenance, stats, and I/O operations."""
 
-import time
+from __future__ import annotations
+
 import json
-from typing import Dict, Any, List
+import time
+from typing import Any, Dict, List
 
 from ..types import CacheEntry
 from ..utils.logging import get_logger
@@ -17,10 +19,10 @@ class MaintenanceOperations:
         """Initialize maintenance operations.
 
         Args:
-            storage: Storage backend instance
-            eviction: Eviction policy instance
-            config: Configuration object
-            metrics: Optional metrics tracker
+            storage: Storage backend instance.
+            eviction: Eviction policy instance.
+            config: Configuration object.
+            metrics: Optional metrics tracker.
         """
         self.storage = storage
         self.eviction = eviction
@@ -31,11 +33,11 @@ class MaintenanceOperations:
         """Generate consistent entry ID for eviction tracking.
 
         Args:
-            query: Query text
-            context: Context dict or JSON string
+            query: Query text.
+            context: Context dict or JSON string.
 
         Returns:
-            Unique entry identifier string
+            Unique entry identifier string.
         """
         if isinstance(context, str):
             context_str = context
@@ -47,7 +49,7 @@ class MaintenanceOperations:
         """Remove expired entries based on TTL.
 
         Returns:
-            Number of entries deleted
+            Number of entries deleted.
         """
         if self.config.ttl_seconds is None:
             logger.warning("cleanup_called_no_ttl")
@@ -156,7 +158,7 @@ class MaintenanceOperations:
         """Get cache statistics.
 
         Returns:
-            Dict with cache metrics and status
+            Dict with cache metrics and status.
         """
         try:
             exact_count = len(self.storage.exact_table.to_arrow())
@@ -186,7 +188,7 @@ class MaintenanceOperations:
         """Get all cache entries as list of dicts.
 
         Returns:
-            List of entry dictionaries
+            List of entry dictionaries.
         """
         try:
             arrow_table = self.storage.to_arrow()
@@ -196,21 +198,21 @@ class MaintenanceOperations:
             logger.error("get_all_entries_failed", error=str(e), exc_info=True)
             return []
 
-    def export_to_file(self, filepath: str, format: str = "parquet"):
+    def export_to_file(self, filepath: str, format: str = "parquet") -> None:
         """Export cache to file.
 
         Args:
-            filepath: Output file path
-            format: File format (parquet, json, csv)
+            filepath: Output file path.
+            format: File format (parquet, json, csv).
 
         Raises:
-            ValueError: If format is unsupported
-            Exception: If export operation fails
+            ValueError: If format is unsupported.
+            Exception: If export operation fails.
         """
         try:
-            import pyarrow.parquet as pq
-            import pyarrow.json as pj
             import pyarrow.csv as pc
+            import pyarrow.json as pj
+            import pyarrow.parquet as pq
 
             arrow_table = self.storage.to_arrow()
 
@@ -240,21 +242,21 @@ class MaintenanceOperations:
             )
             raise
 
-    def import_from_file(self, filepath: str, format: str = "parquet"):
+    def import_from_file(self, filepath: str, format: str = "parquet") -> None:
         """Import cache from file.
 
         Args:
-            filepath: Input file path
-            format: File format (parquet, json, csv)
+            filepath: Input file path.
+            format: File format (parquet, json, csv).
 
         Raises:
-            ValueError: If format is unsupported
-            Exception: If import operation fails
+            ValueError: If format is unsupported.
+            Exception: If import operation fails.
         """
         try:
-            import pyarrow.parquet as pq
-            import pyarrow.json as pj
             import pyarrow.csv as pc
+            import pyarrow.json as pj
+            import pyarrow.parquet as pq
 
             if format == "parquet":
                 arrow_table = pq.read_table(filepath)

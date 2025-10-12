@@ -57,7 +57,7 @@ from reminiscence import Reminiscence
 
 cache = Reminiscence()
 
-@cache.cached(query="prompt", context_params=["model"])
+@cache.cached(query="prompt", context=["model"])
 def call_llm(prompt: str, model: str):
     return expensive_llm_call(prompt, model)
 
@@ -214,6 +214,35 @@ Typical latencies on consumer hardware (M1/M2, AMD Ryzen):
 
 Scales to **100K+ entries** with automatic vector indexing (IVF-PQ).
 
+## Concurrency Model
+
+Reminiscence is optimized for **single-process** or **low-concurrency** scenarios:
+
+### ✅ Recommended Use Cases
+
+- **CLI tools and scripts** - Single-threaded execution
+- **Jupyter notebooks** - Research and prototyping
+- **ML inference pipelines** - Typically single-threaded or low concurrency
+- **FastAPI/Flask apps** - Low to moderate traffic (< 10 concurrent workers)
+- **Background jobs** - Celery, RQ, or similar task queues
+
+### ⚠️ Concurrency Considerations
+
+**Metrics and counters** are thread-safe with minimal performance overhead. **Eviction policy state** uses relaxed consistency for better performance - the `max_entries` limit is a soft limit that may be exceeded by ~5% under high concurrency before cleanup occurs.
+
+**For high-concurrency web services** (>10 concurrent workers), consider:
+- Using process-level isolation (one cache instance per worker process)
+- Disabling metrics if not needed (`enable_metrics=False`)
+- Using a distributed cache (Redis, Memcached) as primary store
+
+### Technical Details
+
+- **LanceDB operations** (add, search, delete) are thread-safe
+- **Metrics** use `threading.RLock` for accurate tracking under concurrent access
+- **Eviction** uses relaxed consistency - adds entries first, then evicts excess
+- **Max entries** is a soft limit (allows ~5% overflow during concurrent writes)
+
+This design prioritizes performance for typical ML/AI workflows over strict consistency guarantees needed for high-throughput web services.
 
 ## License
 

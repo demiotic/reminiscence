@@ -1,10 +1,12 @@
 """FastEmbed implementation (lightweight, ONNX-optimized)."""
 
+from __future__ import annotations
+
 import os
-import time
 import tempfile
-from typing import List
+import time
 from functools import cached_property
+from typing import Any, Dict, List, Optional
 
 try:
     from fastembed import TextEmbedding
@@ -17,7 +19,6 @@ from .base import EmbeddingModel
 from .model_registry import get_default_model
 from ..utils.logging import get_logger
 
-
 logger = get_logger(__name__)
 
 
@@ -25,12 +26,14 @@ class FastEmbedEmbedder(EmbeddingModel):
     """Embedder using FastEmbed library."""
 
     def __init__(self, config, metrics=None):
-        """
-        Initialize FastEmbed embedder.
+        """Initialize FastEmbed embedder.
 
         Args:
-            config: Configuration object
-            metrics: Optional CacheMetrics instance for tracking
+            config: Configuration object.
+            metrics: Optional CacheMetrics instance for tracking.
+
+        Raises:
+            ImportError: If fastembed library not installed.
         """
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
@@ -54,7 +57,14 @@ class FastEmbedEmbedder(EmbeddingModel):
 
     @cached_property
     def _model(self) -> TextEmbedding:
-        """Lazy-load FastEmbed model."""
+        """Lazy-load FastEmbed model.
+
+        Returns:
+            Loaded TextEmbedding model instance.
+
+        Raises:
+            Exception: If model loading fails.
+        """
         cache_dir = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(
             tempfile.gettempdir(), "fastembed_cache"
         )
@@ -104,7 +114,11 @@ class FastEmbedEmbedder(EmbeddingModel):
 
     @property
     def embedding_dim(self) -> int:
-        """Get embedding dimension."""
+        """Get embedding dimension.
+
+        Returns:
+            Integer dimension of embedding vectors.
+        """
         if not hasattr(self, "_cached_dim"):
             logger.debug("computing_embedding_dim", model=self.model_name)
             test_emb = list(self._model.embed([""]))[0]
@@ -114,7 +128,17 @@ class FastEmbedEmbedder(EmbeddingModel):
         return self._cached_dim
 
     def embed(self, text: str) -> List[float]:
-        """Generate normalized embedding."""
+        """Generate normalized embedding.
+
+        Args:
+            text: Input text to embed.
+
+        Returns:
+            Embedding vector as list of floats.
+
+        Raises:
+            Exception: If embedding generation fails.
+        """
         start = time.perf_counter()
 
         try:
@@ -163,14 +187,16 @@ class FastEmbedEmbedder(EmbeddingModel):
             raise
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for multiple texts in batch.
+        """Generate embeddings for multiple texts in batch.
 
         Args:
-            texts: List of text strings to embed
+            texts: List of text strings to embed.
 
         Returns:
-            List of embedding vectors
+            List of embedding vectors.
+
+        Raises:
+            Exception: If batch embedding generation fails.
         """
         if not texts:
             return []
@@ -228,8 +254,12 @@ class FastEmbedEmbedder(EmbeddingModel):
             )
             raise
 
-    def get_embedding_stats(self) -> dict:
-        """Get embedding-specific statistics."""
+    def get_embedding_stats(self) -> Dict[str, Any]:
+        """Get embedding-specific statistics.
+
+        Returns:
+            Dictionary with embedding statistics.
+        """
         if not self.metrics:
             return {}
 

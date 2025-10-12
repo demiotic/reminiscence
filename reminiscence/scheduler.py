@@ -1,8 +1,10 @@
 """Background cleanup scheduler."""
 
+from __future__ import annotations
+
 import threading
 import time
-from typing import Callable, Dict, Optional, Any
+from typing import Any, Callable, Dict, Optional
 
 from .utils.logging import get_logger
 
@@ -10,8 +12,7 @@ logger = get_logger(__name__)
 
 
 class CleanupScheduler:
-    """
-    Background scheduler for periodic cleanup tasks.
+    """Background scheduler for periodic cleanup tasks.
 
     Runs a cleanup function at regular intervals in a separate thread.
     """
@@ -23,14 +24,13 @@ class CleanupScheduler:
         initial_delay_seconds: int = 60,
         metrics: Optional[Any] = None,
     ):
-        """
-        Initialize cleanup scheduler.
+        """Initialize cleanup scheduler.
 
         Args:
-            cleanup_func: Function to call for cleanup (returns number of deleted items)
-            interval_seconds: Time between cleanup runs (default: 3600 = 1 hour)
-            initial_delay_seconds: Delay before first cleanup (default: 60)
-            metrics: Optional CacheMetrics instance
+            cleanup_func: Function to call for cleanup (returns number of deleted items).
+            interval_seconds: Time between cleanup runs (default: 3600 = 1 hour).
+            initial_delay_seconds: Delay before first cleanup (default: 60).
+            metrics: Optional CacheMetrics instance.
         """
         self.cleanup_func = cleanup_func
         self.interval_seconds = interval_seconds
@@ -46,7 +46,7 @@ class CleanupScheduler:
         self.errors = 0
         self.last_run_time: Optional[float] = None
 
-    def start(self):
+    def start(self) -> None:
         """Start the cleanup scheduler."""
         if self.is_running():
             logger.warning("scheduler_already_running")
@@ -64,12 +64,11 @@ class CleanupScheduler:
             initial_delay_seconds=self.initial_delay_seconds,
         )
 
-    def stop(self, timeout: float = 5.0):
-        """
-        Stop the cleanup scheduler.
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop the cleanup scheduler.
 
         Args:
-            timeout: Maximum time to wait for thread to stop (seconds)
+            timeout: Maximum time to wait for thread to stop (seconds).
         """
         if not self.is_running():
             return
@@ -85,11 +84,19 @@ class CleanupScheduler:
                 logger.info("scheduler_stopped")
 
     def is_running(self) -> bool:
-        """Check if scheduler is running."""
+        """Check if scheduler is running.
+
+        Returns:
+            True if running, False otherwise.
+        """
         return self._thread is not None and self._thread.is_alive()
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get scheduler statistics."""
+        """Get scheduler statistics.
+
+        Returns:
+            Dictionary with scheduler statistics.
+        """
         return {
             "running": self.is_running(),
             "interval_seconds": self.interval_seconds,
@@ -99,7 +106,7 @@ class CleanupScheduler:
             "last_run_time": self.last_run_time,
         }
 
-    def _run(self):
+    def _run(self) -> None:
         """Main scheduler loop (runs in separate thread)."""
         # Initial delay
         if self.initial_delay_seconds > 0:
@@ -138,26 +145,24 @@ class CleanupScheduler:
             if self._stop_event.wait(self.interval_seconds):
                 break
 
-    def __enter__(self):
-        """Context manager support."""
+    def __enter__(self) -> CleanupScheduler:
+        """Context manager entry."""
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager support."""
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit."""
         self.stop()
-        return False
 
 
 class SchedulerManager:
     """Manager for multiple cleanup schedulers."""
 
     def __init__(self, metrics: Optional[Any] = None):
-        """
-        Initialize scheduler manager.
+        """Initialize scheduler manager.
 
         Args:
-            metrics: Optional CacheMetrics instance to pass to schedulers
+            metrics: Optional CacheMetrics instance to pass to schedulers.
         """
         self.schedulers: Dict[str, CleanupScheduler] = {}
         self.metrics = metrics
@@ -168,15 +173,17 @@ class SchedulerManager:
         cleanup_func: Callable[[], int],
         interval_seconds: int = 3600,
         initial_delay_seconds: int = 60,
-    ):
-        """
-        Add a named scheduler.
+    ) -> None:
+        """Add a named scheduler.
 
         Args:
-            name: Unique name for the scheduler
-            cleanup_func: Function to call for cleanup
-            interval_seconds: Time between cleanup runs
-            initial_delay_seconds: Delay before first cleanup
+            name: Unique name for the scheduler.
+            cleanup_func: Function to call for cleanup.
+            interval_seconds: Time between cleanup runs.
+            initial_delay_seconds: Delay before first cleanup.
+
+        Raises:
+            ValueError: If scheduler with this name already exists.
         """
         if name in self.schedulers:
             raise ValueError(f"Scheduler '{name}' already exists")
@@ -190,35 +197,37 @@ class SchedulerManager:
 
         logger.debug("scheduler_added", name=name, interval_seconds=interval_seconds)
 
-    def start_all(self):
+    def start_all(self) -> None:
         """Start all schedulers."""
         for name, scheduler in self.schedulers.items():
             logger.debug("starting_scheduler", name=name)
             scheduler.start()
 
-    def stop_all(self, timeout: float = 5.0):
-        """
-        Stop all schedulers.
+    def stop_all(self, timeout: float = 5.0) -> None:
+        """Stop all schedulers.
 
         Args:
-            timeout: Maximum time to wait for each scheduler to stop
+            timeout: Maximum time to wait for each scheduler to stop.
         """
         for name, scheduler in self.schedulers.items():
             logger.debug("stopping_scheduler", name=name)
             scheduler.stop(timeout=timeout)
 
     def get_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Get statistics for all schedulers."""
+        """Get statistics for all schedulers.
+
+        Returns:
+            Dictionary mapping scheduler name to its statistics.
+        """
         return {
             name: scheduler.get_stats() for name, scheduler in self.schedulers.items()
         }
 
-    def __enter__(self):
-        """Context manager support."""
+    def __enter__(self) -> SchedulerManager:
+        """Context manager entry."""
         self.start_all()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager support."""
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit."""
         self.stop_all()
-        return False

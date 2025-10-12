@@ -1,31 +1,33 @@
 """LFU eviction policy with metrics instrumentation."""
 
+from __future__ import annotations
+
 import time
-from typing import Dict
+from typing import Any, Dict, Optional
+
 from .base import EvictionPolicy
 
 
 class LFUPolicy(EvictionPolicy):
     """Least Frequently Used eviction policy."""
 
-    def __init__(self, metrics=None):
-        """
-        Initialize LFU policy.
+    def __init__(self, metrics: Optional[Any] = None):
+        """Initialize LFU policy.
 
         Args:
-            metrics: Optional CacheMetrics instance for tracking
+            metrics: Optional CacheMetrics instance for tracking.
         """
         self.frequencies: Dict[str, int] = {}
         self.insertion_times: Dict[str, float] = {}
         self.metrics = metrics
         self.total_accesses = 0
+        self.last_inserted: Optional[str] = None  # Track most recent insert
 
     def on_access(self, entry_id: str) -> None:
-        """
-        Increment frequency counter on access.
+        """Increment frequency counter on access.
 
         Args:
-            entry_id: Entry that was accessed
+            entry_id: Entry that was accessed.
         """
         self.frequencies[entry_id] = self.frequencies.get(entry_id, 0) + 1
         self.total_accesses += 1
@@ -37,29 +39,50 @@ class LFUPolicy(EvictionPolicy):
             self.metrics.lfu_total_accesses += 1
 
     def on_insert(self, entry_id: str) -> None:
-        """
-        Initialize frequency counter for new entry.
+        """Initialize frequency counter for new entry.
 
         Args:
-            entry_id: New entry being inserted
+            entry_id: New entry being inserted.
         """
         self.frequencies[entry_id] = 0
         self.insertion_times[entry_id] = time.time()
+        self.last_inserted = entry_id  # Track for immediate eviction protection
 
     def select_victim(self) -> str:
-        """
-        Select least frequently used entry for eviction.
+        """Select least frequently used entry for eviction.
+
+        Uses standard LFU semantics: evicts entry with lowest frequency.
+        Tie-breaker: oldest entry (FIFO among equal frequencies).
+
+        Protects the most recently inserted entry from immediate eviction
+        by excluding it from victim selection if it triggered the eviction.
 
         Returns:
-            Entry ID to evict
+            Entry ID to evict.
 
         Raises:
-            ValueError: If no entries exist
+            ValueError: If no entries exist.
         """
         if not self.frequencies:
             raise ValueError("No entries to evict")
 
-        victim = min(self.frequencies.items(), key=lambda x: x[1])
+        # Exclude the most recently inserted entry to prevent immediate eviction
+        candidates = {
+            k: v
+            for k, v in self.frequencies.items()
+            if k != self.last_inserted or len(self.frequencies) == 1
+        }
+
+        # If we filtered everything out (shouldn't happen), use all entries
+        if not candidates:
+            candidates = self.frequencies
+
+        # Select victim: lowest frequency first, then oldest
+        victim = min(
+            candidates.items(),
+            key=lambda x: (x[1], self.insertion_times.get(x[0], float("inf"))),
+        )
+
         victim_id = victim[0]
         victim_freq = victim[1]
 
@@ -91,17 +114,20 @@ class LFUPolicy(EvictionPolicy):
         return victim_id
 
     def on_evict(self, entry_id: str) -> None:
-        """
-        Remove evicted entry from tracking.
+        """Remove evicted entry from tracking.
 
         Args:
-            entry_id: Entry that was evicted
+            entry_id: Entry that was evicted.
         """
         if entry_id in self.frequencies:
             del self.frequencies[entry_id]
 
         if entry_id in self.insertion_times:
             del self.insertion_times[entry_id]
+
+        # Clear last_inserted if we evicted it (shouldn't happen, but defensive)
+        if self.last_inserted == entry_id:
+            self.last_inserted = None
 
         # Track eviction count by policy
         if self.metrics:
@@ -115,12 +141,11 @@ class LFUPolicy(EvictionPolicy):
                 self.metrics.evictions_by_policy["lfu"] = 0
             self.metrics.evictions_by_policy["lfu"] += 1
 
-    def get_policy_stats(self) -> dict:
-        """
-        Get LFU-specific statistics.
+    def get_policy_stats(self) -> Dict[str, Any]:
+        """Get LFU-specific statistics.
 
         Returns:
-            Dict with policy statistics
+            Dict with policy statistics.
         """
         if not self.frequencies:
             return {

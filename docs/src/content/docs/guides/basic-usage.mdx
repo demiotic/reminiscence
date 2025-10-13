@@ -1,0 +1,606 @@
+---
+title: Basic Usage
+description: Common patterns and examples for using Reminiscence
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide covers the fundamental patterns for using Reminiscence in your applications.
+
+## Installation
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
+
+## Basic Lookup and Store
+
+The most common pattern: manual lookup and store:
+
+```python
+from reminiscence import Reminiscence
+
+# Initialize cache
+cache = Reminiscence()
+
+# Try to find cached result
+result = cache.lookup(
+    query="What is machine learning?",
+    context={"agent": "qa", "model": "gpt-4"}
+)
+
+if result.is_hit:
+    # Cache hit - use cached result
+    print(f"Cache hit! (similarity: {result.similarity:.3f})")
+    answer = result.result
+else:
+    # Cache miss - compute result
+    print("Cache miss - calling LLM...")
+    answer = expensive_llm_call("What is machine learning?")
+
+    # Store for future queries
+    cache.store(
+        query="What is machine learning?",
+        context={"agent": "qa", "model": "gpt-4"},
+        result=answer
+    )
+
+print(answer)
+```
+
+## Using the Decorator
+
+The `@cached` decorator automates lookup and storage:
+
+```python
+from reminiscence import Reminiscence
+
+cache = Reminiscence()
+
+@cache.cached(query="prompt", context=["model"])
+def call_llm(prompt: str, model: str) -> str:
+    """Call LLM with automatic caching."""
+    response = openai.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+# First call executes function
+answer = call_llm("Explain quantum computing", model="gpt-4")
+
+# Similar queries return cached results
+answer = call_llm("What is quantum computing?", model="gpt-4")  # Cache hit!
+```
+
+## Batch Operations
+
+Process multiple queries efficiently:
+
+```python
+from reminiscence import Reminiscence, LookupRequest, StoreRequest
+from reminiscence.types import MultiModalInput
+
+cache = Reminiscence()
+
+# Batch lookup (3-5x faster than loop)
+requests = [
+    LookupRequest(
+        query=MultiModalInput(text="What is AI?"),
+        context={"model": "gpt-4"}
+    ),
+    LookupRequest(
+        query=MultiModalInput(text="What is ML?"),
+        context={"model": "gpt-4"}
+    ),
+    LookupRequest(
+        query=MultiModalInput(text="What is DL?"),
+        context={"model": "gpt-4"}
+    ),
+]
+
+results = cache.lookup_batch(requests)
+
+# Process results
+for i, result in enumerate(results):
+    if result.is_hit:
+        print(f"Query {i}: Cache hit")
+    else:
+        print(f"Query {i}: Cache miss")
+
+# Batch store
+store_requests = [
+    StoreRequest(
+        query=MultiModalInput(text="What is AI?"),
+        context={"model": "gpt-4"},
+        result="Artificial Intelligence is...",
+        ttl_seconds=3600
+    ),
+    StoreRequest(
+        query=MultiModalInput(text="What is ML?"),
+        context={"model": "gpt-4"},
+        result="Machine Learning is...",
+        ttl_seconds=3600
+    ),
+]
+
+cache.store_batch(store_requests)
+```
+
+## Query Modes
+
+Choose the right matching strategy:
+
+### AUTO Mode (Default)
+
+Try exact match first, fallback to semantic:
+
+```python
+result = cache.lookup(
+    query="What is Python?",
+    context={},
+    mode=QueryMode.AUTO  # Default
+)
+```
+
+### SEMANTIC Mode
+
+Pure semantic matching for natural language:
+
+```python
+from reminiscence import QueryMode
+
+result = cache.lookup(
+    query="Explain machine learning",
+    context={},
+    mode=QueryMode.SEMANTIC
+)
+
+# Matches: "What is ML?", "Tell me about machine learning", etc.
+```
+
+### EXACT Mode
+
+High-precision matching for deterministic queries:
+
+```python
+result = cache.lookup(
+    query="SELECT * FROM users WHERE id = 123",
+    context={"database": "prod"},
+    mode=QueryMode.EXACT  # threshold=0.9999
+)
+
+# Only matches nearly identical SQL queries
+```
+
+## Context Usage
+
+### Basic Context
+
+Isolate cache entries by parameters:
+
+```python
+# Store results for different models
+cache.store(
+    query="Explain AI",
+    context={"model": "gpt-4"},
+    result="GPT-4 explanation..."
+)
+
+cache.store(
+    query="Explain AI",
+    context={"model": "gpt-3.5-turbo"},
+    result="GPT-3.5 explanation..."
+)
+
+# Retrieve specific version
+gpt4 = cache.lookup("Explain AI", {"model": "gpt-4"})
+gpt35 = cache.lookup("Explain AI", {"model": "gpt-3.5-turbo"})
+```
+
+### Multiple Context Fields
+
+Combine multiple dimensions:
+
+```python
+@cache.cached(
+    query="question",
+    context=["user_id", "collection", "model"]
+)
+def rag_query(question: str, user_id: int, collection: str, model: str):
+    docs = retrieve_documents(question, collection, user_id)
+    answer = generate_answer(question, docs, model)
+    return answer
+
+# Each combination gets its own cache
+user1 = rag_query("What is X?", user_id=1, collection="docs", model="gpt-4")
+user2 = rag_query("What is X?", user_id=2, collection="docs", model="gpt-4")
+```
+
+### Static Context
+
+Add fixed context to all entries:
+
+```python
+@cache.cached(
+    query="request",
+    context=["user_id"],
+    static_context={"service": "api", "version": "v2"}
+)
+def api_handler(request: str, user_id: int):
+    return process_request(request, user_id)
+```
+
+## TTL (Time-To-Live)
+
+Set expiration times for cache entries:
+
+### Global TTL
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+config = ReminiscenceConfig(ttl_seconds=3600)  # 1 hour
+cache = Reminiscence(config=config)
+
+# All entries expire after 1 hour
+cache.store(query="...", context={}, result=data)
+```
+
+### Per-Entry TTL
+
+```python
+# Short TTL for volatile data
+cache.store(
+    query="Get stock price AAPL",
+    context={"symbol": "AAPL"},
+    result={"price": 150.25},
+    ttl_seconds=300  # 5 minutes
+)
+
+# Long TTL for stable data
+cache.store(
+    query="Company info for AAPL",
+    context={"symbol": "AAPL"},
+    result={"name": "Apple Inc", "founded": 1976},
+    ttl_seconds=86400  # 24 hours
+)
+```
+
+## Eviction Policies
+
+Control what gets evicted when cache is full:
+
+### FIFO (First In, First Out)
+
+Default policy - evicts oldest entries:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+config = ReminiscenceConfig(
+    max_entries=1000,
+    eviction_policy="fifo"  # Default
+)
+cache = Reminiscence(config=config)
+```
+
+### LRU (Least Recently Used)
+
+Evicts entries not accessed recently:
+
+```python
+config = ReminiscenceConfig(
+    max_entries=1000,
+    eviction_policy="lru"
+)
+cache = Reminiscence(config=config)
+```
+
+### LFU (Least Frequently Used)
+
+Evicts entries accessed least often:
+
+```python
+config = ReminiscenceConfig(
+    max_entries=1000,
+    eviction_policy="lfu"
+)
+cache = Reminiscence(config=config)
+```
+
+## Invalidation
+
+Remove cache entries manually:
+
+### Invalidate by Query and Context
+
+```python
+# Remove specific entry
+cache.invalidate(
+    query="Old data",
+    context={"model": "gpt-3.5"}
+)
+
+# Remove by context only
+cache.invalidate(context={"model": "gpt-3.5"})
+
+# Remove entries older than 1 hour
+cache.invalidate(older_than_seconds=3600)
+```
+
+### Bulk Invalidation
+
+```python
+from reminiscence.types import BulkInvalidatePattern
+
+# Invalidate by regex
+pattern = BulkInvalidatePattern(query_regex="^SELECT.*")
+cache.bulk_invalidate(pattern)
+
+# Invalidate by prefix
+cache.invalidate_by_prefix("translate")
+
+# Invalidate by context pattern
+cache.invalidate_by_context({
+    "model": "gpt-3.5*",  # Wildcard
+    "agent": "deprecated_agent"
+})
+```
+
+## Persistent Storage
+
+By default, Reminiscence uses in-memory storage. For persistence:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Persistent storage
+config = ReminiscenceConfig(db_uri="./cache.db")
+cache = Reminiscence(config=config)
+
+# Cache survives restarts
+cache.store(query="...", context={}, result=data)
+```
+
+## Export and Import
+
+Backup and restore cache data:
+
+### Export
+
+```python
+# Export to Parquet (recommended)
+cache.export_to_file("cache_backup.parquet")
+
+# Export to JSON
+cache.export_to_file("cache_backup.json", format="json")
+
+# Export to CSV
+cache.export_to_file("cache_backup.csv", format="csv")
+```
+
+### Import
+
+```python
+# Import from backup
+cache.import_from_file("cache_backup.parquet")
+```
+
+## Metrics and Monitoring
+
+Track cache performance:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Enable metrics
+config = ReminiscenceConfig(enable_metrics=True)  # Default
+cache = Reminiscence(config=config)
+
+# Use cache...
+for i in range(100):
+    result = cache.lookup(f"query {i}", {})
+
+# Get statistics
+stats = cache.get_stats()
+
+print(f"Hits: {stats['hits']}")
+print(f"Misses: {stats['misses']}")
+print(f"Hit rate: {stats['hit_rate']}")
+print(f"Total entries: {stats['cache_entries']}")
+```
+
+## Context Manager
+
+Auto-cleanup with context manager:
+
+```python
+with Reminiscence() as cache:
+    cache.start_scheduler()
+
+    # Use cache...
+    result = cache.lookup(query, context)
+
+# Schedulers automatically stopped on exit
+```
+
+## Similarity Thresholds
+
+Control matching strictness:
+
+### Per-Lookup Threshold
+
+```python
+# Strict matching
+result = cache.lookup(
+    query="What is Python?",
+    context={},
+    similarity_threshold=0.95  # Very strict
+)
+
+# Loose matching
+result = cache.lookup(
+    query="What is Python?",
+    context={},
+    similarity_threshold=0.70  # More lenient
+)
+```
+
+### Global Threshold
+
+```python
+config = ReminiscenceConfig(similarity_threshold=0.85)
+cache = Reminiscence(config=config)
+```
+
+## Error Handling
+
+Control error result caching:
+
+```python
+# By default, errors are NOT cached
+try:
+    result = expensive_api_call()
+    cache.store(query, context, result)  # Cached
+except APIError as e:
+    error_result = {"error": str(e)}
+    # This won't be cached by default
+    cache.store(query, context, error_result)
+
+# Explicitly cache errors
+cache.store(
+    query=query,
+    context=context,
+    result=error_result,
+    allow_errors=True  # Cache this error
+)
+```
+
+## Multimodal Queries
+
+Cache image, video, or audio queries:
+
+```python
+from reminiscence.types import MultiModalInput
+
+# Text-only (most common)
+result = cache.lookup(
+    query=MultiModalInput(text="What is this?"),
+    context={}
+)
+
+# Image with text
+result = cache.lookup(
+    query=MultiModalInput(
+        text="Describe this image",
+        image=image_bytes
+    ),
+    context={"model": "gpt-4o"}
+)
+
+# Video URL
+result = cache.lookup(
+    query=MultiModalInput(
+        text="Summarize this video",
+        video="https://example.com/video.mp4"
+    ),
+    context={}
+)
+```
+
+## Health Checks
+
+Verify cache health:
+
+```python
+health = cache.health_check()
+
+if health["status"] == "healthy":
+    print("✓ Cache is healthy")
+else:
+    print("✗ Cache issues detected")
+    for component, check in health["checks"].items():
+        if not check["ok"]:
+            print(f"  - {component}: {check.get('error')}")
+```
+
+## Common Patterns
+
+### Pattern 1: LLM API Wrapper
+
+```python
+@cache.cached(query="prompt", context=["model", "temperature"])
+def call_openai(prompt: str, model: str = "gpt-4", temperature: float = 0.7):
+    response = openai.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature
+    )
+    return response.choices[0].message.content
+```
+
+### Pattern 2: RAG Pipeline
+
+```python
+@cache.cached(query="query", context=["collection", "model"])
+def rag_pipeline(query: str, collection: str, model: str):
+    # Retrieve
+    docs = vector_db.search(query, collection=collection, top_k=5)
+
+    # Generate
+    context = "\n\n".join([d.content for d in docs])
+    prompt = f"Context:\n{context}\n\nQuestion: {query}"
+
+    answer = call_llm(prompt, model=model)
+
+    return {"answer": answer, "sources": [d.metadata for d in docs]}
+```
+
+### Pattern 3: Database Query Cache
+
+```python
+@cache.cached(
+    query="sql",
+    context=["database"],
+    mode=QueryMode.EXACT  # SQL needs exact matching
+)
+def execute_query(sql: str, database: str):
+    return db_connection(database).execute(sql).fetchall()
+```
+
+### Pattern 4: API Response Cache
+
+```python
+@cache.cached(
+    query="endpoint",
+    context=["method", "params"]
+)
+def api_call(endpoint: str, method: str, params: dict):
+    return requests.request(
+        method=method,
+        url=f"https://api.example.com/{endpoint}",
+        json=params
+    ).json()
+```
+
+## Next Steps
+
+- [Configuration](/guides/configuration/) - All configuration options
+- [Decorators](/guides/decorators/) - Advanced decorator patterns
+- [Background Tasks](/guides/background-tasks/) - Schedulers and maintenance
+- [Examples](/examples/llm-apps/) - Real-world examples

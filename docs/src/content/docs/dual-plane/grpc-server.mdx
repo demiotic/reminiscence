@@ -1,0 +1,1062 @@
+---
+title: gRPC Server Configuration
+description: Complete guide to configuring and running Reminiscence gRPC servers
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide covers configuring, running, and managing Reminiscence gRPC servers for distributed caching.
+
+## Overview
+
+The Reminiscence gRPC server provides remote access to the semantic cache over the network, enabling:
+
+- **Distributed Caching**: Multiple services share a single cache instance
+- **Language Interoperability**: Access from any gRPC-supported language
+- **High Performance**: Binary protocol with efficient serialization
+- **Production Features**: Health checks, reflection, metrics, and graceful shutdown
+
+The server can be started in two ways:
+1. **Automatic (Recommended)**: Enable via environment variables - server auto-starts when `Reminiscence` is initialized
+2. **Manual**: Programmatic control using `start_grpc_server()` / `stop_grpc_server()` methods
+
+## Installation
+
+gRPC is included by default starting with v0.6.0:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
+
+Included packages:
+- `grpcio` - Core gRPC runtime
+- `grpcio-tools` - Protocol buffer compiler
+- `grpcio-reflection` - Server introspection
+
+## Quick Start: Automatic Server
+
+### Method 1: YAML Configuration (Recommended)
+
+The cleanest and most maintainable approach is using a YAML configuration file:
+
+**1. Create `reminiscence.yaml`:**
+```yaml
+# reminiscence.yaml
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 50
+
+db_uri: ./cache.db
+max_entries: 100000
+eviction_policy: lru
+ttl_seconds: 3600
+
+similarity_threshold: 0.82
+enable_metrics: true
+log_level: INFO
+
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318/v1/metrics
+  service_name: reminiscence
+```
+
+**2. Load in your application:**
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Load configuration from YAML file
+config = ReminiscenceConfig.load_from_yaml("reminiscence.yaml")
+
+# Server auto-starts when grpc.enabled=true
+cache = Reminiscence(config)
+
+print(f"✓ gRPC server running on port {config.grpc_port}")
+```
+
+**With environment variable overrides:**
+```python
+# YAML provides defaults, but REMINISCENCE_GRPC_PORT=9090 overrides it
+config = ReminiscenceConfig.load_from_yaml(
+    "reminiscence.yaml",
+    allow_env_override=True  # Default behavior
+)
+
+cache = Reminiscence(config)
+```
+
+### Method 2: Environment Variables (Container-Friendly)
+
+The gRPC server automatically starts when enabled via environment variables:
+
+```bash
+# Set environment variables
+export REMINISCENCE_GRPC_ENABLED=true
+export REMINISCENCE_GRPC_PORT=8080
+export REMINISCENCE_GRPC_MAX_WORKERS=50
+export REMINISCENCE_DB_URI=./cache.db
+export REMINISCENCE_MAX_ENTRIES=100000
+```
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Load config from environment variables
+config = ReminiscenceConfig.load()
+
+# Server auto-starts when grpc_enabled=True
+cache = Reminiscence(config)
+
+print(f"✓ gRPC server running on port {config.grpc_port}")
+```
+
+### Method 3: .env File (Alternative)
+
+Create a `.env` file in your project root:
+
+```bash
+# .env
+REMINISCENCE_GRPC_ENABLED=true
+REMINISCENCE_GRPC_PORT=8080
+REMINISCENCE_GRPC_MAX_WORKERS=20
+REMINISCENCE_DB_URI=./cache.db
+REMINISCENCE_MAX_ENTRIES=50000
+REMINISCENCE_EVICTION_POLICY=lru
+REMINISCENCE_TTL_SECONDS=3600
+REMINISCENCE_ENABLE_METRICS=true
+REMINISCENCE_LOG_LEVEL=INFO
+```
+
+First install python-dotenv:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install python-dotenv
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add python-dotenv
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add python-dotenv
+    ```
+  </TabItem>
+</Tabs>
+
+Then load the .env file before initializing:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from dotenv import load_dotenv
+
+# Load environment from .env file
+load_dotenv()
+
+# Config automatically loaded from environment
+cache = Reminiscence()  # Uses ReminiscenceConfig.load() by default
+
+print("✓ gRPC server started from .env configuration")
+```
+
+###  Method 4: Direct Instantiation (For Testing)
+
+For programmatic control without environment variables:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Direct instantiation (dataclass, so you CAN pass params)
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=50000,
+    grpc_enabled=True,        # Auto-start gRPC server
+    grpc_port=8080,           # Server port
+    grpc_max_workers=20,      # Worker threads
+)
+
+cache = Reminiscence(config)  # Server auto-starts here
+
+print("✓ gRPC server started")
+```
+
+**Note:** Direct instantiation works because `ReminiscenceConfig` is a dataclass, but using environment variables or .env files is the recommended approach for production deployments.
+
+## Manual Server Control
+
+For testing or programmatic control, use the `start_grpc_server()` and `stop_grpc_server()` methods:
+
+### Non-Blocking Mode (Background)
+
+```python
+from reminiscence import Reminiscence, Reminiscence Config
+
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    grpc_enabled=False,  # Disable auto-start
+)
+
+cache = Reminiscence(config)
+
+# Manually start server in background
+cache.start_grpc_server(port=8080, max_workers=20, blocking=False)
+
+print("✓ Server running in background")
+
+# Use cache locally while server runs
+result = cache.lookup(query, context)
+
+# Stop server when done
+cache.stop_grpc_server(grace=5.0)
+```
+
+### Blocking Mode (For Dedicated Server Process)
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+import signal
+
+config = ReminiscenceConfig(db_uri="./cache.db")
+cache = Reminiscence(config)
+cache.start_scheduler()  # Background cleanup
+
+def shutdown_handler(signum, frame):
+    print("\nShutting down...")
+    cache.stop_grpc_server(grace=10.0)
+    cache.stop_scheduler()
+    exit(0)
+
+signal.signal(signal.SIGTERM, shutdown_handler)
+signal.signal(signal.SIGINT, shutdown_handler)
+
+print("Starting gRPC server...")
+cache.start_grpc_server(port=8080, max_workers=50, blocking=True)  # Blocks here
+```
+
+### Context Manager (Automatic Cleanup)
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+config = ReminiscenceConfig(db_uri="./cache.db")
+
+with Reminiscence(config) as cache:
+    cache.start_grpc_server(port=8080, blocking=False)
+
+    print("Server running, press Ctrl+C to stop")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass  # Server stops automatically on context exit
+```
+
+## Configuration Reference
+
+### YAML Configuration Format
+
+YAML files support both **nested** and **flat** structures:
+
+**Nested structure (recommended for readability):**
+```yaml
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 50
+
+embedding:
+  backend: fastembed
+  batch_size: 32
+
+otel:
+  enabled: true
+  endpoint: http://localhost:4318/v1/metrics
+  service_name: reminiscence
+
+compression:
+  enabled: true
+  algorithm: zstd
+  level: 3
+```
+
+**Flat structure (also supported):**
+```yaml
+grpc_enabled: true
+grpc_port: 8080
+grpc_max_workers: 50
+embedding_backend: fastembed
+embedding_batch_size: 32
+otel_enabled: true
+```
+
+**Complete YAML reference:** See `examples/reminiscence.yaml` in the repository for a fully documented example with all options.
+
+### All Environment Variables
+
+Reminiscence uses environment variables prefixed with `REMINISCENCE_`. Here are all available options:
+
+**gRPC Server:**
+```bash
+REMINISCENCE_GRPC_ENABLED=true          # Auto-start server (default: false)
+REMINISCENCE_GRPC_PORT=8080             # Server port (default: 8080)
+REMINISCENCE_GRPC_MAX_WORKERS=50        # Worker threads (default: 10)
+```
+
+**Cache Settings:**
+```bash
+REMINISCENCE_DB_URI=./cache.db          # Storage path (default: memory://)
+REMINISCENCE_MAX_ENTRIES=100000         # Cache capacity (default: 1000)
+REMINISCENCE_EVICTION_POLICY=lru        # Eviction: fifo/lru/lfu (default: fifo)
+REMINISCENCE_TTL_SECONDS=3600           # Entry TTL in seconds (default: none)
+REMINISCENCE_SIMILARITY_THRESHOLD=0.82  # Match threshold 0.0-1.0 (default: 0.80)
+```
+
+**Observability:**
+```bash
+REMINISCENCE_ENABLE_METRICS=true        # Track performance (default: true)
+REMINISCENCE_LOG_LEVEL=INFO             # Log level: DEBUG/INFO/WARNING/ERROR
+REMINISCENCE_JSON_LOGS=false            # JSON format logs (default: false)
+```
+
+**OpenTelemetry:**
+```bash
+REMINISCENCE_OTEL_ENABLED=true                  # Enable OTEL export (default: false)
+REMINISCENCE_OTEL_ENDPOINT=http://localhost:4318/v1/metrics  # OTLP endpoint
+REMINISCENCE_OTEL_SERVICE_NAME=reminiscence     # Service name
+REMINISCENCE_OTEL_EXPORT_INTERVAL_MS=60000      # Export interval (default: 60s)
+```
+
+**Embedding Model:**
+```bash
+REMINISCENCE_MODEL_NAME=paraphrase-multilingual-MiniLM-L12-v2  # Embedding model
+REMINISCENCE_WARM_UP_EMBEDDER=true              # Pre-load model (default: true)
+```
+
+**Advanced:**
+```bash
+REMINISCENCE_COMPRESSION_ENABLED=false          # Compress data (default: false)
+REMINISCENCE_COMPRESSION_ALGORITHM=zstd         # Algorithm: zstd/gzip
+REMINISCENCE_ENCRYPTION_ENABLED=false           # Encrypt data (default: false)
+REMINISCENCE_ENCRYPTION_KEY=age1...             # Encryption key
+```
+
+### Using .env Files
+
+The recommended approach for managing configuration:
+
+**1. Create `.env` file:**
+```bash
+# .env - Production configuration
+REMINISCENCE_GRPC_ENABLED=true
+REMINISCENCE_GRPC_PORT=8080
+REMINISCENCE_GRPC_MAX_WORKERS=50
+
+REMINISCENCE_DB_URI=./production_cache.db
+REMINISCENCE_MAX_ENTRIES=100000
+REMINISCENCE_EVICTION_POLICY=lru
+REMINISCENCE_TTL_SECONDS=3600
+
+REMINISCENCE_ENABLE_METRICS=true
+REMINISCENCE_OTEL_ENABLED=true
+REMINISCENCE_OTEL_ENDPOINT=http://otel-collector:4318/v1/metrics
+
+REMINISCENCE_LOG_LEVEL=INFO
+REMINISCENCE_JSON_LOGS=true
+```
+
+**2. Load in your application:**
+```python
+from reminiscence import Reminiscence
+from dotenv import load_dotenv
+
+load_dotenv()  # Loads from .env file
+cache = Reminiscence()  # Auto-loads config from environment
+
+print(f"✓ Server running on port {cache.config.grpc_port}")
+```
+
+### Different .env Files for Environments
+
+```bash
+# .env.development
+REMINISCENCE_GRPC_ENABLED=true
+REMINISCENCE_GRPC_PORT=8080
+REMINISCENCE_DB_URI=memory://
+REMINISCENCE_LOG_LEVEL=DEBUG
+
+# .env.production
+REMINISCENCE_GRPC_ENABLED=true
+REMINISCENCE_GRPC_PORT=8080
+REMINISCENCE_DB_URI=./production_cache.db
+REMINISCENCE_MAX_ENTRIES=200000
+REMINISCENCE_OTEL_ENABLED=true
+REMINISCENCE_LOG_LEVEL=INFO
+```
+
+```python
+import os
+from dotenv import load_dotenv
+
+# Load environment-specific config
+env = os.getenv("ENV", "development")
+load_dotenv(f".env.{env}")
+
+cache = Reminiscence()
+```
+
+## Worker Pool Sizing
+
+### Guidelines
+
+Choose `grpc_max_workers` based on expected concurrency:
+
+| Concurrent Clients | Recommended Workers | Notes |
+|-------------------|---------------------|-------|
+| < 10 clients | 10-20 workers | Default is sufficient |
+| 10-50 clients | 20-50 workers | Medium load |
+| 50-100 clients | 50-100 workers | High load |
+| 100+ clients | 100+ workers | Consider horizontal scaling |
+
+### Example Configurations
+
+**Development (reminiscence-dev.yaml):**
+```yaml
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 10  # Low concurrency
+
+db_uri: memory://
+max_entries: 1000
+log_level: DEBUG
+enable_metrics: true
+```
+
+**Production - Medium Load (reminiscence-prod.yaml):**
+```yaml
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 50  # Handle 50 concurrent requests
+
+db_uri: ./cache.db
+max_entries: 100000
+eviction_policy: lfu
+ttl_seconds: 3600
+
+similarity_threshold: 0.82
+auto_create_index: true
+
+enable_metrics: true
+log_level: INFO
+json_logs: true
+
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318/v1/metrics
+  service_name: reminiscence-prod
+```
+
+**Production - High Load:**
+```yaml
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 100  # High concurrency
+
+db_uri: ./cache.db
+max_entries: 200000
+eviction_policy: lfu
+ttl_seconds: 3600
+
+similarity_threshold: 0.82
+auto_create_index: true
+
+index:
+  threshold_entries: 256
+  num_partitions: 512
+
+enable_metrics: true
+json_logs: true
+
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318/v1/metrics
+  service_name: reminiscence-prod
+
+compression:
+  enabled: true
+  algorithm: zstd
+  level: 3
+
+cleanup_interval_seconds: 1800
+```
+
+Load in your application:
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Load from environment-specific YAML
+import os
+env = os.getenv("ENV", "dev")
+config = ReminiscenceConfig.load_from_yaml(f"reminiscence-{env}.yaml")
+
+cache = Reminiscence(config)
+```
+
+## Advanced Configurations
+
+### High-Throughput Server
+
+Optimized for maximum throughput:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=200000,
+    eviction_policy="lfu",  # Keep frequently used entries
+    enable_metrics=True,
+    auto_create_index=True,  # Automatic indexing for fast lookups
+)
+
+cache = Reminiscence(config)
+cache.start_scheduler()
+
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=100,
+    max_message_length=100 * 1024 * 1024,
+    options=[
+        ('grpc.so_reuseport', 1),  # Enable port reuse
+        ('grpc.use_local_subchannel_pool', 1),
+        ('grpc.max_concurrent_streams', 100),
+    ],
+)
+
+server.start()
+server.wait_for_termination()
+```
+
+### Low-Latency Server
+
+Optimized for minimal latency:
+
+```python
+config = ReminiscenceConfig(
+    db_uri="memory://",  # In-memory for lowest latency
+    max_entries=10000,
+    similarity_threshold=0.85,
+    enable_metrics=True,
+)
+
+cache = Reminiscence(config)
+
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=50,
+    options=[
+        ('grpc.keepalive_time_ms', 5000),  # Aggressive keepalive
+        ('grpc.http2.min_time_between_pings_ms', 5000),
+    ],
+)
+
+server.start()
+server.wait_for_termination()
+```
+
+### Secure Server (TLS/SSL)
+
+Enable transport security:
+
+```python
+import grpc
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_grpc_server
+
+# Load TLS credentials
+with open('server.key', 'rb') as f:
+    private_key = f.read()
+with open('server.crt', 'rb') as f:
+    certificate_chain = f.read()
+with open('ca.crt', 'rb') as f:
+    root_certificates = f.read()
+
+credentials = grpc.ssl_server_credentials(
+    [(private_key, certificate_chain)],
+    root_certificates=root_certificates,
+    require_client_auth=True,  # Mutual TLS
+)
+
+# Create cache
+config = ReminiscenceConfig(db_uri="./cache.db")
+cache = Reminiscence(config)
+
+# Create server with TLS
+server = grpc.server(
+    futures.ThreadPoolExecutor(max_workers=50),
+    options=[
+        ('grpc.max_send_message_length', 100 * 1024 * 1024),
+        ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+    ],
+)
+
+# Add service
+from reminiscence.api.server import ReminiscenceServicer
+from reminiscence.api import reminiscence_pb2_grpc
+
+servicer = ReminiscenceServicer(cache)
+reminiscence_pb2_grpc.add_ReminiscenceServiceServicer_to_server(servicer, server)
+
+# Add secure port
+server.add_secure_port('[::]:50051', credentials)
+server.start()
+
+print("Secure server running on port 50051")
+server.wait_for_termination()
+```
+
+## Health Checks
+
+### Built-in Health Check
+
+The server includes a built-in health check endpoint:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:50051")
+health = client.health_check()
+
+print(f"Status: {health['status']}")  # 'healthy' or 'unhealthy'
+print(f"Checks: {health['checks']}")
+```
+
+### Custom Health Check Handler
+
+Implement custom health logic:
+
+```python
+from reminiscence import Reminiscence
+from reminiscence.api.server import create_server
+import time
+
+class HealthMonitor:
+    def __init__(self, cache: Reminiscence):
+        self.cache = cache
+        self.start_time = time.time()
+
+    def is_healthy(self) -> bool:
+        """Check if server is healthy."""
+        try:
+            # Check cache is operational
+            stats = self.cache.get_stats()
+
+            # Check not overloaded
+            if stats['cache_entries'] >= stats['max_entries']:
+                return False
+
+            # Check error rate
+            total = stats['hits'] + stats['misses']
+            if total > 0:
+                error_rate = (stats.get('lookup_errors', 0) / total)
+                if error_rate > 0.1:  # > 10% error rate
+                    return False
+
+            return True
+        except Exception:
+            return False
+
+config = ReminiscenceConfig(db_uri="./cache.db")
+cache = Reminiscence(config)
+monitor = HealthMonitor(cache)
+
+# Periodically check health
+import threading
+
+def health_check_loop():
+    while True:
+        if not monitor.is_healthy():
+            print("⚠ Server unhealthy!")
+        time.sleep(30)
+
+health_thread = threading.Thread(target=health_check_loop, daemon=True)
+health_thread.start()
+
+# Start server
+server = create_server(cache=cache, port=50051)
+server.start()
+server.wait_for_termination()
+```
+
+## Graceful Shutdown
+
+### Basic Graceful Shutdown
+
+```python
+import signal
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+config = ReminiscenceConfig(db_uri="./cache.db")
+cache = Reminiscence(config)
+cache.start_scheduler()
+
+server = create_server(cache=cache, port=50051)
+server.start()
+
+def shutdown_handler(signum, frame):
+    print("Shutting down gracefully...")
+    server.stop(grace=10.0)  # Wait up to 10s for requests to finish
+    cache.stop_scheduler()
+    print("Server stopped")
+    exit(0)
+
+signal.signal(signal.SIGTERM, shutdown_handler)
+signal.signal(signal.SIGINT, shutdown_handler)
+
+print("Server running (press Ctrl+C to stop)")
+server.wait_for_termination()
+```
+
+### Advanced Shutdown with Cleanup
+
+```python
+import signal
+import atexit
+import structlog
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+logger = structlog.get_logger()
+
+class ServerManager:
+    def __init__(self):
+        self.config = ReminiscenceConfig(
+            db_uri="./cache.db",
+            enable_metrics=True,
+        )
+        self.cache = Reminiscence(self.config)
+        self.server = None
+        self.is_running = False
+
+    def start(self):
+        """Start server with proper initialization."""
+        logger.info("initializing_server")
+
+        # Start background tasks
+        self.cache.start_scheduler()
+
+        # Create server
+        self.server = create_server(
+            cache=self.cache,
+            port=50051,
+            max_workers=50,
+        )
+
+        self.server.start()
+        self.is_running = True
+
+        logger.info("server_started", port=50051)
+
+    def shutdown(self, grace_period: float = 10.0):
+        """Graceful shutdown with cleanup."""
+        if not self.is_running:
+            return
+
+        logger.info("shutdown_initiated", grace_period=grace_period)
+
+        # Stop accepting new requests
+        self.server.stop(grace=grace_period)
+
+        # Stop background tasks
+        self.cache.stop_scheduler()
+
+        # Export final metrics (if OTEL enabled)
+        try:
+            stats = self.cache.get_stats()
+            logger.info(
+                "final_stats",
+                entries=stats['cache_entries'],
+                hits=stats['hits'],
+                misses=stats['misses'],
+                hit_rate=stats['hit_rate'],
+            )
+        except Exception as e:
+            logger.error("stats_export_failed", error=str(e))
+
+        self.is_running = False
+        logger.info("server_stopped")
+
+    def run(self):
+        """Run server with signal handling."""
+        def signal_handler(signum, frame):
+            self.shutdown(grace_period=10.0)
+            exit(0)
+
+        # Register signal handlers
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # Register cleanup on exit
+        atexit.register(lambda: self.shutdown(grace_period=5.0))
+
+        # Start and wait
+        self.start()
+        self.server.wait_for_termination()
+
+# Usage
+if __name__ == "__main__":
+    manager = ServerManager()
+    manager.run()
+```
+
+## Monitoring
+
+### Metrics Export
+
+Enable metrics collection and export:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    enable_metrics=True,
+    otel_enabled=True,
+    otel_endpoint="http://localhost:4318",  # OTEL collector
+)
+
+cache = Reminiscence(config)
+cache.start_scheduler()  # Auto-export metrics every 60s
+
+server = create_server(cache=cache, port=50051)
+server.start()
+server.wait_for_termination()
+```
+
+### Real-time Monitoring
+
+Expose metrics via HTTP:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+from flask import Flask, jsonify
+import threading
+
+# Cache and gRPC server
+config = ReminiscenceConfig(db_uri="./cache.db", enable_metrics=True)
+cache = Reminiscence(config)
+server = create_server(cache=cache, port=50051)
+
+# Metrics HTTP server
+app = Flask(__name__)
+
+@app.route('/metrics')
+def metrics():
+    stats = cache.get_stats()
+    return jsonify(stats)
+
+@app.route('/health')
+def health():
+    health = cache.health_check()
+    status_code = 200 if health['status'] == 'healthy' else 503
+    return jsonify(health), status_code
+
+# Run HTTP server in background
+def run_http():
+    app.run(host='0.0.0.0', port=8080)
+
+http_thread = threading.Thread(target=run_http, daemon=True)
+http_thread.start()
+
+# Run gRPC server
+server.start()
+print("gRPC server: localhost:50051")
+print("Metrics: http://localhost:8080/metrics")
+server.wait_for_termination()
+```
+
+## Testing
+
+### Test with grpcurl
+
+```bash
+# List services
+grpcurl -plaintext localhost:50051 list
+
+# Call HealthCheck
+grpcurl -plaintext localhost:50051 \
+  reminiscence.ReminiscenceService/HealthCheck
+
+# Call GetStats
+grpcurl -plaintext localhost:50051 \
+  reminiscence.ReminiscenceService/GetStats
+
+# Test Lookup
+grpcurl -plaintext -d @ localhost:50051 \
+  reminiscence.ReminiscenceService/Lookup <<EOF
+{
+  "query": {"text": "What is Python?"},
+  "context": {"model": "gpt-4"},
+  "mode": "AUTO"
+}
+EOF
+```
+
+### Test with Python Client
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+from reminiscence.types import MultiModalInput
+
+# Connect
+client = ReminiscenceClient("localhost:50051")
+
+# Test health
+health = client.health_check()
+print(f"Server health: {health['status']}")
+
+# Test lookup
+result = client.lookup(
+    query=MultiModalInput(text="test query"),
+    context={"test": "true"}
+)
+print(f"Lookup result: {result.is_hit}")
+
+# Test store
+client.store(
+    query=MultiModalInput(text="test query"),
+    context={"test": "true"},
+    result={"message": "test result"}
+)
+print("Store successful")
+
+client.close()
+```
+
+## Performance Tuning
+
+### CPU-Bound Workloads
+
+```python
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=100000,
+    warm_up_embedder=True,  # Pre-load embedding model
+)
+
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=100,  # More workers for CPU-bound tasks
+)
+```
+
+### Memory-Bound Workloads
+
+```python
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=50000,  # Limit memory usage
+    eviction_policy="lru",  # Evict old entries
+    compression_enabled=True,  # Compress data
+)
+
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=20,  # Fewer workers to reduce memory
+)
+```
+
+### I/O-Bound Workloads
+
+```python
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=200000,
+    auto_create_index=True,  # Fast lookups
+)
+
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=100,  # More workers for I/O wait
+    options=[
+        ('grpc.max_concurrent_streams', 100),
+    ],
+)
+```
+
+## Troubleshooting
+
+### Server Won't Start
+
+```python
+# Check port availability
+import socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+result = sock.connect_ex(('localhost', 50051))
+if result == 0:
+    print("Port 50051 is already in use")
+else:
+    print("Port 50051 is available")
+sock.close()
+```
+
+### High Memory Usage
+
+```python
+# Monitor cache size
+stats = cache.get_stats()
+print(f"Entries: {stats['cache_entries']} / {stats['max_entries']}")
+
+# Reduce max_entries or enable eviction
+config = ReminiscenceConfig(
+    max_entries=10000,  # Reduce
+    eviction_policy="lru",  # Enable eviction
+)
+```
+
+### Slow Lookups
+
+```python
+# Create index for faster searches
+cache.create_index(num_partitions=256)
+
+# Check index stats
+index_stats = cache.get_index_stats()
+print(f"Has index: {index_stats['has_index']}")
+```
+
+## Next Steps
+
+- [Control Plane (gRPC)](/dual-plane/grpc-api/) - Complete API reference with client documentation
+- [Data Plane (Flight)](/dual-plane/flight-dataplane/) - High-throughput streaming operations
+- [OpenTelemetry](/production/opentelemetry/) - Monitoring and tracing
+- [Best Practices](/production/best-practices/) - Production deployment patterns

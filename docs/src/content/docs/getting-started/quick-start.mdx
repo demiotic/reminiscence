@@ -3,7 +3,43 @@ title: Quick Start
 description: Get started with Reminiscence in 5 minutes
 ---
 
-This guide gets you up and running with Reminiscence in under 5 minutes.
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Reminiscence is a semantic cache that understands **meaning**, not just exact text matches. When users ask similar questions in different ways, Reminiscence recognizes them as the same—saving you money on LLM API calls and delivering instant responses.
+
+## What You'll Learn
+
+In this 5-minute guide, you'll learn:
+- How to cache LLM responses with semantic matching
+- Why context isolation prevents incorrect cache hits
+- How to use decorators for automatic caching
+- The difference between semantic, exact, and auto query modes
+
+## Why Reminiscence?
+
+Traditional caches fail when users rephrase questions. "What were Q3 sales?" and "Show me third quarter revenue" are the same question, but string caches treat them as different—wasting money on redundant LLM calls.
+
+**Reminiscence solves this** by matching queries semantically. After caching "What were Q3 sales?", similar phrasings like "Show me third quarter revenue" hit the cache instantly—saving ~2 seconds and $0.05 per query.
+
+## Installation
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
 
 ## Basic Usage
 
@@ -149,7 +185,53 @@ def generate_text(prompt: str, temperature: float, max_tokens: int):
 
 ## Configuration
 
-Customize cache behavior:
+### YAML Configuration (Recommended)
+
+For production deployments, use YAML files for clean, version-controlled configuration:
+
+```yaml
+# reminiscence.yaml
+similarity_threshold: 0.85
+max_entries: 10000
+eviction_policy: lru
+ttl_seconds: 3600
+
+grpc:
+  enabled: false
+  port: 8080
+
+enable_metrics: true
+log_level: INFO
+```
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+config = ReminiscenceConfig.load_from_yaml("reminiscence.yaml")
+cache = Reminiscence(config)
+```
+
+### Environment Variables
+
+Use environment variables for containerized deployments:
+
+```bash
+export REMINISCENCE_SIMILARITY_THRESHOLD=0.85
+export REMINISCENCE_MAX_ENTRIES=10000
+export REMINISCENCE_EVICTION_POLICY=lru
+export REMINISCENCE_TTL_SECONDS=3600
+```
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+config = ReminiscenceConfig.load()  # Loads from environment
+cache = Reminiscence(config)
+```
+
+### Direct Instantiation
+
+For quick testing and prototyping:
 
 ```python
 from reminiscence import Reminiscence, ReminiscenceConfig
@@ -161,7 +243,7 @@ config = ReminiscenceConfig(
     ttl_seconds=3600,           # 1 hour expiration
 )
 
-cache = Reminiscence(config=config)
+cache = Reminiscence(config)
 ```
 
 ## Background Tasks
@@ -191,9 +273,46 @@ with Reminiscence() as cache:
 # Automatically stops schedulers on exit
 ```
 
+## Remote Access with gRPC
+
+For distributed systems and microservices, Reminiscence includes a gRPC API by default (v0.6.0+).
+
+Start a gRPC server:
+
+```python
+from reminiscence import Reminiscence
+from reminiscence.api.server import create_server
+
+cache = Reminiscence()
+server = create_server(cache, port=50051)
+server.start()
+```
+
+Connect from any service:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:50051")
+
+# Use same API as local cache
+result = client.lookup(query, context)
+if not result.is_hit:
+    client.store(query, context, data)
+
+client.close()
+```
+
+This enables:
+- **Shared cache** across multiple services
+- **Multi-language support** (protobuf-based)
+- **Reduced costs** by avoiding duplicate LLM calls
+- **Better performance** with centralized caching
+
 ## Next Steps
 
 - Learn [How It Works](/concepts/how-it-works/) to understand semantic matching
 - Explore [Decorators](/guides/decorators/) for advanced patterns
-- See [Configuration](/guides/configuration/) for all options
-- Check [API Reference](/reference/api/) for complete documentation
+- See [gRPC API](/guides/grpc-api/) for distributed caching
+- Check [Configuration](/guides/configuration/) for all options
+- Read [API Reference](/reference/api/) for complete documentation

@@ -2,12 +2,16 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 //import starlightThemeObsidian from 'starlight-theme-obsidian'
 import starlightThemeRapide from 'starlight-theme-rapide'
+import d2 from 'astro-d2'
 
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://demiotic.github.io',
 	base: '/',
 	integrations: [
+		d2({
+			d2: '/home/midnattsol/.local/bin/d2',
+		}),
 		starlight({
 			title: 'Reminiscence',
 			plugins: [starlightThemeRapide()],
@@ -49,6 +53,34 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'API Reference',
+					items: [
+						{ label: 'API Overview', link: '/reference/api' },
+						{ label: 'Core Operations', link: '/api/core-operations' },
+						{ label: 'Decorators', link: '/api/decorators' },
+						{ label: 'Configuration', link: '/api/configuration' },
+						{ label: 'Data Types', link: '/api/data-types' },
+					],
+				},
+				{
+					label: 'Dual-Plane Architecture',
+					items: [
+						{ label: 'Overview', link: '/dual-plane/overview' },
+						{ label: 'Control Plane (gRPC)', link: '/dual-plane/grpc-api' },
+						{ label: 'Data Plane (Flight)', link: '/dual-plane/flight-dataplane' },
+						{ label: 'Server Configuration', link: '/dual-plane/grpc-server' },
+					],
+				},
+				{
+					label: 'Examples',
+					items: [
+						{ label: 'LLM Applications', link: '/examples/llm-apps' },
+						{ label: 'RAG Pipelines', link: '/examples/rag' },
+						{ label: 'Multi-Agent Systems', link: '/examples/multi-agent' },
+						{ label: 'gRPC Microservices', link: '/examples/grpc-microservices' },
+					],
+				},
+				{
 					label: 'Production',
 					items: [
 						{ label: 'OpenTelemetry', link: '/production/opentelemetry' },
@@ -58,18 +90,11 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Examples',
-					items: [
-						{ label: 'LLM Applications', link: '/examples/llm-apps' },
-						{ label: 'RAG Pipelines', link: '/examples/rag' },
-						{ label: 'Multi-Agent Systems', link: '/examples/multi-agent' },
-					],
-				},
-				{
 					label: 'Reference',
 					items: [
-						{ label: 'API Documentation', link: '/reference/api' },
 						{ label: 'Configuration Options', link: '/reference/config' },
+						{ label: 'Data Types & Serialization', link: '/reference/data-types' },
+						{ label: 'Storage Architecture', link: '/reference/storage-architecture' },
 						{ label: 'Metrics', link: '/reference/metrics' },
 					],
 				},

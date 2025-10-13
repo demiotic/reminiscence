@@ -1,0 +1,847 @@
+---
+title: Arrow Flight Data Plane
+description: High-throughput bulk data streaming with Apache Arrow Flight
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide covers using Reminiscence's Arrow Flight data plane for high-throughput bulk operations, zero-copy streaming, and analytics integration.
+
+:::tip[New to Dual-Plane?]
+Read the [Dual-Plane Overview](/dual-plane/overview/) first to understand the architecture and when to use each plane.
+:::
+
+## What is Arrow Flight?
+
+Apache Arrow Flight is a high-performance data transport protocol built on gRPC and Arrow's columnar memory format. Reminiscence uses Flight as its **data plane** to enable:
+
+- **Zero-copy streaming**: Transfer large datasets without serialization overhead
+- **Columnar format**: Efficient encoding perfect for analytics workloads
+- **High throughput**: ~11,000 entries/second (9.4x faster than traditional gRPC)
+- **Low memory**: 10x less memory usage due to columnar compression
+- **Native integration**: Direct compatibility with pandas, polars, DuckDB
+
+## When to Use the Data Plane
+
+Use Flight for **bulk operations** where throughput matters more than latency:
+
+✅ **Exporting** > 1,000 cache entries for backup or migration
+✅ **Analytics** on cache usage patterns and query distributions
+✅ **Dashboards** showing real-time cache statistics
+✅ **ML pipelines** that need cache data for training
+✅ **Data analysis** with pandas, polars, or SQL queries
+
+For individual cache operations (lookup, store, invalidate), use the [Control Plane (gRPC)](/dual-plane/grpc-api/) instead.
+
+## Installation
+
+Dual-plane architecture (gRPC + Arrow Flight) is included by default starting with v0.6.0:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
+
+This includes everything for dual-plane:
+- `grpcio` - Core gRPC library
+- `grpcio-tools` - Protocol buffer compiler
+- `grpcio-reflection` - Server introspection
+- `pyarrow>=21.0.0` - Arrow Flight support
+
+## Starting the Dual-Plane Server
+
+:::tip[Flight Auto-Enabled]
+Since v0.6.1, Arrow Flight is **enabled by default** when you start a gRPC server. No need for `enable_flight=True`!
+:::
+
+### Basic Dual-Plane Setup
+
+Start a server (both planes enabled automatically):
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+# Create cache
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=100000,
+    enable_metrics=True,
+)
+cache = Reminiscence(config)
+
+# Create server - Flight auto-enabled on port 8081
+server = create_server(
+    cache=cache,
+    port=8080,              # Control plane (gRPC)
+    enable_reflection=True,
+)
+
+server.start()
+
+print("✓ Dual-plane server running")
+print("  Control Plane (gRPC):  grpc://localhost:8080")
+print("  Data Plane (Flight):   grpc://localhost:8081")  # Auto-started
+
+server.wait_for_termination()
+```
+
+**To disable Flight** (if you only want gRPC):
+```python
+server = create_server(
+    cache=cache,
+    port=8080,
+    enable_flight=False,  # Explicitly disable
+)
+```
+
+### Auto-Start with Configuration
+
+Use environment variables to auto-start Flight:
+
+```bash
+# Enable Flight via environment
+export REMINISCENCE_FLIGHT_ENABLED=true
+export REMINISCENCE_FLIGHT_PORT=8081
+export REMINISCENCE_FLIGHT_HOST="0.0.0.0"
+
+# Start server (Flight starts automatically)
+python server.py
+```
+
+```python
+from reminiscence import Reminiscence
+
+# Flight auto-starts if REMINISCENCE_FLIGHT_ENABLED=true
+cache = Reminiscence()
+
+# Both planes are now running
+print(f"Control plane: localhost:{cache.config.grpc_port}")
+print(f"Data plane: localhost:{cache.config.flight_port}")
+```
+
+### Docker Deployment
+
+Example docker-compose.yml for dual-plane architecture:
+
+```yaml
+version: '3.8'
+
+services:
+  reminiscence-server:
+    build: .
+    ports:
+      - "8080:8080"  # Control plane
+      - "8081:8081"  # Data plane
+    environment:
+      - REMINISCENCE_DB_URI=/data/cache.db
+      - REMINISCENCE_MAX_ENTRIES=100000
+      - REMINISCENCE_ENABLE_METRICS=true
+
+      # Enable both planes
+      - REMINISCENCE_GRPC_ENABLED=true
+      - REMINISCENCE_GRPC_PORT=8080
+      - REMINISCENCE_FLIGHT_ENABLED=true
+      - REMINISCENCE_FLIGHT_PORT=8081
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+```
+
+## Python Client Usage
+
+### Discovering Flight Endpoint
+
+Check if Flight is available and get the endpoint:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+# Connect to control plane
+client = ReminiscenceClient("localhost:8080")
+
+# Check capabilities
+caps = client.get_capabilities()
+
+if caps["flight_enabled"]:
+    print(f"✓ Flight enabled at: {caps['flight_endpoint']}")
+    print(f"  Supported features: {caps['supported_features']}")
+else:
+    print("✗ Flight not enabled on this server")
+```
+
+### Getting a Flight Client
+
+Get Arrow Flight client from control plane:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Automatically discovers and connects to Flight endpoint
+flight_client = client.get_flight_client()
+
+# Or specify Flight endpoint directly
+flight_client = client.get_flight_client(
+    flight_endpoint="grpc://localhost:8081"
+)
+```
+
+### Streaming Entries
+
+#### Stream in Batches (Generator)
+
+For large datasets, stream in batches to avoid memory issues:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Stream all entries in batches of 10,000
+total_rows = 0
+for batch in client.stream_entries_arrow(batch_size=10000):
+    print(f"Received batch: {len(batch)} rows")
+    total_rows += len(batch)
+
+    # Process batch
+    for i in range(len(batch)):
+        entry_id = batch["id"][i].as_py()
+        query_text = batch["query_text"][i].as_py()
+        timestamp = batch["timestamp"][i].as_py()
+
+        # Process entry...
+
+print(f"✓ Streamed {total_rows:,} total rows")
+```
+
+#### Get Complete Table
+
+For smaller datasets that fit in memory:
+
+```python
+# Get all entries as a single Arrow table
+table = client.get_entries_arrow_table()
+
+print(f"Total entries: {len(table):,}")
+print(f"Columns: {table.schema.names}")
+
+# Access data
+for i in range(min(10, len(table))):
+    print(f"Query {i}: {table['query_text'][i].as_py()}")
+```
+
+### Filtering and Pagination
+
+#### Filter by Context
+
+Get entries matching specific context:
+
+```python
+# Stream only entries for GPT-4
+for batch in client.stream_entries_arrow(
+    context_filter={"model": "gpt-4"},
+    limit=1000
+):
+    # All entries in batch have model=gpt-4
+    process_batch(batch)
+
+# Multiple context filters (exact match required)
+for batch in client.stream_entries_arrow(
+    context_filter={"model": "gpt-4", "environment": "prod"}
+):
+    process_batch(batch)
+```
+
+#### Filter by Query Text
+
+Search for entries containing specific text:
+
+```python
+# Find all Python-related queries
+for batch in client.stream_entries_arrow(
+    query_filter="Python",
+    limit=500
+):
+    # All queries contain "Python"
+    for i in range(len(batch)):
+        print(f"  - {batch['query_text'][i].as_py()}")
+
+# Find SQL queries
+for batch in client.stream_entries_arrow(
+    query_filter="SELECT",
+    limit=1000
+):
+    # All queries contain "SELECT"
+    process_sql_queries(batch)
+```
+
+#### Pagination
+
+Stream data in pages:
+
+```python
+page_size = 1000
+offset = 0
+
+while True:
+    batches = list(client.stream_entries_arrow(
+        limit=page_size,
+        offset=offset
+    ))
+
+    if not batches:
+        break  # No more data
+
+    # Process page
+    for batch in batches:
+        process_batch(batch)
+
+    offset += page_size
+    print(f"Processed {offset} entries...")
+```
+
+#### Combined Filtering
+
+Use multiple filters together:
+
+```python
+# Complex query: GPT-4 entries about Python from last week
+table = client.get_entries_arrow_table(
+    context_filter={"model": "gpt-4"},
+    query_filter="Python",
+    limit=5000,
+    include_results=True,
+    include_embeddings=False
+)
+
+print(f"Found {len(table)} matching entries")
+```
+
+### Controlling Output
+
+#### Without Results (Fast)
+
+Exclude cached results to reduce bandwidth:
+
+```python
+# Get metadata only (ids, queries, contexts, timestamps)
+for batch in client.stream_entries_arrow(
+    include_results=False,  # Skip cached results
+    limit=10000
+):
+    # Batch only contains metadata
+    # Much faster for analysis that doesn't need results
+    analyze_cache_patterns(batch)
+```
+
+#### With Embeddings (Analysis)
+
+Include embedding vectors for ML analysis:
+
+```python
+# Get entries with embeddings for similarity analysis
+table = client.get_entries_arrow_table(
+    limit=1000,
+    include_embeddings=True,
+    include_results=False  # Don't need results for this
+)
+
+# Extract embeddings for clustering
+embeddings = []
+for i in range(len(table)):
+    if table["embedding"][i].as_py() is not None:
+        embeddings.append(table["embedding"][i].as_py())
+
+# Perform ML analysis
+from sklearn.cluster import KMeans
+clusters = KMeans(n_clusters=5).fit(embeddings)
+```
+
+## Integration with Data Tools
+
+### pandas
+
+Convert Flight tables to pandas DataFrames:
+
+```python
+import pandas as pd
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Get table and convert to pandas
+table = client.get_entries_arrow_table(limit=10000)
+df = table.to_pandas()
+
+print(f"DataFrame shape: {df.shape}")
+print(f"Columns: {df.columns.tolist()}")
+
+# Analyze with pandas
+print("\nCache usage by context:")
+print(df['context'].value_counts())
+
+print("\nQueries by hour:")
+df['hour'] = pd.to_datetime(df['timestamp'], unit='s').dt.hour
+print(df['hour'].value_counts().sort_index())
+```
+
+### Polars
+
+Use polars for blazing-fast analysis:
+
+```python
+import polars as pl
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Get table and convert to polars
+table = client.get_entries_arrow_table(limit=10000)
+df = pl.from_arrow(table)
+
+print(f"Polars DataFrame: {df.shape}")
+
+# Analyze with polars (much faster than pandas)
+result = (
+    df
+    .with_columns([
+        pl.from_epoch("timestamp", time_unit="s").alias("datetime")
+    ])
+    .groupby("context")
+    .agg([
+        pl.count().alias("count"),
+        pl.col("datetime").min().alias("first_seen"),
+        pl.col("datetime").max().alias("last_seen"),
+    ])
+    .sort("count", descending=True)
+)
+
+print(result)
+```
+
+### DuckDB
+
+Query cache data with SQL using DuckDB:
+
+```python
+import duckdb
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Get Arrow table
+table = client.get_entries_arrow_table()
+
+# Query with DuckDB
+result = duckdb.sql("""
+    SELECT
+        context,
+        COUNT(*) as entry_count,
+        MIN(timestamp) as first_entry,
+        MAX(timestamp) as last_entry
+    FROM table
+    GROUP BY context
+    ORDER BY entry_count DESC
+    LIMIT 10
+""").df()
+
+print(result)
+
+# Complex analytics
+result = duckdb.sql("""
+    SELECT
+        DATE_TRUNC('hour', TIMESTAMP 'epoch' + INTERVAL (timestamp) SECOND) as hour,
+        COUNT(*) as queries_per_hour
+    FROM table
+    WHERE context LIKE '%gpt-4%'
+    GROUP BY hour
+    ORDER BY hour DESC
+""").df()
+
+print("\nQueries per hour (GPT-4):")
+print(result)
+```
+
+## Use Cases
+
+### Use Case 1: Cache Export for Backup
+
+Export entire cache to Parquet for backup:
+
+```python
+import pyarrow.parquet as pq
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Stream all entries
+print("Exporting cache to Parquet...")
+table = client.get_entries_arrow_table(
+    include_results=True,
+    include_embeddings=True
+)
+
+# Save to Parquet
+pq.write_table(table, "cache_backup.parquet", compression="zstd")
+
+print(f"✓ Exported {len(table):,} entries")
+print("  File: cache_backup.parquet")
+```
+
+### Use Case 2: Cache Analytics Dashboard
+
+Build real-time analytics:
+
+```python
+import pandas as pd
+from reminiscence.api.client import ReminiscenceClient
+import time
+
+client = ReminiscenceClient("localhost:8080")
+
+def analyze_cache_patterns():
+    """Analyze cache usage patterns."""
+    table = client.get_entries_arrow_table(
+        include_results=False,  # Fast
+        include_embeddings=False
+    )
+
+    df = table.to_pandas()
+    df['datetime'] = pd.to_datetime(df['timestamp'], unit='s')
+
+    # Calculate metrics
+    total_entries = len(df)
+    unique_contexts = df['context'].nunique()
+
+    # Context distribution
+    context_dist = df['context'].value_counts()
+
+    # Queries per hour
+    hourly = df.groupby(df['datetime'].dt.hour)['id'].count()
+
+    # Recent activity (last hour)
+    recent = df[df['datetime'] > (pd.Timestamp.now() - pd.Timedelta(hours=1))]
+
+    print(f"\n{'='*60}")
+    print(f"Cache Analytics - {pd.Timestamp.now()}")
+    print(f"{'='*60}")
+    print(f"Total Entries: {total_entries:,}")
+    print(f"Unique Contexts: {unique_contexts}")
+    print(f"Entries in Last Hour: {len(recent):,}")
+    print("\nTop 5 Contexts:")
+    print(context_dist.head())
+    print("\nQueries by Hour:")
+    print(hourly.sort_index().tail(12))
+
+# Run dashboard
+while True:
+    analyze_cache_patterns()
+    time.sleep(300)  # Update every 5 minutes
+```
+
+### Use Case 3: ML Training Data Export
+
+Export cache entries as training data:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+import pandas as pd
+
+client = ReminiscenceClient("localhost:8080")
+
+# Get entries with embeddings
+table = client.get_entries_arrow_table(
+    context_filter={"model": "gpt-4"},  # Only GPT-4 responses
+    include_results=True,
+    include_embeddings=True,
+    limit=50000
+)
+
+df = table.to_pandas()
+
+# Prepare training data
+train_data = df[['query_text', 'result', 'embedding']]
+train_data = train_data[train_data['embedding'].notna()]
+
+# Save for ML training
+train_data.to_pickle("training_data.pkl")
+print(f"✓ Exported {len(train_data):,} training examples")
+```
+
+### Use Case 4: Cache Migration
+
+Migrate cache between instances:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+from reminiscence.types import StoreRequest, MultiModalInput
+
+# Connect to source and destination
+source = ReminiscenceClient("source-server:8080")
+dest = ReminiscenceClient("dest-server:8080")
+
+# Stream from source via Flight (fast)
+print("Migrating cache entries...")
+migrated = 0
+
+for batch in source.stream_entries_arrow(
+    include_results=True,
+    batch_size=1000
+):
+    # Convert batch to store requests
+    requests = []
+    for i in range(len(batch)):
+        import json
+
+        request = StoreRequest(
+            query=MultiModalInput(text=batch['query_text'][i].as_py()),
+            context=json.loads(batch['context'][i].as_py()),
+            result=batch['result'][i].as_py() if 'result' in batch.schema.names else None
+        )
+        requests.append(request)
+
+    # Store batch to destination
+    dest.store_batch(requests)
+    migrated += len(requests)
+    print(f"  Migrated {migrated:,} entries...")
+
+print(f"✓ Migration complete: {migrated:,} entries")
+```
+
+### Use Case 5: Query Pattern Analysis
+
+Analyze query patterns to optimize cache:
+
+```python
+import polars as pl
+from reminiscence.api.client import ReminiscenceClient
+from collections import Counter
+
+client = ReminiscenceClient("localhost:8080")
+
+# Get all queries
+table = client.get_entries_arrow_table(
+    include_results=False,
+    include_embeddings=False
+)
+
+df = pl.from_arrow(table)
+
+# Analyze query patterns
+print("Query Pattern Analysis")
+print("="*60)
+
+# 1. Most common contexts
+print("\nTop 10 Contexts:")
+context_counts = df.groupby("context").count().sort("count", descending=True).head(10)
+print(context_counts)
+
+# 2. Query length distribution
+df = df.with_columns([
+    pl.col("query_text").str.len_chars().alias("query_length")
+])
+print("\nQuery Length Stats:")
+print(df.select(pl.col("query_length").describe()))
+
+# 3. Temporal patterns
+df = df.with_columns([
+    pl.from_epoch("timestamp", time_unit="s").alias("datetime")
+])
+
+hourly = df.groupby(
+    pl.col("datetime").dt.hour().alias("hour")
+).count().sort("hour")
+
+print("\nQueries by Hour of Day:")
+print(hourly)
+
+# 4. Find similar query clusters (simple word-based)
+queries = df.select("query_text").to_series().to_list()
+words = Counter()
+for query in queries:
+    words.update(query.lower().split())
+
+print("\nMost Common Query Words:")
+for word, count in words.most_common(20):
+    print(f"  {word}: {count}")
+```
+
+## Performance Comparison
+
+Flight data plane provides significant performance improvements for bulk operations:
+
+### Benchmark: Export 10,000 Entries
+
+| Method | Time | Throughput | Memory |
+|--------|------|------------|--------|
+| gRPC list_entries() | ~8.5s | 1,176 entries/s | ~500 MB |
+| Flight stream | ~0.9s | 11,111 entries/s | ~50 MB |
+| **Improvement** | **9.4x faster** | **9.4x higher** | **10x less** |
+
+### Why Flight is Faster
+
+1. **Zero-copy transfers**: Arrow's columnar format avoids serialization overhead
+2. **Streaming**: Data flows in chunks, no need to buffer everything
+3. **Efficient encoding**: Columnar format is more compact than row-based
+4. **Batch processing**: Optimized for processing many rows at once
+
+### When to Use Each
+
+**Use gRPC (`list_entries`) when:**
+- Need < 100 entries
+- Need detailed metadata per entry
+- Want simple API (no Arrow dependencies)
+
+**Use Flight (`stream_entries_arrow`) when:**
+- Exporting > 1,000 entries
+- Building analytics/dashboards
+- Feeding data to ML pipelines
+- Need maximum performance
+
+## Advanced Topics
+
+### Custom Flight Tickets
+
+Get Flight tickets with custom parameters:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Get ticket for specific operation
+ticket_info = client.get_flight_ticket(
+    operation="list_entries",
+    parameters={
+        "limit": 50000,
+        "context_filter": {"model": "gpt-4"},
+        "include_embeddings": True,
+        "batch_size": 10000
+    }
+)
+
+print(f"Flight endpoint: {ticket_info['flight_endpoint']}")
+print(f"Estimated rows: {ticket_info['estimated_rows']}")
+print(f"Estimated bytes: {ticket_info['estimated_bytes']}")
+
+# Use ticket with Flight client
+import pyarrow.flight as flight
+
+flight_client = flight.FlightClient(ticket_info['flight_endpoint'])
+ticket = flight.Ticket(ticket_info['ticket'])
+reader = flight_client.do_get(ticket)
+
+for batch in reader:
+    process_batch(batch.data)
+```
+
+### Direct Flight Server Access
+
+For advanced use cases, connect directly to Flight server:
+
+```python
+import pyarrow.flight as flight
+
+# Connect directly to Flight server
+flight_client = flight.FlightClient("grpc://localhost:8081")
+
+# List available flights
+flights = list(flight_client.list_flights())
+print(f"Available flights: {len(flights)}")
+
+# Get flight info
+descriptor = flight.FlightDescriptor.for_path("cache_entries")
+info = flight_client.get_flight_info(descriptor)
+print(f"Total records: {info.total_records}")
+
+# Stream data
+ticket = info.endpoints[0].ticket
+reader = flight_client.do_get(ticket)
+
+for batch in reader:
+    print(f"Batch: {len(batch.data)} rows")
+```
+
+## Production Considerations
+
+### Security
+
+Add TLS encryption for production:
+
+```python
+from reminiscence.api.server import create_server
+
+server = create_server(
+    cache=cache,
+    port=8080,
+    enable_flight=True,
+    flight_port=8081,
+    # Add TLS credentials
+    credentials=grpc.ssl_server_credentials(
+        [(server_key, server_cert)]
+    )
+)
+```
+
+### Monitoring
+
+Monitor Flight server performance:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+import time
+
+client = ReminiscenceClient("localhost:8080")
+
+# Track Flight performance
+start = time.time()
+row_count = 0
+
+for batch in client.stream_entries_arrow(limit=100000):
+    row_count += len(batch)
+
+elapsed = time.time() - start
+throughput = row_count / elapsed
+
+print("Flight Performance:")
+print(f"  Rows: {row_count:,}")
+print(f"  Time: {elapsed:.2f}s")
+print(f"  Throughput: {throughput:,.0f} rows/s")
+```
+
+### Resource Limits
+
+Configure appropriate limits:
+
+```python
+# In config
+config = ReminiscenceConfig(
+    flight_enabled=True,
+    flight_port=8081,
+    flight_host="0.0.0.0",
+    # Ensure cache can handle bulk exports
+    max_entries=1000000,  # Large enough for your use case
+)
+```
+
+## Next Steps
+
+- [gRPC API Reference](/dual-plane/grpc-api/) - Control plane operations
+- [Configuration Guide](/guides/configuration/) - All configuration options
+- [Performance Tuning](/production/performance/) - Optimization strategies
+- [Example: Analytics Dashboard](/examples/grpc-microservices/) - Real-world usage

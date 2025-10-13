@@ -5,35 +5,105 @@ description: Semantic cache for LLMs and multi-agent systems
 
 import { Card } from '@astrojs/starlight/components';
 
-**Reminiscence** eliminates redundant computations by matching queries semantically instead of exact strings. Built for **LLM applications**, **RAG pipelines**, and **multi-agent systems** where users express identical intent through different phrasing.
+**Reminiscence** is a production-grade semantic caching layer that eliminates redundant computations by matching queries based on semantic similarity rather than exact string equality. Purpose-built for **LLM applications**, **RAG pipelines**, and **multi-agent systems**, it recognizes when users express the same intent through different phrasing.
 
-## Why semantic caching matters
+## Why Semantic Caching Matters
 
-Traditional *caching* requires exact string matches. Two semantically identical queries like "Analyze Q3 sales" and "Show third quarter revenue" both trigger **expensive LLM API calls**.
+Traditional key-value caching requires exact string matches, causing cache misses even when queries are semantically identical. For example, "Analyze Q3 sales" and "Show third quarter revenue" would both trigger expensive LLM API calls despite expressing the same intent.
 
-Reminiscence uses sentence transformers to understand query meaning. Semantically similar requests return cached results, **reducing API costs and latency**.
+Reminiscence employs multilingual sentence transformers to understand query semantics. When a new query is semantically similar to a previously cached one (above a configurable threshold), the cached result is returned instantly—**reducing API costs by up to 90% and latency from seconds to milliseconds**.
 
-## Core capabilities
+## Core Capabilities
 
-<Card title="Semantic matching" icon="star">
-FastEmbed with multilingual transformers recognizes equivalent queries regardless of phrasing.
+<Card title="Semantic Matching" icon="star">
+Powered by FastEmbed with multilingual sentence transformers, Reminiscence identifies semantically equivalent queries regardless of phrasing, language variations, or synonym usage. Configurable similarity thresholds provide fine-grained control over cache hit rates.
 </Card>
 
-<Card title="Hybrid approach" icon="puzzle">
-Combines semantic similarity with exact context matching for precise cache control.
+<Card title="Hybrid Caching Strategy" icon="puzzle">
+Combines semantic similarity matching with exact context matching. Query embeddings are compared semantically while context metadata (model, agent, user ID) must match exactly—ensuring cache hits are both relevant and contextually appropriate.
 </Card>
 
-<Card title="Production-grade" icon="approve-check">
-Multiple eviction policies, TTL, health checks, and OpenTelemetry built-in.
+<Card title="Production-Ready Infrastructure" icon="approve-check">
+Enterprise features include multiple eviction policies (LRU, LFU, FIFO), configurable TTL, health checks, automatic cleanup schedulers, and native OpenTelemetry integration for monitoring and observability.
 </Card>
 
-<Card title="Type-safe" icon="seti:config">
-Handles DataFrames, numpy arrays, nested structures. Scales to 100K+ entries.
+<Card title="Type-Safe & Scalable" icon="seti:config">
+Handles complex data types including pandas/polars DataFrames, numpy arrays, and nested JSON structures. Built on LanceDB with automatic vector indexing, scaling efficiently to 100K+ entries with sub-15ms lookup latency.
 </Card>
 
-## Built for AI systems
+<Card title="gRPC Remote Access" icon="random">
+Production-grade gRPC server enables distributed caching across microservices. Supports automatic server startup via configuration or programmatic control with health checks and graceful shutdown.
+</Card>
 
-- LLM applications with variable user input
-- Multi-agent workflows requiring shared context
-- RAG pipelines caching retrieval and generation
-- Data analysis workflows with expensive operations
+## Use Cases
+
+Reminiscence excels in scenarios where semantic understanding provides measurable value:
+
+- **LLM Applications**: Cache responses for semantically similar prompts, reducing API costs for ChatGPT, Claude, or custom models while maintaining response quality
+- **RAG Pipelines**: Cache both retrieval results and generated responses, eliminating redundant vector searches and LLM calls in document Q&A systems
+- **Multi-Agent Systems**: Enable agents to share a semantic cache layer, reducing duplicate work when multiple agents process similar queries
+- **Data Analysis Workflows**: Cache expensive pandas/polars transformations, SQL query results, and statistical computations with semantic query matching
+- **Distributed Microservices**: Deploy remote caching via gRPC for service meshes, enabling centralized semantic cache across multiple services
+
+## Documentation
+
+<Card title="Getting Started" icon="rocket">
+Install Reminiscence and cache your first LLM response in under 5 minutes:
+- [Installation](/getting-started/installation/) - Installation via pip/uv with optional dependencies
+- [Quick Start](/getting-started/quick-start/) - Basic usage patterns and first examples
+</Card>
+
+<Card title="Core Concepts" icon="open-book">
+Understand the foundational principles behind semantic caching:
+- [How It Works](/concepts/how-it-works/) - Architecture overview and component interaction
+- [Semantic Matching](/concepts/semantic-matching/) - Embedding models and similarity computation
+- [Hybrid Caching](/concepts/hybrid-caching/) - Combining semantic and exact matching strategies
+</Card>
+
+<Card title="User Guides" icon="document">
+Practical guides for common implementation patterns:
+- [Basic Usage](/guides/basic-usage/) - Core operations and workflow patterns
+- [Configuration](/guides/configuration/) - Environment variables and settings
+- [Decorators](/guides/decorators/) - Automatic caching with @cached decorator
+- [Background Tasks](/guides/background-tasks/) - Schedulers for cleanup and metrics export
+</Card>
+
+<Card title="API Reference" icon="laptop">
+Comprehensive API documentation for developers:
+- [API Overview](/reference/api/) - Quick reference with all public methods
+- [Core Operations](/api/core-operations/) - lookup(), store(), batch operations
+- [Decorators](/api/decorators/) - @cached decorator configuration and patterns
+- [Configuration](/api/configuration/) - ReminiscenceConfig dataclass and options
+- [Data Types](/api/data-types/) - Request/response models and type definitions
+</Card>
+
+<Card title="Examples" icon="puzzle">
+Real-world integration patterns with popular frameworks:
+- [LLM Applications](/examples/llm-apps/) - OpenAI, Anthropic, multi-model caching
+- [RAG Pipelines](/examples/rag/) - Caching retrieval and generation stages
+- [Multi-Agent Systems](/examples/multi-agent/) - Shared cache for agent workflows
+</Card>
+
+<Card title="Dual-Plane Architecture" icon="random">
+Distributed caching with control and data planes:
+- [Control Plane (gRPC)](/dual-plane/grpc-api/) - Complete API reference with all operations
+- [Data Plane (Flight)](/dual-plane/flight-dataplane/) - High-throughput streaming with Arrow Flight
+- [Server Configuration](/dual-plane/grpc-server/) - Auto-start setup and manual control
+- [Microservices Example](/examples/grpc-microservices/) - Multi-agent architecture patterns
+</Card>
+
+<Card title="Production Deployment" icon="setting">
+Enterprise deployment and operational best practices:
+- [OpenTelemetry](/production/opentelemetry/) - Metrics, traces, and monitoring setup
+- [Health Checks](/production/health-checks/) - Liveness and readiness probes
+- [Performance](/production/performance/) - Optimization and scaling strategies
+- [Best Practices](/production/best-practices/) - Security, reliability, and maintenance
+</Card>
+
+<Card title="Reference Documentation" icon="document">
+Technical specifications and implementation details:
+- [Configuration Options](/reference/config/) - All environment variables and settings
+- [Data Types & Serialization](/reference/data-types/) - Supported types and encoding
+- [Storage Architecture](/reference/storage-architecture/) - LanceDB internals and indexing
+- [Metrics](/reference/metrics/) - Available metrics and collection methodology
+</Card>

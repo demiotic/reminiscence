@@ -1,0 +1,1150 @@
+---
+title: gRPC API
+description: Using Reminiscence over gRPC for remote caching and multi-service architectures
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide covers using Reminiscence's gRPC API for remote access, enabling distributed caching across multiple services, languages, and infrastructure.
+
+## Overview
+
+The gRPC API provides:
+
+- **Remote Access**: Cache accessible over network from any service
+- **Multi-Language Support**: Python client included, protobuf enables any language
+- **High Performance**: Binary protocol with efficient serialization
+- **Production-Ready**: Health checks, metrics, and server reflection
+- **Distributed Architecture**: Single cache instance serves multiple clients
+
+## Installation
+
+gRPC is included by default starting with v0.6.0:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
+
+This includes:
+- `grpcio` - Core gRPC library
+- `grpcio-tools` - Protocol buffer compiler
+- `grpcio-reflection` - Server introspection support
+
+## Starting a gRPC Server
+
+### Basic Server
+
+Create a gRPC server with default settings:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+# Create cache instance
+config = ReminiscenceConfig(
+    db_uri="./cache.db",  # Persistent storage
+    max_entries=10000,
+    enable_metrics=True,
+)
+cache = Reminiscence(config)
+
+# Create and start gRPC server
+server = create_server(
+    cache=cache,
+    port=50051,  # Default gRPC port
+    max_workers=10,
+    enable_reflection=True,  # Enable grpcurl/grpcui
+)
+
+server.start()
+
+print("✓ gRPC server running on port 50051")
+
+# Keep server running
+try:
+    server.wait_for_termination()
+except KeyboardInterrupt:
+    server.stop(grace=5.0)
+    print("Server stopped")
+```
+
+### Production Server
+
+Production-ready server with security and monitoring:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+# Production configuration
+config = ReminiscenceConfig(
+    db_uri="postgresql://cache_db",  # External database
+    max_entries=100000,
+    eviction_policy="lru",
+    ttl_seconds=3600,
+    enable_metrics=True,
+    otel_enabled=True,  # OpenTelemetry integration
+    otel_endpoint="http://otel-collector:4318",
+)
+
+cache = Reminiscence(config)
+
+# Start background schedulers
+cache.start_scheduler()
+
+# Create server with custom settings
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=50,  # Handle 50 concurrent requests
+    enable_reflection=True,
+    max_message_length=100 * 1024 * 1024,  # 100MB max message
+)
+
+server.start()
+
+print("✓ Production gRPC server started")
+print("  - Port: 50051")
+print("  - Workers: 50")
+print("  - Metrics: Enabled")
+print(f"  - OTEL: {config.otel_endpoint}")
+
+server.wait_for_termination()
+```
+
+### Docker Deployment
+
+Example Dockerfile for gRPC server:
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install reminiscence
+
+# Copy application
+COPY server.py .
+
+# Expose gRPC port
+EXPOSE 50051
+
+# Run server
+CMD ["python", "server.py"]
+```
+
+Docker Compose setup:
+
+```yaml
+version: '3.8'
+
+services:
+  reminiscence-server:
+    build: .
+    ports:
+      - "50051:50051"
+    environment:
+      - REMINISCENCE_DB_URI=/data/cache.db
+      - REMINISCENCE_MAX_ENTRIES=50000
+      - REMINISCENCE_ENABLE_METRICS=true
+      - REMINISCENCE_LOG_LEVEL=INFO
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  # Optional: gRPC GUI for testing
+  grpcui:
+    image: fullstorydev/grpcui:latest
+    ports:
+      - "8080:8080"
+    command: ["-plaintext", "reminiscence-server:50051"]
+    depends_on:
+      - reminiscence-server
+```
+
+## Python Client
+
+### Basic Usage
+
+Connect to a gRPC server and perform operations:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+from reminiscence.types import MultiModalInput
+
+# Connect to server
+client = ReminiscenceClient("localhost:50051")
+
+# Lookup
+result = client.lookup(
+    query=MultiModalInput(text="What is machine learning?"),
+    context={"model": "gpt-4"}
+)
+
+if result.is_hit:
+    print(f"Cache hit! (similarity: {result.similarity:.3f})")
+    print(f"Result: {result.result}")
+else:
+    print("Cache miss")
+    # Compute result
+    answer = expensive_llm_call("What is machine learning?")
+
+    # Store for future queries
+    client.store(
+        query=MultiModalInput(text="What is machine learning?"),
+        context={"model": "gpt-4"},
+        result=answer
+    )
+
+# Close connection
+client.close()
+```
+
+### Context Manager
+
+Automatic connection management:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+with ReminiscenceClient("localhost:50051") as client:
+    # Connection automatically closed on exit
+    result = client.lookup(query, context)
+
+    if not result.is_hit:
+        client.store(query, context, computed_result)
+```
+
+### Client Configuration
+
+Customize client behavior:
+
+```python
+client = ReminiscenceClient(
+    address="cache.example.com:50051",
+    timeout=10.0,  # 10 second timeout
+    max_message_length=100 * 1024 * 1024,  # 100MB max
+    compression=True,  # Enable gRPC compression
+    credentials=None,  # Optional: SSL/TLS credentials
+)
+```
+
+## Core Operations
+
+### Lookup
+
+Retrieve cached results:
+
+```python
+from reminiscence.types import MultiModalInput, QueryMode
+
+# Basic lookup
+result = client.lookup(
+    query=MultiModalInput(text="Explain quantum computing"),
+    context={"model": "gpt-4"}
+)
+
+if result.is_hit:
+    print(f"Hit! Similarity: {result.similarity:.3f}")
+    print(f"Age: {result.age_seconds:.1f}s")
+    print(f"Result: {result.result}")
+
+# Lookup with custom threshold
+result = client.lookup(
+    query=MultiModalInput(text="Explain quantum computing"),
+    context={"model": "gpt-4"},
+    similarity_threshold=0.95  # Strict matching
+)
+
+# Lookup with specific query mode
+result = client.lookup(
+    query=MultiModalInput(text="SELECT * FROM users"),
+    context={"db": "prod"},
+    mode=QueryMode.EXACT  # Exact matching for SQL
+)
+```
+
+### Store
+
+Save results to cache:
+
+```python
+from reminiscence.types import MultiModalInput
+
+# Basic store
+success = client.store(
+    query=MultiModalInput(text="What is Python?"),
+    context={"model": "gpt-4"},
+    result="Python is a programming language..."
+)
+
+if success:
+    print("✓ Stored successfully")
+
+# Store with TTL
+client.store(
+    query=MultiModalInput(text="Stock price AAPL"),
+    context={"symbol": "AAPL"},
+    result={"price": 150.25, "time": "2024-01-15 10:00:00"},
+    ttl_seconds=300  # Expire after 5 minutes
+)
+
+# Store with metadata
+client.store(
+    query=MultiModalInput(text="Weather forecast"),
+    context={"location": "San Francisco"},
+    result={"temp": 68, "condition": "sunny"},
+    metadata={"source": "openweather", "version": "2.5"}
+)
+
+# Store with specific mode
+client.store(
+    query=MultiModalInput(text="SELECT * FROM products"),
+    context={"db": "prod"},
+    result=[{"id": 1, "name": "Widget"}],
+    mode=QueryMode.EXACT
+)
+```
+
+### Batch Operations
+
+Process multiple queries efficiently:
+
+```python
+from reminiscence.types import (
+    LookupRequest,
+    StoreRequest,
+    MultiModalInput,
+    QueryMode,
+)
+
+# Batch lookup (3-5x faster than loop)
+lookup_requests = [
+    LookupRequest(
+        query=MultiModalInput(text="What is AI?"),
+        context={"model": "gpt-4"},
+        mode=QueryMode.AUTO,
+    ),
+    LookupRequest(
+        query=MultiModalInput(text="What is ML?"),
+        context={"model": "gpt-4"},
+        mode=QueryMode.AUTO,
+    ),
+    LookupRequest(
+        query=MultiModalInput(text="What is DL?"),
+        context={"model": "gpt-4"},
+        mode=QueryMode.AUTO,
+    ),
+]
+
+results = client.lookup_batch(lookup_requests)
+
+for i, result in enumerate(results):
+    if result.is_hit:
+        print(f"Query {i}: ✓ Hit (similarity: {result.similarity:.3f})")
+    else:
+        print(f"Query {i}: ✗ Miss")
+
+# Batch store
+store_requests = [
+    StoreRequest(
+        query=MultiModalInput(text=f"Query {i}"),
+        context={"model": "gpt-4"},
+        result=f"Result {i}",
+        ttl_seconds=3600,
+    )
+    for i in range(10)
+]
+
+success_flags = client.store_batch(store_requests)
+print(f"Stored {sum(success_flags)}/{len(store_requests)} entries")
+```
+
+### Check Availability
+
+Lightweight check without retrieving data:
+
+```python
+from reminiscence.types import MultiModalInput
+
+# Check if cached result exists
+availability = client.check_availability(
+    query=MultiModalInput(text="What is Python?"),
+    context={"model": "gpt-4"}
+)
+
+if availability.available:
+    print("✓ Cache entry exists")
+    print(f"  Age: {availability.age_seconds:.1f}s")
+    print(f"  Similarity: {availability.similarity:.3f}")
+else:
+    print("✗ No cache entry found")
+```
+
+## Cache Management
+
+### Invalidation
+
+Remove cache entries:
+
+```python
+# Invalidate by context
+count = client.invalidate(
+    context={"model": "gpt-3.5"}
+)
+print(f"Invalidated {count} entries")
+
+# Invalidate entries older than 1 hour
+count = client.invalidate(older_than_seconds=3600)
+print(f"Removed {count} expired entries")
+
+# Invalidate specific query and context
+count = client.invalidate(
+    query=MultiModalInput(text="Old data"),
+    context={"model": "deprecated"}
+)
+```
+
+### Cleanup
+
+Remove expired entries:
+
+```python
+# Remove entries past their TTL
+count = client.cleanup_expired()
+print(f"Cleaned up {count} expired entries")
+```
+
+### Clear Cache
+
+Remove all entries:
+
+```python
+# Clear entire cache
+success = client.clear()
+
+if success:
+    print("✓ Cache cleared")
+    stats = client.get_stats()
+    print(f"  Entries remaining: {stats['cache_entries']}")
+```
+
+## Monitoring and Health
+
+### Statistics
+
+Get cache performance metrics:
+
+```python
+stats = client.get_stats()
+
+print("Cache Statistics:")
+print(f"  Total Entries: {stats['cache_entries']}")
+print(f"  Max Entries: {stats['max_entries']}")
+print(f"  Hits: {stats['hits']}")
+print(f"  Misses: {stats['misses']}")
+print(f"  Hit Rate: {stats['hit_rate']}")
+print(f"  Evictions: {stats.get('evictions', 0)}")
+print(f"  Lookup Errors: {stats.get('lookup_errors', 0)}")
+print(f"  Store Errors: {stats.get('store_errors', 0)}")
+
+# Storage info
+print("\nConfiguration:")
+print(f"  Eviction Policy: {stats['eviction_policy']}")
+print(f"  Similarity Threshold: {stats['threshold']}")
+print(f"  Embedding Dimension: {stats['embedding_dim']}")
+print(f"  Model: {stats['model']}")
+print(f"  Storage: {stats['storage']}")
+```
+
+### Health Check
+
+Verify server and cache health:
+
+```python
+health = client.health_check()
+
+print(f"Server Health: {health['status']}")
+
+# Check component status
+for component, check in health['checks'].items():
+    status = "✓" if check['ok'] else "✗"
+    print(f"  {status} {component}")
+
+    if not check['ok']:
+        print(f"    Error: {check.get('error')}")
+        if 'details' in check:
+            print(f"    Details: {check['details']}")
+
+# Metrics
+print("\nMetrics:")
+print(f"  Total Entries: {health['metrics']['total_entries']}")
+print(f"  Recent Errors: {health['metrics']['recent_errors']}")
+
+# Timestamp
+print(f"\nChecked at: {health['timestamp']}")
+```
+
+### Index Operations
+
+Manage vector search indexes:
+
+```python
+# Create index for faster searches (after ~256 entries)
+success = client.create_index(
+    num_partitions=256,  # More partitions = faster search
+    metric_type="cosine"  # Similarity metric
+)
+
+if success:
+    print("✓ Index created successfully")
+else:
+    print("✗ Index creation failed (insufficient entries?)")
+
+# Get index statistics
+index_stats = client.get_index_stats()
+
+print("Index Statistics:")
+print(f"  Has Index: {index_stats['has_index']}")
+print(f"  Total Entries: {index_stats['total_entries']}")
+print(f"  Note: {index_stats['note']}")
+```
+
+### Database Inspection
+
+List and browse cache entries for debugging and analysis:
+
+```python
+# List recent entries
+result = client.list_entries(limit=10)
+
+print(f"Found {result['total_count']} entries")
+print(f"Showing {result['returned_count']} entries")
+
+for entry in result['entries']:
+    print(f"\nEntry ID: {entry['entry_id']}")
+    print(f"  Query: {entry['query']['text']}")
+    print(f"  Context: {entry['context']}")
+    print(f"  Created: {entry['created_at']}")
+    print(f"  Table: {entry['matched_context_key']}")  # 'semantic' or 'exact'
+
+    if 'result' in entry:
+        print(f"  Result: {entry['result']}")
+```
+
+#### Pagination
+
+List entries in pages:
+
+```python
+# First page (newest 50 entries)
+page1 = client.list_entries(limit=50, offset=0)
+
+print(f"Page 1: {len(page1['entries'])} entries")
+print(f"Total: {page1['total_count']}")
+
+# Second page
+if page1['has_more']:
+    page2 = client.list_entries(limit=50, offset=50)
+    print(f"Page 2: {len(page2['entries'])} entries")
+```
+
+#### Filtering by Context
+
+Find entries with specific context values:
+
+```python
+# Get all entries for a specific model
+result = client.list_entries(
+    limit=100,
+    context_filter={"model": "gpt-4"}
+)
+
+# Get entries for specific database and environment
+result = client.list_entries(
+    limit=100,
+    context_filter={"db": "prod", "environment": "production"}
+)
+
+print(f"Found {result['total_count']} matching entries")
+```
+
+#### Filtering by Query Text
+
+Search for entries containing specific text:
+
+```python
+# Find entries with "Python" in the query
+result = client.list_entries(
+    limit=100,
+    query_filter="Python"
+)
+
+# Find SQL queries
+result = client.list_entries(
+    limit=100,
+    query_filter="SELECT"
+)
+
+for entry in result['entries']:
+    print(f"Query: {entry['query']['text']}")
+```
+
+#### Sorting
+
+Sort entries by different fields:
+
+```python
+# Newest first (default)
+result = client.list_entries(
+    limit=50,
+    sort_by="created_at",
+    sort_descending=True
+)
+
+# Oldest first
+result = client.list_entries(
+    limit=50,
+    sort_by="created_at",
+    sort_descending=False
+)
+
+# Sort by access count (when tracking is enabled)
+result = client.list_entries(
+    limit=50,
+    sort_by="access_count",
+    sort_descending=True  # Most accessed first
+)
+```
+
+#### Controlling Output Size
+
+Optimize for different use cases:
+
+```python
+# Minimal data (no results, no embeddings)
+result = client.list_entries(
+    limit=100,
+    include_results=False,  # Skip cached results
+    include_embeddings=False  # Skip embedding vectors
+)
+
+# Full data (for analysis)
+result = client.list_entries(
+    limit=10,
+    include_results=True,  # Include cached results
+    include_embeddings=True  # Include embedding vectors for ML analysis
+)
+
+# Check size
+for entry in result['entries']:
+    if 'embedding' in entry:
+        print(f"Embedding dimension: {len(entry['embedding'])}")
+```
+
+#### Combined Filtering
+
+Use multiple filters together:
+
+```python
+# Find recent Python queries for gpt-4
+result = client.list_entries(
+    limit=20,
+    context_filter={"model": "gpt-4"},
+    query_filter="Python",
+    sort_by="created_at",
+    sort_descending=True,
+    include_results=True
+)
+
+print(f"Found {result['total_count']} Python queries for GPT-4")
+```
+
+#### CLI Usage
+
+The CLI provides convenient access to entry listing:
+
+```bash
+# List recent entries
+reminiscence list --limit 20
+
+# Filter by context
+reminiscence list --context '{"model": "gpt-4"}' --limit 50
+
+# Search by query text
+reminiscence list --query "Python" --limit 100
+
+# Pagination
+reminiscence list --limit 50 --offset 0  # Page 1
+reminiscence list --limit 50 --offset 50  # Page 2
+
+# Without results (faster)
+reminiscence list --limit 100 --no-results
+
+# Sort by creation time
+reminiscence list --sort-by created_at --sort-desc --limit 20
+```
+
+#### Use Cases
+
+**Debugging**: Find why a query didn't hit cache
+
+```python
+# Search for similar queries
+result = client.list_entries(
+    query_filter="machine learning",
+    limit=10
+)
+
+for entry in result['entries']:
+    print(f"Query: {entry['query']['text']}")
+    print(f"Similarity would be: ~{entry.get('similarity', 'N/A')}")
+```
+
+**Analysis**: Understand cache usage patterns
+
+```python
+# Get all entries
+all_entries = client.list_entries(limit=1000)
+
+# Analyze by context
+contexts = {}
+for entry in all_entries['entries']:
+    ctx = tuple(sorted(entry['context'].items()))
+    contexts[ctx] = contexts.get(ctx, 0) + 1
+
+# Show most common contexts
+for ctx, count in sorted(contexts.items(), key=lambda x: x[1], reverse=True)[:5]:
+    print(f"{dict(ctx)}: {count} entries")
+```
+
+**Cleanup**: Identify entries to remove
+
+```python
+import time
+
+# Find old entries
+result = client.list_entries(
+    limit=1000,
+    sort_by="created_at",
+    sort_descending=False  # Oldest first
+)
+
+# Analyze age
+current_time = time.time()
+for entry in result['entries']:
+    age_days = (current_time - entry['created_at']) / 86400
+    if age_days > 30:
+        print(f"Old entry (age: {age_days:.1f} days): {entry['entry_id']}")
+```
+
+### Capabilities
+
+Check server features and version:
+
+```python
+capabilities = client.get_capabilities()
+
+print("Server Capabilities:")
+print(f"  Version: {capabilities['version']}")
+print(f"  Flight Enabled: {capabilities['flight_enabled']}")
+print("  Supported Features:")
+for feature in capabilities['supported_features']:
+    print(f"    - {feature}")
+```
+
+## Query Modes
+
+### AUTO Mode
+
+Automatically detect best matching strategy:
+
+```python
+from reminiscence.types import QueryMode
+
+# Natural language - uses semantic matching
+result = client.lookup(
+    query=MultiModalInput(text="Explain machine learning"),
+    context={},
+    mode=QueryMode.AUTO
+)
+
+# SQL query - automatically uses exact matching
+result = client.lookup(
+    query=MultiModalInput(text="SELECT * FROM users WHERE id = 123"),
+    context={"db": "prod"},
+    mode=QueryMode.AUTO  # Detects SQL, uses exact mode
+)
+```
+
+### SEMANTIC Mode
+
+Pure semantic similarity matching:
+
+```python
+# Best for natural language queries
+result = client.lookup(
+    query=MultiModalInput(text="What is artificial intelligence?"),
+    context={"agent": "qa"},
+    mode=QueryMode.SEMANTIC
+)
+
+# Matches similar queries:
+# - "Explain AI"
+# - "Tell me about artificial intelligence"
+# - "What's artificial intelligence?"
+```
+
+### EXACT Mode
+
+High-precision matching for deterministic queries:
+
+```python
+# Best for SQL, code, or deterministic queries
+result = client.lookup(
+    query=MultiModalInput(text="SELECT name, email FROM users WHERE id = 42"),
+    context={"database": "prod"},
+    mode=QueryMode.EXACT
+)
+
+# Only matches nearly identical queries
+```
+
+## Error Handling
+
+### Client Errors
+
+Handle connection and timeout errors:
+
+```python
+from grpc import RpcError
+from reminiscence.api.client import ReminiscenceClient
+
+try:
+    with ReminiscenceClient("localhost:50051", timeout=5.0) as client:
+        result = client.lookup(query, context)
+except RpcError as e:
+    if e.code() == grpc.StatusCode.UNAVAILABLE:
+        print("Server unavailable - check if server is running")
+    elif e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+        print("Request timeout - server may be overloaded")
+    else:
+        print(f"gRPC error: {e.details()}")
+except Exception as e:
+    print(f"Unexpected error: {e}")
+```
+
+### Server Errors
+
+Proper error handling in server:
+
+```python
+from reminiscence import Reminiscence
+from reminiscence.api.server import create_server
+
+try:
+    config = ReminiscenceConfig(db_uri="./cache.db")
+    cache = Reminiscence(config)
+    server = create_server(cache=cache, port=50051)
+    server.start()
+
+    print("✓ Server started successfully")
+    server.wait_for_termination()
+
+except Exception as e:
+    print(f"✗ Server error: {e}")
+    # Cleanup
+    if 'server' in locals():
+        server.stop(grace=2.0)
+    if 'cache' in locals():
+        cache.stop_scheduler()
+```
+
+### Error Result Caching
+
+Control whether to cache error responses:
+
+```python
+# By default, errors are NOT cached
+try:
+    result = expensive_api_call()
+    client.store(query, context, result)  # Cached
+except APIError as e:
+    error_result = {"error": str(e)}
+    # This won't be cached (silently skipped)
+    client.store(query, context, error_result)
+
+# Explicitly cache errors (e.g., for rate limiting)
+client.store(
+    query=query,
+    context=context,
+    result={"error": "Rate limit exceeded"},
+    allow_errors=True  # Cache this error
+)
+```
+
+## Production Patterns
+
+### Pattern 1: Microservices Cache
+
+Shared cache across multiple services:
+
+```python
+# Service A - Python
+from reminiscence.api.client import ReminiscenceClient
+
+cache_client = ReminiscenceClient("cache-server:50051")
+
+@app.route("/api/query")
+def api_endpoint():
+    result = cache_client.lookup(request.query, {"service": "api-a"})
+
+    if result.is_hit:
+        return result.result
+
+    data = process_query(request.query)
+    cache_client.store(request.query, {"service": "api-a"}, data)
+    return data
+```
+
+### Pattern 2: Load-Balanced Cache
+
+Multiple cache servers with client-side load balancing:
+
+```python
+import random
+from reminiscence.api.client import ReminiscenceClient
+
+# Pool of cache servers
+CACHE_SERVERS = [
+    "cache-1.example.com:50051",
+    "cache-2.example.com:50051",
+    "cache-3.example.com:50051",
+]
+
+def get_cache_client() -> ReminiscenceClient:
+    """Get client connected to random cache server."""
+    server = random.choice(CACHE_SERVERS)
+    return ReminiscenceClient(server)
+
+# Use consistent hashing for session affinity
+import hashlib
+
+def get_cache_client_consistent(key: str) -> ReminiscenceClient:
+    """Get client using consistent hashing."""
+    hash_value = int(hashlib.md5(key.encode()).hexdigest(), 16)
+    server_idx = hash_value % len(CACHE_SERVERS)
+    return ReminiscenceClient(CACHE_SERVERS[server_idx])
+```
+
+### Pattern 3: Circuit Breaker
+
+Graceful degradation when cache is unavailable:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+import grpc
+
+class CacheCircuitBreaker:
+    def __init__(self, server: str, failure_threshold: int = 5):
+        self.server = server
+        self.failure_count = 0
+        self.failure_threshold = failure_threshold
+        self.is_open = False
+
+    def lookup(self, query, context):
+        if self.is_open:
+            print("Circuit breaker OPEN - bypassing cache")
+            return None  # Cache miss
+
+        try:
+            with ReminiscenceClient(self.server, timeout=2.0) as client:
+                result = client.lookup(query, context)
+                self.failure_count = 0  # Reset on success
+                return result if result.is_hit else None
+
+        except grpc.RpcError:
+            self.failure_count += 1
+            if self.failure_count >= self.failure_threshold:
+                self.is_open = True
+                print(f"Circuit breaker OPENED after {self.failure_count} failures")
+            return None
+
+    def store(self, query, context, result):
+        if self.is_open:
+            return  # Skip store when circuit is open
+
+        try:
+            with ReminiscenceClient(self.server, timeout=2.0) as client:
+                client.store(query, context, result)
+        except grpc.RpcError:
+            pass  # Fail silently for stores
+
+# Usage
+cache_breaker = CacheCircuitBreaker("cache-server:50051")
+
+def query_handler(query: str):
+    # Try cache
+    cached = cache_breaker.lookup(query, {"service": "api"})
+    if cached:
+        return cached
+
+    # Compute
+    result = expensive_computation(query)
+
+    # Store
+    cache_breaker.store(query, {"service": "api"}, result)
+
+    return result
+```
+
+### Pattern 4: Monitoring Dashboard
+
+Real-time cache monitoring:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+import time
+
+def monitor_cache(server: str, interval: int = 10):
+    """Monitor cache performance."""
+    client = ReminiscenceClient(server)
+
+    while True:
+        try:
+            # Get stats
+            stats = client.get_stats()
+            health = client.health_check()
+
+            # Display metrics
+            print(f"\n{time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Status: {health['status']}")
+            print(f"Entries: {stats['cache_entries']:,}/{stats['max_entries']:,}")
+            print(f"Hit Rate: {stats['hit_rate']}")
+            print(f"Total Hits: {stats['hits']:,}")
+            print(f"Total Misses: {stats['misses']:,}")
+
+            if stats.get('evictions', 0) > 0:
+                print(f"⚠ Evictions: {stats['evictions']:,}")
+
+            if stats.get('lookup_errors', 0) > 0:
+                print(f"⚠ Lookup Errors: {stats['lookup_errors']}")
+
+        except Exception as e:
+            print(f"✗ Monitoring error: {e}")
+
+        time.sleep(interval)
+
+# Run monitor
+monitor_cache("cache-server:50051", interval=30)
+```
+
+## Testing with grpcurl
+
+Test your gRPC server using `grpcurl`:
+
+```bash
+# Install grpcurl
+brew install grpcurl  # macOS
+# or
+go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+
+# List services (requires reflection enabled)
+grpcurl -plaintext localhost:50051 list
+
+# List methods
+grpcurl -plaintext localhost:50051 list reminiscence.ReminiscenceService
+
+# Call Lookup
+grpcurl -plaintext -d @ localhost:50051 reminiscence.ReminiscenceService/Lookup <<EOF
+{
+  "query": {
+    "text": "What is Python?"
+  },
+  "context": {
+    "model": "gpt-4"
+  },
+  "mode": "AUTO"
+}
+EOF
+
+# Get stats
+grpcurl -plaintext localhost:50051 reminiscence.ReminiscenceService/GetStats
+
+# Health check
+grpcurl -plaintext localhost:50051 reminiscence.ReminiscenceService/HealthCheck
+```
+
+## Performance Tuning
+
+### Server Tuning
+
+Optimize server for your workload:
+
+```python
+server = create_server(
+    cache=cache,
+    port=50051,
+    max_workers=100,  # More workers for high concurrency
+    max_message_length=50 * 1024 * 1024,  # 50MB messages
+    options=[
+        ('grpc.keepalive_time_ms', 10000),
+        ('grpc.keepalive_timeout_ms', 5000),
+        ('grpc.http2.max_pings_without_data', 0),
+        ('grpc.http2.min_time_between_pings_ms', 10000),
+        ('grpc.http2.min_ping_interval_without_data_ms', 5000),
+    ]
+)
+```
+
+### Client Tuning
+
+Optimize client connections:
+
+```python
+client = ReminiscenceClient(
+    address="cache-server:50051",
+    timeout=5.0,  # Adjust based on latency
+    compression=True,  # Enable for large messages
+    options=[
+        ('grpc.keepalive_time_ms', 10000),
+        ('grpc.max_receive_message_length', 50 * 1024 * 1024),
+    ]
+)
+```
+
+### Batch Operations
+
+Use batch operations for better performance:
+
+```python
+# Instead of loop (slow)
+for query in queries:
+    result = client.lookup(query, context)
+
+# Use batch (3-5x faster)
+requests = [LookupRequest(query=q, context=context) for q in queries]
+results = client.lookup_batch(requests)
+```
+
+## Next Steps
+
+- [Basic Usage](/guides/basic-usage/) - Learn core concepts
+- [Configuration](/guides/configuration/) - All configuration options
+- [OpenTelemetry](/production/opentelemetry/) - Monitoring and tracing
+- [Best Practices](/production/best-practices/) - Production deployment guide

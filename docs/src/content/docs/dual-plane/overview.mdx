@@ -1,0 +1,276 @@
+---
+title: Dual-Plane Architecture
+description: Understanding Reminiscence's control and data plane separation
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Reminiscence implements a **dual-plane architecture**, separating the control plane from the data plane. This design follows industry best practices used by systems like Kubernetes, Apache Kafka, and modern cloud infrastructure.
+
+**The client automatically routes operations** - you don't choose which plane to use. Simply call the method you need, and the client uses the optimal protocol behind the scenes.
+
+## Why Dual-Plane?
+
+Traditional unified APIs force a trade-off: optimize for transactional operations (single lookups/stores) or bulk operations (analytics, exports). By separating these concerns into two specialized planes, Reminiscence provides:
+
+1. **Performance**: Each plane is optimized for its workload—gRPC for low-latency transactions, Flight for high-throughput bulk transfers
+2. **Scalability**: Control and data operations can scale independently based on your workload patterns
+3. **Transparency**: The client automatically routes operations to the right protocol—no configuration needed
+4. **Efficiency**: Zero-copy transfers in the data plane achieve ~10x better throughput than traditional approaches
+
+## Control Plane (gRPC)
+
+The control plane runs on **port 8080** and handles all transactional cache operations.
+
+### Purpose
+
+Fast, low-latency operations for individual cache entries.
+
+### Operations
+
+- `lookup()` - Retrieve single cached results
+- `store()` - Save new cache entries
+- `invalidate()` - Remove specific entries
+- `health_check()` - Monitor server status
+- `get_stats()` - Retrieve metrics
+- `create_index()` - Manage vector search indexes
+
+### Use Cases
+
+- **Real-time application caching**: LLM responses, API calls, database queries
+- **Individual cache management**: Add, update, or remove specific entries
+- **Health monitoring**: Check server status and collect metrics
+- **Administrative operations**: Configuration and maintenance tasks
+
+### Performance
+
+Optimized for sub-10ms latency on single operations. Ideal for synchronous workflows where you need immediate responses.
+
+### Example
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+from reminiscence.types import MultiModalInput
+
+client = ReminiscenceClient("localhost:8080")
+
+# Fast single lookup
+result = client.lookup(
+    query=MultiModalInput(text="What is Python?"),
+    context={"model": "gpt-4"}
+)
+
+if result.is_hit:
+    print(f"Found in {result.age_seconds:.2f}s")
+    data = result.result
+else:
+    # Store new entry
+    data = expensive_llm_call()
+    client.store(
+        query=MultiModalInput(text="What is Python?"),
+        context={"model": "gpt-4"},
+        result=data
+    )
+```
+
+## Data Plane (Arrow Flight)
+
+The data plane runs on **port 8081** and provides high-throughput streaming for bulk operations.
+
+### Purpose
+
+Zero-copy streaming of large datasets using Apache Arrow's columnar format.
+
+### Operations
+
+- `stream_entries_arrow()` - Stream cache entries in batches
+- `get_entries_arrow_table()` - Retrieve entire datasets as Arrow tables
+- Filtering by context, query text, timestamps
+- Pagination and sorting for large result sets
+- Direct integration with pandas, polars, DuckDB
+
+### Use Cases
+
+- **Backup and export**: Export thousands of cache entries efficiently
+- **Analytics dashboards**: Build real-time dashboards on cache usage patterns
+- **ML training pipelines**: Feed cache data into training workflows
+- **Data migration**: Move data between cache instances
+- **Data analysis**: Query cache data with pandas, polars, or SQL (DuckDB)
+
+### Performance
+
+- **9.4x faster** than gRPC for bulk operations
+- **~11,000 entries/second** throughput
+- **10x less memory** usage due to columnar format
+- Zero-copy transfers minimize serialization overhead
+
+### Example
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+client = ReminiscenceClient("localhost:8080")
+
+# Stream thousands of entries efficiently
+for batch in client.stream_entries_arrow(batch_size=10000):
+    print(f"Processing batch: {len(batch)} rows")
+    # Convert to pandas for analysis
+    df = batch.to_pandas()
+    analyze_cache_patterns(df)
+```
+
+## Architecture Diagram
+
+```d2
+Client: Client Application
+
+ControlPlane: Control Plane (gRPC)\nPort 8080 {
+  Operations: |md
+    • lookup()
+    • store()
+    • invalidate()
+    • health_check()
+    • get_stats()
+  |
+  Characteristics: |md
+    Binary protocol
+    Low latency (~5-10ms)
+  |
+}
+
+DataPlane: Data Plane (Arrow Flight)\nPort 8081 {
+  Operations: |md
+    • stream_entries_arrow()
+    • get_entries_arrow_table()
+    • Filtering & pagination
+    • Zero-copy streaming
+  |
+  Characteristics: |md
+    Arrow columnar format
+    High throughput (11k/s)
+  |
+}
+
+Cache: Reminiscence Cache\n(LanceDB + FastEmbed)
+
+Client -> ControlPlane: Transactional\n(lookup, store)
+Client -> DataPlane: Bulk/Analytics\n(export, analyze)
+ControlPlane -> Cache
+DataPlane -> Cache
+```
+
+## Transparent Operation Routing
+
+The `ReminiscenceClient` automatically routes operations to the appropriate plane based on the method you call. **You don't need to choose** - just connect once and the client handles everything:
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+# Single connection point
+client = ReminiscenceClient("localhost:8080")
+
+# Automatically uses gRPC (control plane) - fast, low-latency
+result = client.lookup(query, context)
+client.store(query, context, result)
+client.invalidate(context)
+
+# Automatically uses Flight (data plane) - high-throughput streaming
+for batch in client.stream_entries_arrow(batch_size=10000):
+    process(batch)
+
+table = client.get_entries_arrow_table()
+```
+
+### Operation Routing
+
+| Operation | Protocol Used | When |
+|-----------|--------------|------|
+| `lookup()`, `store()`, `invalidate()` | gRPC | Individual cache operations |
+| `health_check()`, `get_stats()` | gRPC | Monitoring & admin |
+| `stream_entries_arrow()` | Arrow Flight | Bulk exports (> 1,000 entries) |
+| `get_entries_arrow_table()` | Arrow Flight | Analytics & data analysis |
+
+The client automatically falls back to gRPC if Flight is unavailable.
+
+## Installation
+
+Dual-plane architecture is included by default starting with v0.6.0:
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install reminiscence
+    ```
+  </TabItem>
+  <TabItem label="poetry">
+    ```bash
+    poetry add reminiscence
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    uv add reminiscence
+    ```
+  </TabItem>
+</Tabs>
+
+This includes everything you need for dual-plane:
+- `grpcio` - Core gRPC library for control plane
+- `grpcio-tools` - Protocol buffer compiler
+- `grpcio-reflection` - Server introspection
+- `pyarrow>=21.0.0` - Arrow Flight support for data plane
+
+## Starting Both Planes
+
+:::tip[Flight Enabled by Default]
+Starting with v0.6.1, the Arrow Flight data plane is **enabled by default** (localhost only for security). You only need to start the gRPC control plane to get both planes.
+:::
+
+Start a dual-plane server:
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+from reminiscence.api.server import create_server
+
+# Create cache
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    max_entries=100000,
+    enable_metrics=True,
+)
+cache = Reminiscence(config)
+
+# Create server - Flight is enabled by default
+server = create_server(
+    cache=cache,
+    port=8080,              # Control plane (gRPC)
+    # flight_port=8081,     # Flight enabled by default on 8081
+    enable_reflection=True,
+)
+
+server.start()
+
+print("✓ Dual-plane server running")
+print("  Control Plane (gRPC):  localhost:8080")
+print("  Data Plane (Flight):   localhost:8081")  # Auto-enabled
+
+server.wait_for_termination()
+```
+
+**Security Note**: By default, both planes bind to `127.0.0.1` (localhost only). For production deployments accessible from other machines, set:
+
+```python
+server = create_server(
+    cache=cache,
+    port=8080,
+    flight_host="0.0.0.0",  # Allow external connections
+    enable_reflection=True,
+)
+```
+
+## Next Steps
+
+- [Control Plane (gRPC)](/dual-plane/grpc-api/) - Complete API reference for transactional operations
+- [Data Plane (Flight)](/dual-plane/flight-dataplane/) - High-throughput streaming and analytics
+- [Server Configuration](/dual-plane/grpc-server/) - Deployment and configuration guide
+- [Microservices Example](/examples/grpc-microservices/) - Real-world multi-service architecture

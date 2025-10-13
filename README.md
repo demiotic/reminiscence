@@ -79,8 +79,125 @@ call_llm("Explain quantum physics", "claude-3")  # Executes
 - 🔒 **Type safe** - Handles DataFrames, numpy arrays, nested dicts (10MB+)
 - ⚡ **Zero config** - Works instantly, scales to 100K+ entries with auto-indexing
 - 🔄 **Background tasks** - Automatic cleanup scheduler and metrics export
+- 🌐 **gRPC API** - Remote access for microservices and distributed systems
+
+## Remote Access with gRPC
+
+For distributed systems and microservices, Reminiscence provides a production-ready gRPC API:
+
+```bash
+pip install reminiscence[grpc]
+```
+
+### Auto-Start Server (Configuration-Driven)
+
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Server auto-starts on init
+config = ReminiscenceConfig(
+    db_uri="./cache.db",
+    grpc_enabled=True,       # Enable gRPC server
+    grpc_port=50051,         # Default gRPC port
+    grpc_max_workers=10,     # Concurrent request handlers
+)
+
+cache = Reminiscence(config)  # Server now running on port 50051!
+
+# Or via environment variables:
+# REMINISCENCE_GRPC_ENABLED=true
+# REMINISCENCE_GRPC_PORT=50051
+# REMINISCENCE_GRPC_MAX_WORKERS=10
+cache = Reminiscence(ReminiscenceConfig.load())
+```
+
+### Manual Server Control
+
+```python
+# Start server programmatically
+cache = Reminiscence()
+cache.start_grpc_server(port=50051, max_workers=10)
+
+# Use cache...
+
+# Stop when done
+cache.stop_grpc_server()
+```
+
+### Connect from Any Service
+
+```python
+from reminiscence.api.client import ReminiscenceClient
+
+# Connect to remote cache
+with ReminiscenceClient("localhost:50051") as client:
+    # Same API as local cache
+    result = client.lookup(query, context)
+
+    if not result.is_hit:
+        data = expensive_operation()
+        client.store(query, context, data)
+```
+
+**Benefits:**
+- **Shared cache** across multiple services (Python, Go, Rust, etc.)
+- **Centralized caching** reduces duplicate LLM calls
+- **Language-agnostic** via Protocol Buffers
+- **Production-ready** with health checks and monitoring
+
+See [gRPC API Guide](docs/src/content/docs/guides/grpc-api.md) and [Microservices Example](docs/src/content/docs/examples/grpc-microservices.md) for complete documentation.
 
 ## Configuration
+
+### YAML Configuration (Recommended)
+
+For production deployments, use YAML files for clean, version-controlled configuration:
+
+**Create `reminiscence.yaml`:**
+```yaml
+# Production cache configuration
+db_uri: ./cache.db
+max_entries: 50000
+eviction_policy: lru
+ttl_seconds: 3600
+
+similarity_threshold: 0.82
+auto_create_index: true
+
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 50
+
+enable_metrics: true
+log_level: INFO
+
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318/v1/metrics
+  service_name: reminiscence-prod
+```
+
+**Load in your application:**
+```python
+from reminiscence import Reminiscence, ReminiscenceConfig
+
+# Load from YAML (recommended)
+config = ReminiscenceConfig.load_from_yaml("reminiscence.yaml")
+cache = Reminiscence(config)
+
+# Environment variables override YAML (12-factor app standard)
+# REMINISCENCE_GRPC_PORT=9090 overrides yaml's grpc.port
+config = ReminiscenceConfig.load_from_yaml("reminiscence.yaml", allow_env_override=True)
+cache = Reminiscence(config)
+```
+
+See example configurations in `examples/`:
+- `reminiscence-dev.yaml` - Development (in-memory, debug logging)
+- `reminiscence-prod.yaml` - Production (persistent, OTEL enabled)
+- `reminiscence.yaml` - Complete with all options documented
+
+### Alternative Configuration Methods
 
 ```python
 from reminiscence import Reminiscence, ReminiscenceConfig
@@ -88,7 +205,10 @@ from reminiscence import Reminiscence, ReminiscenceConfig
 # Development (in-memory, defaults)
 cache = Reminiscence()
 
-# Production (persistent, optimized)
+# Environment variables (Docker/Kubernetes)
+cache = Reminiscence(ReminiscenceConfig.load())
+
+# Direct instantiation (for testing)
 config = ReminiscenceConfig(
     db_uri="./cache.db",
     ttl_seconds=3600,
@@ -97,17 +217,6 @@ config = ReminiscenceConfig(
     auto_create_index=True
 )
 cache = Reminiscence(config)
-
-# With OpenTelemetry
-config = ReminiscenceConfig(
-    otel_enabled=True,
-    otel_service_name="my-service",
-    otel_endpoint="http://localhost:4317"
-)
-cache = Reminiscence(config)
-
-# Docker/Kubernetes (environment variables)
-cache = Reminiscence(ReminiscenceConfig.load())
 ```
 
 ## Background Tasks
@@ -243,6 +352,18 @@ Reminiscence is optimized for **single-process** or **low-concurrency** scenario
 - **Max entries** is a soft limit (allows ~5% overflow during concurrent writes)
 
 This design prioritizes performance for typical ML/AI workflows over strict consistency guarantees needed for high-throughput web services.
+
+## Development & Architecture
+
+For contributors and those interested in the project's architecture:
+
+- **[CLAUDE.md](CLAUDE.md)** - Development guide with commands, patterns, and testing
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and future roadmap
+  - Current Python-based design (v0.6.0)
+  - Planned Rust CLI (v0.7.0+) for standalone binary distribution
+  - Optional Rust server (v1.0+) for high-throughput production deployments
+
+The architecture document explains the evolution path from Python-first development to a production-ready infrastructure tool following patterns from Redis, PostgreSQL, and modern cloud-native projects.
 
 ## License
 

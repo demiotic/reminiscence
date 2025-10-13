@@ -1,14 +1,15 @@
 """Tests for eviction policies (FIFO, LRU, LFU)."""
 
 import time
+
 import pytest
 
 from reminiscence import ReminiscenceConfig
 from reminiscence.cache import CacheOperations
 from reminiscence.embeddings import create_embedder
-from reminiscence.storage import create_storage_backend
 from reminiscence.eviction import create_eviction_policy
 from reminiscence.metrics import CacheMetrics
+from reminiscence.storage import create_storage_backend
 from reminiscence.types import MultiModalInput
 
 
@@ -30,7 +31,9 @@ class TestFIFOPolicy:
 
         assert fifo_ops.storage.count() == 3
 
-        assert fifo_ops.lookup(MultiModalInput(text="query1"), {"agent": "test"}).is_miss
+        assert fifo_ops.lookup(
+            MultiModalInput(text="query1"), {"agent": "test"}
+        ).is_miss
         assert fifo_ops.lookup(MultiModalInput(text="query2"), {"agent": "test"}).is_hit
         assert fifo_ops.lookup(MultiModalInput(text="query3"), {"agent": "test"}).is_hit
         assert fifo_ops.lookup(MultiModalInput(text="query4"), {"agent": "test"}).is_hit
@@ -39,17 +42,34 @@ class TestFIFOPolicy:
         """FIFO should not care about access frequency or recency."""
         ops = ops_factory("fifo", max_entries=2)
 
-        ops.store(MultiModalInput(text="database optimization techniques"), {"agent": "test"}, "result_db")
+        ops.store(
+            MultiModalInput(text="database optimization techniques"),
+            {"agent": "test"},
+            "result_db",
+        )
         time.sleep(0.01)
-        ops.store(MultiModalInput(text="cloud computing architecture"), {"agent": "test"}, "result_cloud")
+        ops.store(
+            MultiModalInput(text="cloud computing architecture"),
+            {"agent": "test"},
+            "result_cloud",
+        )
 
         for _ in range(10):
-            ops.lookup(MultiModalInput(text="database optimization techniques"), {"agent": "test"})
+            ops.lookup(
+                MultiModalInput(text="database optimization techniques"),
+                {"agent": "test"},
+            )
 
         time.sleep(0.01)
-        ops.store(MultiModalInput(text="microservices design patterns"), {"agent": "test"}, "result_micro")
+        ops.store(
+            MultiModalInput(text="microservices design patterns"),
+            {"agent": "test"},
+            "result_micro",
+        )
 
-        result = ops.lookup(MultiModalInput(text="database optimization techniques"), {"agent": "test"})
+        result = ops.lookup(
+            MultiModalInput(text="database optimization techniques"), {"agent": "test"}
+        )
         assert result.is_miss
 
 
@@ -83,10 +103,16 @@ class TestLRUPolicy:
         """LRU should update access time on cache hits."""
         ops = ops_factory("lru", max_entries=2)
 
-        ops.store(MultiModalInput(text="What is machine learning?"), {"agent": "test"}, "result_ml")
+        ops.store(
+            MultiModalInput(text="What is machine learning?"),
+            {"agent": "test"},
+            "result_ml",
+        )
         time.sleep(0.01)
         ops.store(
-            MultiModalInput(text="Explain quantum computing concepts"), {"agent": "test"}, "result_quantum"
+            MultiModalInput(text="Explain quantum computing concepts"),
+            {"agent": "test"},
+            "result_quantum",
         )
         time.sleep(0.01)
 
@@ -100,15 +126,19 @@ class TestLRUPolicy:
         )
 
         result_quantum = ops.lookup(
-            MultiModalInput(text="Explain quantum computing concepts"), {"agent": "test"}
+            MultiModalInput(text="Explain quantum computing concepts"),
+            {"agent": "test"},
         )
         assert result_quantum.is_miss
 
-        result_ml = ops.lookup(MultiModalInput(text="What is machine learning?"), {"agent": "test"})
+        result_ml = ops.lookup(
+            MultiModalInput(text="What is machine learning?"), {"agent": "test"}
+        )
         assert result_ml.is_hit
 
         result_blockchain = ops.lookup(
-            MultiModalInput(text="How does blockchain technology work?"), {"agent": "test"}
+            MultiModalInput(text="How does blockchain technology work?"),
+            {"agent": "test"},
         )
         assert result_blockchain.is_hit
 
@@ -119,8 +149,12 @@ class TestLFUPolicy:
     def test_lfu_evicts_least_frequently_used(self, lfu_ops):
         """LFU should evict the entry with lowest access count."""
         lfu_ops.store(MultiModalInput(text="rarely_used"), {"agent": "test"}, "result1")
-        lfu_ops.store(MultiModalInput(text="sometimes_used"), {"agent": "test"}, "result2")
-        lfu_ops.store(MultiModalInput(text="frequently_used"), {"agent": "test"}, "result3")
+        lfu_ops.store(
+            MultiModalInput(text="sometimes_used"), {"agent": "test"}, "result2"
+        )
+        lfu_ops.store(
+            MultiModalInput(text="frequently_used"), {"agent": "test"}, "result3"
+        )
 
         lfu_ops.lookup(MultiModalInput(text="rarely_used"), {"agent": "test"})
 
@@ -136,10 +170,18 @@ class TestLFUPolicy:
 
         assert lfu_ops.storage.count() == 3
 
-        assert lfu_ops.lookup(MultiModalInput(text="rarely_used"), {"agent": "test"}).is_miss
-        assert lfu_ops.lookup(MultiModalInput(text="sometimes_used"), {"agent": "test"}).is_hit
-        assert lfu_ops.lookup(MultiModalInput(text="frequently_used"), {"agent": "test"}).is_hit
-        assert lfu_ops.lookup(MultiModalInput(text="new_entry"), {"agent": "test"}).is_hit
+        assert lfu_ops.lookup(
+            MultiModalInput(text="rarely_used"), {"agent": "test"}
+        ).is_miss
+        assert lfu_ops.lookup(
+            MultiModalInput(text="sometimes_used"), {"agent": "test"}
+        ).is_hit
+        assert lfu_ops.lookup(
+            MultiModalInput(text="frequently_used"), {"agent": "test"}
+        ).is_hit
+        assert lfu_ops.lookup(
+            MultiModalInput(text="new_entry"), {"agent": "test"}
+        ).is_hit
 
     def test_lfu_tracks_access_frequency(self, ops_factory):
         """LFU should increment frequency counter on each access."""
@@ -204,9 +246,15 @@ class TestEvictionPolicyComparison:
 
             ops.store(MultiModalInput(text="third"), {"agent": "test"}, "r3")
 
-            has_first = ops.lookup(MultiModalInput(text="first"), {"agent": "test"}).is_hit
-            has_second = ops.lookup(MultiModalInput(text="second"), {"agent": "test"}).is_hit
-            has_third = ops.lookup(MultiModalInput(text="third"), {"agent": "test"}).is_hit
+            has_first = ops.lookup(
+                MultiModalInput(text="first"), {"agent": "test"}
+            ).is_hit
+            has_second = ops.lookup(
+                MultiModalInput(text="second"), {"agent": "test"}
+            ).is_hit
+            has_third = ops.lookup(
+                MultiModalInput(text="third"), {"agent": "test"}
+            ).is_hit
 
             return has_first, has_second, has_third
 
@@ -242,7 +290,9 @@ class TestEvictionEdgeCases:
         ops = ops_factory(policy, max_entries=10)
 
         for i in range(5):
-            ops.store(MultiModalInput(text=f"query{i}"), {"agent": "test"}, f"result{i}")
+            ops.store(
+                MultiModalInput(text=f"query{i}"), {"agent": "test"}, f"result{i}"
+            )
 
         assert ops.storage.count() == 5
 
@@ -306,7 +356,8 @@ class TestCacheOperationsLookup:
         )
 
         result = cache_ops.lookup(
-            MultiModalInput(text="Explain the concept of machine learning"), {"agent": "test"}
+            MultiModalInput(text="Explain the concept of machine learning"),
+            {"agent": "test"},
         )
 
         assert result.is_hit
@@ -326,7 +377,12 @@ class TestCacheOperationsStore:
     def test_store_with_metadata(self, cache_ops):
         """Store with metadata should work."""
         metadata = {"tokens": 100, "cost": 0.001}
-        cache_ops.store(MultiModalInput(text="query"), {"agent": "test"}, "result", metadata=metadata)
+        cache_ops.store(
+            MultiModalInput(text="query"),
+            {"agent": "test"},
+            "result",
+            metadata=metadata,
+        )
 
         assert cache_ops.storage.count() == 1
 
@@ -336,7 +392,9 @@ class TestCacheOperationsStore:
         ops = ops_factory(policy, max_entries=2)
 
         for i in range(3):
-            ops.store(MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}")
+            ops.store(
+                MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}"
+            )
             time.sleep(0.01)
 
         assert ops.storage.count() == 2
@@ -350,11 +408,15 @@ class TestCacheOperationsStore:
 
         large_df = pd.DataFrame({"col1": range(5000), "col2": ["text" * 10] * 5000})
 
-        cache_ops.store(MultiModalInput(text="large query"), {"agent": "test"}, large_df)
+        cache_ops.store(
+            MultiModalInput(text="large query"), {"agent": "test"}, large_df
+        )
 
         assert cache_ops.storage.count() == 1
 
-        result = cache_ops.lookup(MultiModalInput(text="large query"), {"agent": "test"})
+        result = cache_ops.lookup(
+            MultiModalInput(text="large query"), {"agent": "test"}
+        )
         assert result.is_hit
         assert isinstance(result.result, pd.DataFrame)
         assert len(result.result) == 5000

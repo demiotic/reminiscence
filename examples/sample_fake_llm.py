@@ -5,10 +5,10 @@ Demonstrates semantic caching without external dependencies.
 Uses a simulated LLM to show cache behavior.
 """
 
-import time
 import random
-from reminiscence import Reminiscence, ReminiscenceConfig
+import time
 
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 # ==============================================================================
 # Fake LLM Simulation
@@ -135,9 +135,8 @@ def demo():
         print("\n💰 LLM Calls:")
         print(f"   Total calls:       {llm.call_count}")
         print(f"   Calls saved:       {len(queries) - llm.call_count}")
-        print(
-            f"   Savings:           {((len(queries) - llm.call_count) / len(queries) * 100):.1f}%"
-        )
+        savings_pct = (len(queries) - llm.call_count) / len(queries) * 100
+        print(f"   Savings:           {savings_pct:.1f}%")
 
         # Time savings
         time_without_cache = len(queries) * 2.0

@@ -1,0 +1,360 @@
+syntax = "proto3";
+
+package reminiscence.v1;
+
+// Reminiscence gRPC Service - Control Plane API (v0.6.0)
+//
+// This service provides remote access to semantic cache operations.
+// Designed as the foundation for the dual-plane architecture in v1.0.
+service ReminiscenceService {
+  // Core Cache Operations
+  rpc Lookup(LookupRequest) returns (LookupResponse);
+  rpc LookupBatch(LookupBatchRequest) returns (LookupBatchResponse);
+  rpc Store(StoreRequest) returns (StoreResponse);
+  rpc StoreBatch(StoreBatchRequest) returns (StoreBatchResponse);
+  rpc CheckAvailability(CheckAvailabilityRequest) returns (CheckAvailabilityResponse);
+
+  // Invalidation & Cleanup
+  rpc Invalidate(InvalidateRequest) returns (InvalidateResponse);
+  rpc CleanupExpired(CleanupExpiredRequest) returns (CleanupExpiredResponse);
+  rpc Clear(ClearRequest) returns (ClearResponse);
+
+  // Index & Stats
+  rpc CreateIndex(CreateIndexRequest) returns (CreateIndexResponse);
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  rpc GetIndexStats(GetIndexStatsRequest) returns (GetIndexStatsResponse);
+
+  // Database Inspection
+  rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+
+  // Arrow Flight Data Plane
+  rpc GetFlightTicket(FlightTicketRequest) returns (FlightTicketResponse);
+
+  // Health & Capabilities
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum QueryMode {
+  QUERY_MODE_UNSPECIFIED = 0;
+  QUERY_MODE_AUTO = 1;      // Try exact match first, fallback to semantic
+  QUERY_MODE_SEMANTIC = 2;  // Semantic similarity search only
+  QUERY_MODE_EXACT = 3;     // Exact text matching only
+}
+
+enum EvictionPolicy {
+  EVICTION_POLICY_UNSPECIFIED = 0;
+  EVICTION_POLICY_FIFO = 1;  // First In First Out
+  EVICTION_POLICY_LRU = 2;   // Least Recently Used
+  EVICTION_POLICY_LFU = 3;   // Least Frequently Used
+}
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+// Multimodal input supporting text, image, video, and audio
+message MultiModalInput {
+  optional string text = 1;
+  optional bytes image = 2;
+  optional bytes video = 3;
+  optional bytes audio = 4;
+  map<string, string> metadata = 5;  // Optional metadata about the input
+}
+
+// Context is a map of key-value pairs for exact matching
+message Context {
+  map<string, string> values = 1;
+}
+
+// Serialized result stored as JSON bytes
+message SerializedResult {
+  bytes json_data = 1;
+}
+
+// =============================================================================
+// Lookup Operations
+// =============================================================================
+
+message LookupRequest {
+  MultiModalInput query = 1;
+  optional Context context = 2;
+  optional float similarity_threshold = 3;  // Override default threshold
+  QueryMode mode = 4;                       // Default: AUTO
+  bool track_metrics = 5;                   // Default: true
+}
+
+message LookupResponse {
+  bool hit = 1;
+  optional SerializedResult result = 2;
+  optional float similarity = 3;
+  optional string matched_query = 4;
+  optional double age_seconds = 5;
+  optional string entry_id = 6;
+  optional Context context = 7;
+  optional double ttl_remaining = 8;
+}
+
+message LookupBatchRequest {
+  repeated LookupRequest requests = 1;
+  bool track_metrics = 2;  // Default: true
+}
+
+message LookupBatchResponse {
+  repeated LookupResponse responses = 1;
+}
+
+// =============================================================================
+// Store Operations
+// =============================================================================
+
+message StoreRequest {
+  MultiModalInput query = 1;
+  Context context = 2;
+  SerializedResult result = 3;
+  map<string, string> metadata = 4;  // Empty map if no metadata
+  optional int32 ttl_seconds = 5;
+  optional float context_threshold = 6;
+  bool allow_errors = 7;  // Default: false
+  QueryMode mode = 8;     // Default: AUTO
+}
+
+message StoreResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
+message StoreBatchRequest {
+  repeated StoreRequest requests = 1;
+  bool allow_errors = 2;  // Default: false
+  QueryMode mode = 3;     // Default: AUTO
+}
+
+message StoreBatchResponse {
+  repeated StoreResponse responses = 1;
+}
+
+// =============================================================================
+// Availability Check
+// =============================================================================
+
+message CheckAvailabilityRequest {
+  MultiModalInput query = 1;
+  Context context = 2;
+  optional float similarity_threshold = 3;
+  QueryMode mode = 4;  // Default: AUTO
+}
+
+message CheckAvailabilityResponse {
+  bool available = 1;
+  optional double age_seconds = 2;
+  optional double ttl_remaining_seconds = 3;
+  optional float similarity = 4;
+  bool is_fresh = 5;  // < 50% of TTL consumed
+}
+
+// =============================================================================
+// Invalidation & Cleanup
+// =============================================================================
+
+message InvalidateRequest {
+  optional MultiModalInput query = 1;
+  optional Context context = 2;
+  optional double older_than_seconds = 3;
+}
+
+message InvalidateResponse {
+  int32 invalidated_count = 1;
+}
+
+message CleanupExpiredRequest {
+  // No parameters needed
+}
+
+message CleanupExpiredResponse {
+  int32 deleted_count = 1;
+}
+
+message ClearRequest {
+  // No parameters needed
+}
+
+message ClearResponse {
+  bool success = 1;
+}
+
+// =============================================================================
+// Index Operations
+// =============================================================================
+
+message CreateIndexRequest {
+  int32 num_partitions = 1;    // Default: 256
+  optional int32 num_subvectors = 2;  // Default: embedding_dim / 4
+}
+
+message CreateIndexResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
+message GetIndexStatsRequest {
+  // No parameters needed
+}
+
+message GetIndexStatsResponse {
+  bool has_index = 1;
+  int32 total_entries = 2;
+  string note = 3;
+}
+
+// =============================================================================
+// Database Inspection
+// =============================================================================
+
+enum SortField {
+  SORT_FIELD_UNSPECIFIED = 0;
+  SORT_FIELD_CREATED_AT = 1;
+  SORT_FIELD_LAST_ACCESSED = 2;
+  SORT_FIELD_ACCESS_COUNT = 3;
+  SORT_FIELD_SIMILARITY = 4;  // Only for search results
+}
+
+message ListEntriesRequest {
+  optional int32 limit = 1;            // Max entries to return (default: 100, max: 1000)
+  optional int32 offset = 2;           // Offset for pagination (default: 0)
+  optional Context context_filter = 3;  // Filter by context (exact match)
+  optional string query_filter = 4;     // Filter by query text (substring match)
+  SortField sort_by = 5;               // Sort field (default: CREATED_AT)
+  bool sort_descending = 6;            // Sort order (default: true)
+  bool include_embeddings = 7;         // Include embedding vectors (default: false)
+  bool include_results = 8;            // Include cached results (default: true)
+}
+
+message CacheEntry {
+  string entry_id = 1;
+  MultiModalInput query = 2;
+  Context context = 3;
+  optional SerializedResult result = 4;
+  map<string, string> metadata = 5;
+  double created_at = 6;          // Unix timestamp
+  double last_accessed_at = 7;    // Unix timestamp
+  int32 access_count = 8;
+  optional int32 ttl_seconds = 9;
+  optional double expires_at = 10;  // Unix timestamp
+  optional bytes embedding = 11;   // Raw embedding vector (only if include_embeddings=true)
+  int32 embedding_dim = 12;
+  optional string matched_context_key = 13;  // For debugging context matching
+}
+
+message ListEntriesResponse {
+  repeated CacheEntry entries = 1;
+  int32 total_count = 2;  // Total matching entries (not just current page)
+  bool has_more = 3;      // Whether more entries available
+  int32 returned_count = 4;  // Number of entries in this response
+}
+
+// =============================================================================
+// Stats & Health
+// =============================================================================
+
+message GetStatsRequest {
+  // No parameters needed
+}
+
+message GetStatsResponse {
+  int32 cache_entries = 1;
+  int32 total_entries = 2;
+  int32 max_entries = 3;
+  string eviction_policy = 4;
+  float threshold = 5;
+  int32 embedding_dim = 6;
+  string model = 7;
+  optional int32 ttl_seconds = 8;
+  string storage = 9;
+  bool index_created = 10;
+
+  // Metrics (if enabled)
+  optional int64 hits = 11;
+  optional int64 misses = 12;
+  optional float hit_rate = 13;
+  optional double avg_lookup_latency_ms = 14;
+  optional double avg_store_latency_ms = 15;
+  optional int64 lookup_errors = 16;
+  optional int64 store_errors = 17;
+  optional int64 evictions = 18;
+
+  // Scheduler stats (if running)
+  map<string, SchedulerStats> schedulers = 19;
+}
+
+message SchedulerStats {
+  bool running = 1;
+  int32 total_runs = 2;
+  int32 errors = 3;
+  optional double last_run_timestamp = 4;
+  optional double next_run_timestamp = 5;
+}
+
+message HealthCheckRequest {
+  // No parameters needed
+}
+
+message HealthCheckResponse {
+  string status = 1;  // "healthy" or "unhealthy"
+  map<string, ComponentHealth> checks = 2;
+  HealthMetrics metrics = 3;
+  int64 timestamp = 4;
+}
+
+message ComponentHealth {
+  bool ok = 1;
+  optional string error = 2;
+  optional string details = 3;
+}
+
+message HealthMetrics {
+  int32 total_entries = 1;
+  ErrorCounts recent_errors = 2;
+}
+
+message ErrorCounts {
+  int64 lookup = 1;
+  int64 store = 2;
+}
+
+// =============================================================================
+// Arrow Flight Data Plane
+// =============================================================================
+
+message FlightTicketRequest {
+  string operation = 1;  // "list_entries", "export_all", etc.
+
+  // Operation-specific parameters (JSON-encoded)
+  optional string parameters = 2;  // e.g., '{"limit": 1000, "offset": 0}'
+}
+
+message FlightTicketResponse {
+  bytes ticket = 1;  // Flight ticket to use with Flight client
+  string flight_endpoint = 2;  // Where to connect (e.g., "grpc://localhost:8081")
+  int64 estimated_rows = 3;  // Estimated number of rows (-1 if unknown)
+  int64 estimated_bytes = 4;  // Estimated data size (-1 if unknown)
+}
+
+// =============================================================================
+// Capabilities
+// =============================================================================
+
+message GetCapabilitiesRequest {
+  // No parameters needed
+}
+
+message GetCapabilitiesResponse {
+  string version = 1;
+  bool flight_enabled = 2;  // True when Flight server is running
+  optional string flight_endpoint = 3;  // e.g., "grpc://cache.example.com:8081"
+  repeated string supported_features = 4;
+}

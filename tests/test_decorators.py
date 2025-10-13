@@ -1,11 +1,12 @@
 """Tests for reminiscence.decorators."""
 
 import pytest
+
 from reminiscence import (
-    create_cached_decorator,
-    ReminiscenceDecorator,
     Reminiscence,
     ReminiscenceConfig,
+    ReminiscenceDecorator,
+    create_cached_decorator,
 )
 from reminiscence.types import QueryMode
 

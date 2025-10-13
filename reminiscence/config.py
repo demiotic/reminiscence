@@ -6,7 +6,14 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
+
+try:
+    import yaml
+
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
 
 
 @dataclass
@@ -38,12 +45,24 @@ class ReminiscenceConfig:
     - REMINISCENCE_OTEL_EXPORT_INTERVAL_MS: Export interval in milliseconds
     - REMINISCENCE_ENCRYPTION_ENABLED: Enable encryption (true/false)
     - REMINISCENCE_ENCRYPTION_KEY: Encryption key string, ARN, URI, or file path
-    - REMINISCENCE_ENCRYPTION_BACKEND: Backend (age/aws-kms/gcp-kms/azure-keyvault/vault)
+    - REMINISCENCE_ENCRYPTION_BACKEND: Backend
+      (age/aws-kms/gcp-kms/azure-keyvault/vault)
     - REMINISCENCE_ENCRYPTION_MAX_WORKERS: Max threads for batch encryption
-    - REMINISCENCE_WARM_UP_EMBEDDER: Pre-load embedder model (true/false, default: true)
-    - REMINISCENCE_COMPRESSION_ENABLED: Enable result compression (true/false, default: false)
-    - REMINISCENCE_COMPRESSION_ALGORITHM: Algorithm (zstd/gzip/none, default: zstd)
-    - REMINISCENCE_COMPRESSION_LEVEL: Compression level (1-22 for zstd, 1-9 for gzip, default: 3)
+    - REMINISCENCE_WARM_UP_EMBEDDER: Pre-load embedder model
+      (true/false, default: true)
+    - REMINISCENCE_COMPRESSION_ENABLED: Enable result compression
+      (true/false, default: false)
+    - REMINISCENCE_COMPRESSION_ALGORITHM: Algorithm
+      (zstd/gzip/none, default: zstd)
+    - REMINISCENCE_COMPRESSION_LEVEL: Compression level
+      (1-22 for zstd, 1-9 for gzip, default: 3)
+    - REMINISCENCE_GRPC_ENABLED: Enable gRPC server on init (true/false, default: false)
+    - REMINISCENCE_GRPC_PORT: gRPC server port (default: 8080)
+    - REMINISCENCE_GRPC_HOST: gRPC server host (default: 127.0.0.1, localhost only)
+    - REMINISCENCE_GRPC_MAX_WORKERS: Max gRPC worker threads (default: 10)
+    - REMINISCENCE_FLIGHT_ENABLED: Enable Arrow Flight data plane (true/false, default: true)
+    - REMINISCENCE_FLIGHT_PORT: Flight server port (default: 8081)
+    - REMINISCENCE_FLIGHT_HOST: Flight server host (default: 127.0.0.1, localhost only)
     """
 
     model_name: Optional[str] = None
@@ -88,6 +107,16 @@ class ReminiscenceConfig:
     compression_enabled: bool = False
     compression_algorithm: str = "zstd"
     compression_level: int = 3
+
+    grpc_enabled: bool = False
+    grpc_port: int = 8080
+    grpc_host: str = "127.0.0.1"
+    grpc_max_workers: int = 10
+
+    # Arrow Flight data plane settings (enabled by default, localhost only)
+    flight_enabled: bool = True
+    flight_port: int = 8081
+    flight_host: str = "127.0.0.1"
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization.
@@ -374,4 +403,173 @@ class ReminiscenceConfig:
                     str(defaults.compression_level),
                 )
             ),
+            grpc_enabled=parse_bool(
+                os.getenv(
+                    "REMINISCENCE_GRPC_ENABLED",
+                    str(defaults.grpc_enabled).lower(),
+                )
+            ),
+            grpc_port=int(os.getenv("REMINISCENCE_GRPC_PORT", str(defaults.grpc_port))),
+            grpc_host=os.getenv("REMINISCENCE_GRPC_HOST", defaults.grpc_host),
+            grpc_max_workers=int(
+                os.getenv(
+                    "REMINISCENCE_GRPC_MAX_WORKERS",
+                    str(defaults.grpc_max_workers),
+                )
+            ),
+            flight_enabled=parse_bool(
+                os.getenv(
+                    "REMINISCENCE_FLIGHT_ENABLED",
+                    str(defaults.flight_enabled).lower(),
+                )
+            ),
+            flight_port=int(
+                os.getenv("REMINISCENCE_FLIGHT_PORT", str(defaults.flight_port))
+            ),
+            flight_host=os.getenv("REMINISCENCE_FLIGHT_HOST", defaults.flight_host),
         )
+
+    @classmethod
+    def load_from_yaml(
+        cls,
+        yaml_path: Union[str, Path],
+        allow_env_override: bool = True,
+    ) -> ReminiscenceConfig:
+        """Load configuration from YAML file with optional env overrides.
+
+        Args:
+            yaml_path: Path to YAML configuration file.
+            allow_env_override: If True, environment variables override YAML values.
+
+        Returns:
+            ReminiscenceConfig instance populated from YAML and environment.
+
+        Raises:
+            ImportError: If PyYAML is not installed.
+            FileNotFoundError: If YAML file doesn't exist.
+            ValueError: If YAML is invalid or contains unknown fields.
+
+        Example:
+            >>> config = ReminiscenceConfig.load_from_yaml("reminiscence.yaml")
+            >>> cache = Reminiscence(config)
+
+            With environment override:
+            >>> # YAML has port=8080, but REMINISCENCE_GRPC_PORT=9090 overrides it
+            >>> config = ReminiscenceConfig.load_from_yaml(
+            ...     "reminiscence.yaml",
+            ...     allow_env_override=True
+            ... )
+        """
+        if not YAML_AVAILABLE:
+            raise ImportError(
+                "PyYAML is not installed. Install with: pip install pyyaml"
+            )
+
+        yaml_path = Path(yaml_path)
+        if not yaml_path.exists():
+            raise FileNotFoundError(f"YAML config file not found: {yaml_path}")
+
+        with open(yaml_path, "r") as f:
+            yaml_data = yaml.safe_load(f)
+
+        if not yaml_data:
+            # Empty YAML file - use defaults
+            return cls.load() if allow_env_override else cls()
+
+        # Flatten nested structure to match dataclass fields
+        flattened = cls._flatten_yaml(yaml_data)
+
+        # Apply environment variable overrides if enabled
+        if allow_env_override:
+            flattened = cls._apply_env_overrides(flattened)
+
+        # Build config with flattened values
+        return cls(**flattened)
+
+    @staticmethod
+    def _flatten_yaml(yaml_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Flatten nested YAML structure to match dataclass fields.
+
+        Supports both flat and nested structures:
+        - Flat: {grpc_enabled: true, grpc_port: 8080}
+        - Nested: {grpc: {enabled: true, port: 8080}}
+
+        Args:
+            yaml_data: Raw YAML data dictionary.
+
+        Returns:
+            Flattened dictionary with snake_case keys matching dataclass fields.
+        """
+        flattened: Dict[str, Any] = {}
+
+        # Define nested structure mappings
+        nested_prefixes = {
+            "grpc": "grpc_",
+            "flight": "flight_",
+            "embedding": "embedding_",
+            "otel": "otel_",
+            "encryption": "encryption_",
+            "compression": "compression_",
+            "index": "index_",
+        }
+
+        for key, value in yaml_data.items():
+            if isinstance(value, dict) and key in nested_prefixes:
+                # Handle nested structure (e.g., grpc: {enabled: true, port: 8080})
+                prefix = nested_prefixes[key]
+                for nested_key, nested_value in value.items():
+                    flattened_key = f"{prefix}{nested_key}"
+                    flattened[flattened_key] = nested_value
+            else:
+                # Handle flat structure
+                flattened[key] = value
+
+        return flattened
+
+    @staticmethod
+    def _apply_env_overrides(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply environment variable overrides to config dictionary.
+
+        Environment variables follow the pattern: REMINISCENCE_<FIELD_NAME>
+
+        Args:
+            config_dict: Configuration dictionary from YAML.
+
+        Returns:
+            Updated dictionary with environment overrides applied.
+        """
+
+        # Parse environment variables
+        def parse_bool(value: str) -> bool:
+            return value.lower() in ("true", "1", "yes", "on")
+
+        def parse_value(key: str, yaml_value: Any) -> Any:
+            """Parse environment variable value based on YAML type."""
+            env_key = f"REMINISCENCE_{key.upper()}"
+            env_value = os.getenv(env_key)
+
+            if env_value is None:
+                return yaml_value
+
+            # Parse based on expected type from YAML value
+            if isinstance(yaml_value, bool):
+                return parse_bool(env_value)
+            elif isinstance(yaml_value, int):
+                return None if env_value.lower() == "none" else int(env_value)
+            elif isinstance(yaml_value, float):
+                return float(env_value)
+            elif isinstance(yaml_value, dict):
+                # For dict types like context_thresholds
+                try:
+                    return json.loads(env_value)
+                except json.JSONDecodeError:
+                    return yaml_value
+            else:
+                # String or None
+                return None if env_value.lower() == "none" else env_value
+
+        overridden = config_dict.copy()
+        for key, value in config_dict.items():
+            overridden[key] = parse_value(key, value)
+
+        return overridden

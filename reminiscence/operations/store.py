@@ -174,7 +174,7 @@ class StorageOperations:
                 context=context,
                 embedding=embedding,
                 result=result,
-                timestamp=int(time.time()),
+                timestamp=int(time.time() * 1000),  # Milliseconds since epoch
                 metadata=metadata_dict,
                 ttl_seconds=ttl_seconds,
                 context_threshold=context_threshold,
@@ -191,8 +191,8 @@ class StorageOperations:
             self.eviction.on_insert(entry_id)
 
             # Relaxed eviction: Check if we need to evict AFTER adding
-            # This prevents race conditions where multiple threads check count simultaneously
-            # We allow 5% overflow before evicting (soft limit instead of hard limit)
+            # This prevents race conditions where multiple threads check count
+            # simultaneously. We allow 5% overflow (soft limit).
             if self.config.max_entries:
                 current_count = self.storage.count()
                 eviction_threshold = int(self.config.max_entries * 1.05)
@@ -416,7 +416,7 @@ class StorageOperations:
                 context=valid_contexts[i],
                 embedding=embeddings[i],
                 result=valid_results[i],
-                timestamp=int(time.time()),
+                timestamp=int(time.time() * 1000),  # Milliseconds since epoch
                 metadata=meta,
                 ttl_seconds=valid_ttls[i],
                 context_threshold=valid_thresholds[i],

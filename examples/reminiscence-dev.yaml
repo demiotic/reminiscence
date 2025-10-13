@@ -1,0 +1,12 @@
+# Development Configuration
+# Minimal setup for local development
+
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 10
+
+db_uri: memory://
+max_entries: 1000
+log_level: DEBUG
+enable_metrics: true

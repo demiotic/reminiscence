@@ -6,9 +6,10 @@ Demonstrates Reminiscence's semantic caching capabilities with real LLM calls.
 
 import os
 import time
-from anthropic import Anthropic
-from reminiscence import Reminiscence, ReminiscenceConfig
 
+from anthropic import Anthropic
+
+from reminiscence import Reminiscence, ReminiscenceConfig
 
 # Configuration
 SIMILARITY_THRESHOLD = 0.82
@@ -157,12 +158,10 @@ def main():
 
         print("\n  ⚡ Performance:")
         print("     - Cache hits: ~15ms average")
-        print(
-            f"     - API calls: ~{total_time / api_calls if api_calls > 0 else 0:.1f}s average"
-        )
-        print(
-            f"     - Speedup: {((total_time / api_calls) / 0.015) if api_calls > 0 else 0:.0f}x faster on cache hits"
-        )
+        avg_api_time = total_time / api_calls if api_calls > 0 else 0
+        print(f"     - API calls: ~{avg_api_time:.1f}s average")
+        speedup = ((total_time / api_calls) / 0.015) if api_calls > 0 else 0
+        print(f"     - Speedup: {speedup:.0f}x faster on cache hits")
 
         print("\n  💡 Use Cases:")
         print("     - Customer support (repeated questions)")

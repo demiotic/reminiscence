@@ -1,13 +1,14 @@
 """Tests for storage backends."""
 
-import pytest
 import tempfile
 import time
 from pathlib import Path
 
-from reminiscence.storage import create_storage_backend, LanceDBBackend
-from reminiscence.types import CacheEntry, MultiModalInput
+import pytest
+
 from reminiscence import ReminiscenceConfig
+from reminiscence.storage import LanceDBBackend, create_storage_backend
+from reminiscence.types import CacheEntry, MultiModalInput
 
 
 class TestStorageFactory:
@@ -36,8 +37,8 @@ class TestLanceDBBackend:
 
     def test_storage_singleton_per_uri(self):
         """Test that storage backend is singleton per db_uri."""
-        from reminiscence.storage.lancedb import LanceDBBackend
         from reminiscence.config import ReminiscenceConfig
+        from reminiscence.storage.lancedb import LanceDBBackend
 
         config1 = ReminiscenceConfig(db_uri="memory://shared")
         config2 = ReminiscenceConfig(db_uri="memory://shared")
@@ -420,8 +421,8 @@ class TestLanceDBBackend:
     def test_serialization_dict_with_numpy_and_dataframe(self):
         """Should serialize dict containing both NumPy arrays and DataFrames."""
         try:
-            import pandas as pd
             import numpy as np
+            import pandas as pd
         except ImportError:
             pytest.skip("Pandas or NumPy not installed")
 
@@ -500,8 +501,8 @@ class TestLanceDBBackend:
     def test_serialization_mixed_list_with_multiple_types(self):
         """Should serialize list with mixed types (primitives, DataFrames, arrays)."""
         try:
-            import pandas as pd
             import numpy as np
+            import pandas as pd
         except ImportError:
             pytest.skip("Pandas or NumPy not installed")
 
@@ -764,6 +765,7 @@ class TestCompressedStorage:
         pytest.importorskip("pandas")
 
         import pandas as pd
+
         from reminiscence import ReminiscenceConfig
         from reminiscence.storage.lancedb import LanceDBBackend
 
@@ -913,8 +915,8 @@ class TestCompressedStorage:
         pytest.importorskip("zstandard")
 
         from reminiscence import ReminiscenceConfig
-        from reminiscence.storage.lancedb import LanceDBBackend
         from reminiscence.metrics import CacheMetrics
+        from reminiscence.storage.lancedb import LanceDBBackend
 
         config = ReminiscenceConfig(
             db_uri="memory://",

@@ -334,7 +334,8 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             output = func(*args, **kwargs)
                             outputs = [output]
                         else:
-                            # Call with only missing queries (original format, not MultiModalInput)
+                            # Call with only missing queries
+                            # (original format, not MultiModalInput)
                             missing_queries = [queries[i] for i in missing_indices]
                             modified_kwargs = kwargs.copy()
                             modified_kwargs[query] = missing_queries
@@ -371,7 +372,9 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                             )
                             for i in range(len(missing_multimodal))
                         ]
-                        reminiscence.store_batch(store_requests, allow_errors=allow_errors)
+                        reminiscence.store_batch(
+                            store_requests, allow_errors=allow_errors
+                        )
                         store_ms = (__import__("time").time() - store_start) * 1000
 
                         logger.debug(
@@ -620,7 +623,9 @@ def create_cached_decorator(reminiscence: Reminiscence) -> Callable:
                                 )
                                 for i in range(len(missing_multimodal))
                             ]
-                            reminiscence.store_batch(store_requests, allow_errors=allow_errors)
+                            reminiscence.store_batch(
+                                store_requests, allow_errors=allow_errors
+                            )
 
                             if is_single:
                                 return outputs[0]

@@ -1,7 +1,9 @@
 """Tests for background cleanup scheduler."""
 
 import time
+
 import pytest
+
 from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.scheduler import CleanupScheduler, SchedulerManager
 from reminiscence.types import MultiModalInput
@@ -417,7 +419,9 @@ class TestReminiscenceSchedulerIntegration:
 
         # Store entries
         for i in range(10):
-            cache.store(MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}")
+            cache.store(
+                MultiModalInput(text=f"query {i}"), {"agent": "test"}, f"result {i}"
+            )
 
         assert cache.backend.count() == 10
 

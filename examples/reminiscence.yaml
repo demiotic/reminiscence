@@ -1,0 +1,62 @@
+# Reminiscence Configuration File
+# Complete example with all available options
+
+# gRPC Server Configuration
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 50
+
+# Cache Settings
+db_uri: ./cache.db
+table_name: semantic_cache
+max_entries: 100000
+eviction_policy: lru  # Options: fifo, lru, lfu
+ttl_seconds: 3600  # 1 hour
+
+# Similarity Matching
+similarity_threshold: 0.82
+context_thresholds:
+  "model:gpt-4": 0.85
+  "agent:sql": 0.95
+
+# Embedding Model
+model_name: paraphrase-multilingual-MiniLM-L12-v2
+embedding:
+  backend: fastembed
+  batch_size: 32
+warm_up_embedder: true
+
+# Vector Index
+auto_create_index: true
+index:
+  threshold_entries: 256
+  num_partitions: 256
+
+# Observability
+enable_metrics: true
+log_level: INFO
+json_logs: true
+
+# OpenTelemetry
+otel:
+  enabled: true
+  endpoint: http://localhost:4318/v1/metrics
+  service_name: reminiscence
+  export_interval_ms: 60000
+
+# Security
+encryption:
+  enabled: false
+  # key: age1...  # Uncomment to enable
+  # backend: age  # Options: age, aws-kms, gcp-kms, azure-keyvault, vault
+  max_workers: 4
+
+compression:
+  enabled: false
+  algorithm: zstd  # Options: zstd, gzip
+  level: 3  # 1-22 for zstd, 1-9 for gzip
+
+# Background Tasks
+cleanup_interval_seconds: 3600  # 1 hour
+cleanup_initial_delay: 60  # 1 minute

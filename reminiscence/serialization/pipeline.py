@@ -144,8 +144,9 @@ class TransformationPipeline:
             raise TypeError(f"Expected bytes, got {type(data).__name__}")
 
         if not isinstance(applied_transformations, list):
+            type_name = type(applied_transformations).__name__
             raise ValueError(
-                f"applied_transformations must be a list, got {type(applied_transformations).__name__}"
+                f"applied_transformations must be a list, got {type_name}"
             )
 
         current = data

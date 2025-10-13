@@ -114,7 +114,8 @@ class DeletionMixin:
             filter_expr: SQL-like filter expression.
 
         Raises:
-            NotImplementedError: If called on memory:// storage (use delete_by_condition).
+            NotImplementedError: If called on memory:// storage
+                (use delete_by_condition).
         """
         delete_start = time.perf_counter()
         logger.debug("delete_by_filter_start", filter_expr=filter_expr)
@@ -159,10 +160,12 @@ class DeletionMixin:
         """Delete by custom condition (for memory mode).
 
         Args:
-            condition_func: Function that takes an Arrow table and returns a boolean mask.
+            condition_func: Function that takes an Arrow table and returns
+                a boolean mask.
 
         Raises:
-            NotImplementedError: If called on persistent storage (use delete_by_filter).
+            NotImplementedError: If called on persistent storage
+                (use delete_by_filter).
         """
         delete_start = time.perf_counter()
         logger.debug("delete_by_condition_start")

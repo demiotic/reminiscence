@@ -24,9 +24,9 @@ except ImportError:
 
 import pyarrow as pa
 
+from ..utils.logging import get_logger
 from .base import Serializer
 from .pipeline import TransformationPipeline
-from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 

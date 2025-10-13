@@ -41,9 +41,11 @@ class Reminiscence:
 
     Main API:
       - lookup: Search for existing result
-      - lookup_batch: Search for multiple results (optimized, uses LookupRequest objects)
+      - lookup_batch: Search for multiple results (optimized,
+          uses LookupRequest objects)
       - store: Save new result
-      - store_batch: Save multiple results (optimized, uses StoreRequest objects)
+      - store_batch: Save multiple results (optimized,
+          uses StoreRequest objects)
       - check_availability: Verify availability without retrieving data
       - invalidate: Mark entries as invalid
       - cleanup_expired: Remove expired entries
@@ -53,6 +55,10 @@ class Reminiscence:
       - cached: Decorator for automatic caching
       - start_scheduler: Start background cleanup and metrics export
       - stop_scheduler: Stop background schedulers
+      - start_grpc_server: Start gRPC server (control plane, network access)
+      - stop_grpc_server: Stop gRPC server
+      - start_flight_server: Start Arrow Flight server (data plane, high-throughput)
+      - stop_flight_server: Stop Arrow Flight server
 
     Example:
         >>> from reminiscence import Reminiscence, QueryMode
@@ -175,7 +181,9 @@ class Reminiscence:
                 )
 
         self.backend = create_storage_backend(self.config, self.embedder.embedding_dim)
-        self.eviction = create_eviction_policy(EvictionPolicy(self.config.eviction_policy))
+        self.eviction = create_eviction_policy(
+            EvictionPolicy(self.config.eviction_policy)
+        )
         self.metrics = CacheMetrics() if self.config.enable_metrics else None
 
         # OpenTelemetry exporter
@@ -214,6 +222,10 @@ class Reminiscence:
         )
 
         self.scheduler_manager: Optional[SchedulerManager] = None
+        # grpc.Server (avoid import if not needed)
+        self.grpc_server: Optional[Any] = None
+        # Arrow Flight server (avoid import if not needed)
+        self.flight_server: Optional[Any] = None
 
         logger.info(
             "reminiscence_ready",
@@ -222,6 +234,40 @@ class Reminiscence:
             embedding_dim=self.embedder.embedding_dim,
             threshold=self.config.similarity_threshold,
         )
+
+        # Auto-start Flight server if enabled in config (must start before gRPC)
+        if self.config.flight_enabled:
+            try:
+                self.start_flight_server(
+                    port=self.config.flight_port,
+                    host=self.config.flight_host,
+                    blocking=False,
+                )
+            except Exception as e:
+                logger.error(
+                    "flight_server_auto_start_failed",
+                    error=str(e),
+                    port=self.config.flight_port,
+                    exc_info=True,
+                )
+
+        # Auto-start gRPC server if enabled in config (starts after Flight for detection)
+        if self.config.grpc_enabled:
+            try:
+                self.start_grpc_server(
+                    port=self.config.grpc_port,
+                    host=self.config.grpc_host,
+                    max_workers=self.config.grpc_max_workers,
+                    blocking=False,
+                )
+            except Exception as e:
+                logger.error(
+                    "grpc_server_auto_start_failed",
+                    error=str(e),
+                    port=self.config.grpc_port,
+                    host=self.config.grpc_host,
+                    exc_info=True,
+                )
 
     # ========================================================================
     # Core Cache Operations
@@ -279,7 +325,8 @@ class Reminiscence:
         """Lookup multiple queries in batch (optimized for embeddings).
 
         Args:
-            requests: List of LookupRequest objects with query, context, threshold, mode.
+            requests: List of LookupRequest objects with query, context,
+                threshold, mode.
             track_metrics: Whether to track metrics for these lookups (default: True).
 
         Returns:
@@ -323,7 +370,8 @@ class Reminiscence:
             context: Context dict (will be matched exactly in future lookups).
             result: Result to cache (supports JSON, Arrow, Pandas, Polars).
             metadata: Optional metadata to store with entry.
-            ttl_seconds: Time-to-live in seconds (overrides global, None = no expiration).
+            ttl_seconds: Time-to-live in seconds (overrides global,
+                None = no expiration).
             context_threshold: Override similarity threshold for this entry.
             allow_errors: If True, store error results (default: False).
             mode: Query matching strategy (default: QueryMode.AUTO).
@@ -361,7 +409,8 @@ class Reminiscence:
         embeddings are generated in batch.
 
         Args:
-            requests: List of StoreRequest objects with query, context, result, metadata, ttl.
+            requests: List of StoreRequest objects with query, context, result,
+                metadata, ttl.
             allow_errors: If True, store error results (default: False).
             mode: Query matching strategy (default: QueryMode.AUTO).
 
@@ -472,9 +521,12 @@ class Reminiscence:
 
         Args:
             interval_seconds: Interval for cache cleanup (default: 3600).
-            initial_delay_seconds: Initial delay before first cleanup run (default: 60).
-            metrics_export_interval_seconds: Interval for metrics export (default: from config).
-            metrics_initial_delay_seconds: Initial delay before first metrics export (default: 0).
+            initial_delay_seconds: Initial delay before first cleanup run
+                (default: 60).
+            metrics_export_interval_seconds: Interval for metrics export
+                (default: from config).
+            metrics_initial_delay_seconds: Initial delay before first metrics
+                export (default: 0).
 
         Example:
             >>> cache = Reminiscence()
@@ -601,6 +653,174 @@ class Reminiscence:
         return self.scheduler_manager.get_stats()
 
     # ========================================================================
+    # gRPC Server Management
+    # ========================================================================
+
+    def start_grpc_server(
+        self,
+        port: int = 8080,
+        host: str = "127.0.0.1",
+        max_workers: int = 10,
+        blocking: bool = False,
+    ) -> None:
+        """Start gRPC server to expose cache over network.
+
+        Args:
+            port: Port to listen on (default: 8080).
+            host: Host to bind to (default: 127.0.0.1, localhost only).
+            max_workers: Maximum number of worker threads (default: 10).
+            blocking: If True, blocks until server stops
+                (default: False, runs in background).
+
+        Example:
+            >>> cache = Reminiscence()
+            >>> cache.start_grpc_server(port=8080)  # Non-blocking, localhost only
+            >>> # ... cache now accessible via gRPC on localhost:8080 ...
+            >>> cache.stop_grpc_server()
+            >>>
+            >>> # Or blocking mode:
+            >>> cache.start_grpc_server(port=8080, blocking=True)  # Blocks until Ctrl+C
+        """
+        if self.grpc_server is not None:
+            logger.warning("grpc_server_already_running", port=port)
+            return
+
+        try:
+            from .api.server import create_server
+
+            self.grpc_server = create_server(
+                cache=self,
+                port=port,
+                host=host,
+                max_workers=max_workers,
+            )
+            self.grpc_server.start()
+
+            logger.info(
+                "grpc_server_started",
+                port=port,
+                host=host,
+                max_workers=max_workers,
+                blocking=blocking,
+                flight_enabled=self.flight_server is not None,
+            )
+
+            if blocking:
+                # Block until interrupted
+                try:
+                    self.grpc_server.wait_for_termination()
+                except KeyboardInterrupt:
+                    logger.info("grpc_server_interrupted")
+                    self.stop_grpc_server()
+        except ImportError:
+            logger.error(
+                "grpc_dependencies_missing",
+                hint="Install with: pip install reminiscence[grpc]",
+            )
+            raise RuntimeError(
+                "gRPC dependencies not installed. "
+                "Install with: pip install grpcio grpcio-tools grpcio-reflection"
+            )
+
+    def stop_grpc_server(self, grace: float = 5.0) -> None:
+        """Stop gRPC server.
+
+        Args:
+            grace: Maximum time to wait for server to stop gracefully (seconds).
+
+        Example:
+            >>> cache.stop_grpc_server()
+        """
+        if self.grpc_server is None:
+            logger.warning("grpc_server_not_running")
+            return
+
+        logger.info("grpc_server_stopping")
+        self.grpc_server.stop(grace=grace)
+        self.grpc_server = None
+        logger.info("grpc_server_stopped")
+
+    # ========================================================================
+    # Arrow Flight Server Management
+    # ========================================================================
+
+    def start_flight_server(
+        self,
+        port: int = 8081,
+        host: str = "0.0.0.0",
+        blocking: bool = False,
+    ) -> None:
+        """Start Arrow Flight server for high-throughput data plane operations.
+
+        Args:
+            port: Port to listen on (default: 8081).
+            host: Host to bind to (default: 0.0.0.0).
+            blocking: If True, blocks until server stops
+                (default: False, runs in background).
+
+        Example:
+            >>> cache = Reminiscence()
+            >>> cache.start_flight_server(port=8081)  # Non-blocking
+            >>> # ... cache data plane now accessible via Flight on port 8081 ...
+            >>> cache.stop_flight_server()
+            >>>
+            >>> # Or blocking mode:
+            >>> cache.start_flight_server(port=8081, blocking=True)  # Blocks until Ctrl+C
+        """
+        if self.flight_server is not None:
+            logger.warning("flight_server_already_running", port=port)
+            return
+
+        try:
+            from .api.flight_server import create_flight_server
+
+            location = f"grpc://{host}:{port}"
+            self.flight_server = create_flight_server(
+                cache=self,
+                port=port,
+                host=host,
+            )
+
+            logger.info(
+                "flight_server_started",
+                location=location,
+                port=port,
+                blocking=blocking,
+            )
+
+            if blocking:
+                # Block until interrupted
+                try:
+                    self.flight_server.serve()
+                except KeyboardInterrupt:
+                    logger.info("flight_server_interrupted")
+                    self.stop_flight_server()
+        except ImportError:
+            logger.error(
+                "flight_dependencies_missing",
+                hint="Install with: pip install reminiscence[grpc]",
+            )
+            raise RuntimeError(
+                "Arrow Flight dependencies not installed. "
+                "Install with: pip install pyarrow>=21.0.0"
+            )
+
+    def stop_flight_server(self) -> None:
+        """Stop Arrow Flight server.
+
+        Example:
+            >>> cache.stop_flight_server()
+        """
+        if self.flight_server is None:
+            logger.warning("flight_server_not_running")
+            return
+
+        logger.info("flight_server_stopping")
+        self.flight_server.shutdown()
+        self.flight_server = None
+        logger.info("flight_server_stopped")
+
+    # ========================================================================
     # Index & Stats
     # ========================================================================
 
@@ -685,8 +905,10 @@ class Reminiscence:
             if len(test_embedding) != self.embedder.embedding_dim:
                 embedding_check = cast(Dict[str, Any], checks["embedding"])
                 embedding_check["ok"] = False
+                expected_dim = self.embedder.embedding_dim
                 embedding_check["error"] = (
-                    f"Embedding dimension mismatch: {len(test_embedding)} != {self.embedder.embedding_dim}"
+                    f"Embedding dimension mismatch: {len(test_embedding)} "
+                    f"!= {expected_dim}"
                 )
         except Exception as e:
             embedding_check = cast(Dict[str, Any], checks["embedding"])
@@ -720,12 +942,14 @@ class Reminiscence:
                 if error_rate > 0.10:
                     error_rate_check["ok"] = False
                     error_rate_check["details"] = (
-                        f"High error rate: {error_rate * 100:.1f}% ({total_errors}/{total_requests} requests)"
+                        f"High error rate: {error_rate * 100:.1f}% "
+                        f"({total_errors}/{total_requests} requests)"
                     )
                 else:
                     error_rate_check["ok"] = True
                     error_rate_check["details"] = (
-                        f"Error rate: {error_rate * 100:.1f}% ({total_errors}/{total_requests} requests)"
+                        f"Error rate: {error_rate * 100:.1f}% "
+                        f"({total_errors}/{total_requests} requests)"
                     )
             else:
                 error_rate_check["ok"] = True
@@ -743,7 +967,8 @@ class Reminiscence:
             if total_errors > 0:
                 schedulers_check["ok"] = False
                 schedulers_check["details"] = (
-                    f"{running_count}/{len(all_stats)} running with {total_errors} errors"
+                    f"{running_count}/{len(all_stats)} running with "
+                    f"{total_errors} errors"
                 )
             else:
                 schedulers_check["ok"] = True
@@ -761,11 +986,11 @@ class Reminiscence:
             )
         elif self.config.otel_enabled:
             otel_check["ok"] = False
-            otel_check["details"] = (
-                "Enabled but exporter failed to initialize"
-            )
+            otel_check["details"] = "Enabled but exporter failed to initialize"
 
-        all_checks_ok = all(cast(Dict[str, Any], check)["ok"] for check in checks.values())
+        all_checks_ok = all(
+            cast(Dict[str, Any], check)["ok"] for check in checks.values()
+        )
         status = "healthy" if all_checks_ok else "unhealthy"
 
         database_check_final = cast(Dict[str, Any], checks["database"])
@@ -846,9 +1071,13 @@ class Reminiscence:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager support - stops all schedulers."""
+        """Context manager support - stops schedulers, gRPC server, and Flight server."""
         if self.scheduler_manager and self.scheduler_manager.schedulers:
             self.stop_scheduler()
+        if self.grpc_server is not None:
+            self.stop_grpc_server()
+        if self.flight_server is not None:
+            self.stop_flight_server()
 
     def __repr__(self) -> str:
         """String representation."""

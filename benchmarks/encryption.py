@@ -1,11 +1,13 @@
 # benchmarks/benchmark_serde.py
 """Benchmark serialization/deserialization with encryption."""
 
-import time
 import statistics
+import time
+
 from pyrage import x25519
-from reminiscence.serialization import ResultSerializer
+
 from reminiscence.encryption import AgeEncryption
+from reminiscence.serialization import ResultSerializer
 
 
 def generate_test_data(size="small"):
@@ -180,8 +182,11 @@ def main():
         overhead_batch_ser / statistics.mean(batch_ser_no_enc)
     ) * 100
     print(f"\nOverhead: +{overhead_batch_ser:.2f} ms ({overhead_pct_batch_ser:.1f}%)")
+    per_item_no_enc = statistics.mean(batch_ser_no_enc) / 10
+    per_item_enc = statistics.mean(batch_ser_enc) / 10
     print(
-        f"Per-item: {statistics.mean(batch_ser_no_enc) / 10:.2f} ms (no enc) vs {statistics.mean(batch_ser_enc) / 10:.2f} ms (enc)"
+        f"Per-item: {per_item_no_enc:.2f} ms (no enc) vs "
+        f"{per_item_enc:.2f} ms (enc)"
     )
 
     # Batch deserialize
@@ -206,8 +211,11 @@ def main():
     print(
         f"\nOverhead: +{overhead_batch_deser:.2f} ms ({overhead_pct_batch_deser:.1f}%)"
     )
+    per_item_deser_no_enc = statistics.mean(batch_deser_no_enc) / 10
+    per_item_deser_enc = statistics.mean(batch_deser_enc) / 10
     print(
-        f"Per-item: {statistics.mean(batch_deser_no_enc) / 10:.2f} ms (no enc) vs {statistics.mean(batch_deser_enc) / 10:.2f} ms (enc)"
+        f"Per-item: {per_item_deser_no_enc:.2f} ms (no enc) vs "
+        f"{per_item_deser_enc:.2f} ms (enc)"
     )
 
     print(f"\n{'=' * 80}")
@@ -215,7 +223,8 @@ def main():
     print("=" * 80)
     print("\nSummary:")
     print(
-        "- Batch operations show ~10-30x speedup over sequential for encrypted large data"
+        "- Batch operations show ~10-30x speedup over sequential for "
+        "encrypted large data"
     )
     print("- Small/Medium data has minimal encryption overhead (<50ms)")
     print("- Large data benefits massively from batch parallelization")

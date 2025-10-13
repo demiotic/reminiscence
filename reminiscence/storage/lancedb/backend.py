@@ -9,13 +9,13 @@ from typing import Any, Dict, List, Optional
 import lancedb
 import pyarrow as pa
 
-from ..base import StorageBackend
-from ..schemas import create_exact_schema, create_semantic_schema
 from ...compression import create_compressor
 from ...serialization import ResultSerializer
 from ...types import CacheEntry
 from ...utils.fingerprint import compute_query_hash, create_fingerprint
 from ...utils.logging import get_logger
+from ..base import StorageBackend
+from ..schemas import create_exact_schema, create_semantic_schema
 from .deletion import DeletionMixin
 from .indexing import IndexingMixin
 from .search import SearchMixin

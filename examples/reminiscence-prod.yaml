@@ -1,0 +1,36 @@
+# Production Configuration
+# Optimized for high-load production environments
+
+grpc:
+  enabled: true
+  port: 8080
+  max_workers: 100
+
+db_uri: ./production_cache.db
+max_entries: 200000
+eviction_policy: lfu
+ttl_seconds: 3600
+
+similarity_threshold: 0.82
+auto_create_index: true
+
+index:
+  threshold_entries: 256
+  num_partitions: 512
+
+enable_metrics: true
+log_level: INFO
+json_logs: true
+
+otel:
+  enabled: true
+  endpoint: http://otel-collector:4318/v1/metrics
+  service_name: reminiscence-prod
+  export_interval_ms: 60000
+
+compression:
+  enabled: true
+  algorithm: zstd
+  level: 3
+
+cleanup_interval_seconds: 1800

@@ -65,7 +65,10 @@ class CacheMetrics:
     scheduler_errors: int = 0
 
     def __post_init__(self) -> None:
-        """Initialize deques with configurable maxlen from max_samples and thread lock."""
+        """Initialize deques with configurable maxlen and thread lock.
+
+        Uses max_samples to set deque maxlen.
+        """
         # Thread safety: Single lock for all metrics operations
         # This ensures accurate counters under concurrent access with minimal overhead
         self._lock = threading.RLock()  # Reentrant lock for nested calls
@@ -130,7 +133,9 @@ class CacheMetrics:
             total = self.hits + self.misses
             return self.evictions / total if total > 0 else 0.0
 
-    def get_percentiles(self, values: Union["deque[float]", List[float]]) -> Dict[str, float]:
+    def get_percentiles(
+        self, values: Union["deque[float]", List[float]]
+    ) -> Dict[str, float]:
         """Calculate percentiles for a deque or list of values.
 
         Args:
@@ -180,9 +185,17 @@ class CacheMetrics:
 
             # Copy policy-specific metrics
             lfu_total = self.lfu_total_accesses
-            lfu_freqs = list(self.lfu_evicted_frequencies) if self.lfu_evicted_frequencies else []
+            lfu_freqs = (
+                list(self.lfu_evicted_frequencies)
+                if self.lfu_evicted_frequencies
+                else []
+            )
             lru_total = self.lru_total_accesses
-            lru_recency = list(self.lru_evicted_recency_seconds) if self.lru_evicted_recency_seconds else []
+            lru_recency = (
+                list(self.lru_evicted_recency_seconds)
+                if self.lru_evicted_recency_seconds
+                else []
+            )
 
             # Copy storage/embedding/scheduler metrics
             storage_searches = self.storage_searches

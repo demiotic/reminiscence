@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import EmbeddingModel
 from ..utils.logging import get_logger
+from .base import EmbeddingModel
 
 logger = get_logger(__name__)
 

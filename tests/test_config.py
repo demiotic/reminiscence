@@ -1,9 +1,11 @@
 """Tests for reminiscence.config.ReminiscenceConfig."""
 
 import os
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
+
 from reminiscence import ReminiscenceConfig
 
 

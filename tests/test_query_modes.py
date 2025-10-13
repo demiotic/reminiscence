@@ -12,7 +12,11 @@ class TestQueryModeExact:
         config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="SELECT * FROM users"), {"db": "prod"}, "result_data", mode=QueryMode.EXACT
+        cache.store(
+            MultiModalInput(text="SELECT * FROM users"),
+            {"db": "prod"},
+            "result_data",
+            mode=QueryMode.EXACT,
         )
 
         # Should be stored in exact table
@@ -24,16 +28,27 @@ class TestQueryModeExact:
         config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="SELECT * FROM users"), {"db": "prod"}, "result1", mode=QueryMode.EXACT
+        cache.store(
+            MultiModalInput(text="SELECT * FROM users"),
+            {"db": "prod"},
+            "result1",
+            mode=QueryMode.EXACT,
         )
 
         # Exact match
-        result = cache.lookup(MultiModalInput(text="SELECT * FROM users"), {"db": "prod"}, mode=QueryMode.EXACT)
+        result = cache.lookup(
+            MultiModalInput(text="SELECT * FROM users"),
+            {"db": "prod"},
+            mode=QueryMode.EXACT,
+        )
         assert result.is_hit
         assert result.similarity == 1.0
 
         # Different query (even semantically similar)
-        result = cache.lookup(MultiModalInput(text="SELECT * FROM users WHERE id > 0"), {"db": "prod"}, mode=QueryMode.EXACT
+        result = cache.lookup(
+            MultiModalInput(text="SELECT * FROM users WHERE id > 0"),
+            {"db": "prod"},
+            mode=QueryMode.EXACT,
         )
         assert result.is_miss
 
@@ -42,11 +57,25 @@ class TestQueryModeExact:
         config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="query"), {"db": "prod"}, "result_prod", mode=QueryMode.EXACT)
-        cache.store(MultiModalInput(text="query"), {"db": "dev"}, "result_dev", mode=QueryMode.EXACT)
+        cache.store(
+            MultiModalInput(text="query"),
+            {"db": "prod"},
+            "result_prod",
+            mode=QueryMode.EXACT,
+        )
+        cache.store(
+            MultiModalInput(text="query"),
+            {"db": "dev"},
+            "result_dev",
+            mode=QueryMode.EXACT,
+        )
 
-        result_prod = cache.lookup(MultiModalInput(text="query"), {"db": "prod"}, mode=QueryMode.EXACT)
-        result_dev = cache.lookup(MultiModalInput(text="query"), {"db": "dev"}, mode=QueryMode.EXACT)
+        result_prod = cache.lookup(
+            MultiModalInput(text="query"), {"db": "prod"}, mode=QueryMode.EXACT
+        )
+        result_dev = cache.lookup(
+            MultiModalInput(text="query"), {"db": "dev"}, mode=QueryMode.EXACT
+        )
 
         assert result_prod.is_hit
         assert result_dev.is_hit
@@ -62,7 +91,8 @@ class TestQueryModeSemantic:
         config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="What is Python?"),
+        cache.store(
+            MultiModalInput(text="What is Python?"),
             {"agent": "qa"},
             "Python is a language",
             mode=QueryMode.SEMANTIC,
@@ -79,13 +109,17 @@ class TestQueryModeSemantic:
         )
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="What is machine learning?"),
+        cache.store(
+            MultiModalInput(text="What is machine learning?"),
             {"agent": "qa"},
             "ML is a subset of AI",
             mode=QueryMode.SEMANTIC,
         )
 
-        result = cache.lookup(MultiModalInput(text="Explain machine learning"), {"agent": "qa"}, mode=QueryMode.SEMANTIC
+        result = cache.lookup(
+            MultiModalInput(text="Explain machine learning"),
+            {"agent": "qa"},
+            mode=QueryMode.SEMANTIC,
         )
 
         assert result.is_hit
@@ -101,7 +135,12 @@ class TestQueryModeAuto:
         cache = Reminiscence(config)
 
         short_query = "SELECT * FROM users"  # < 200 chars
-        cache.store(MultiModalInput(text=short_query), {"db": "prod"}, "result", mode=QueryMode.AUTO)
+        cache.store(
+            MultiModalInput(text=short_query),
+            {"db": "prod"},
+            "result",
+            mode=QueryMode.AUTO,
+        )
 
         # Should be in exact table
         assert cache.backend.exact_table.count_rows() == 1
@@ -113,7 +152,12 @@ class TestQueryModeAuto:
         cache = Reminiscence(config)
 
         long_query = "a" * 250  # > 200 chars
-        cache.store(MultiModalInput(text=long_query), {"agent": "test"}, "result", mode=QueryMode.AUTO)
+        cache.store(
+            MultiModalInput(text=long_query),
+            {"agent": "test"},
+            "result",
+            mode=QueryMode.AUTO,
+        )
 
         # Should be in semantic table
         assert cache.backend.semantic_table.count_rows() == 1
@@ -127,14 +171,18 @@ class TestQueryModeAuto:
         cache = Reminiscence(config)
 
         # Store with semantic
-        cache.store(MultiModalInput(text="What is Python programming?"),
+        cache.store(
+            MultiModalInput(text="What is Python programming?"),
             {"agent": "qa"},
             "Python is a language",
             mode=QueryMode.SEMANTIC,
         )
 
         # Auto lookup tries exact first (miss), then semantic (hit)
-        result = cache.lookup(MultiModalInput(text="Explain Python programming"), {"agent": "qa"}, mode=QueryMode.AUTO
+        result = cache.lookup(
+            MultiModalInput(text="Explain Python programming"),
+            {"agent": "qa"},
+            mode=QueryMode.AUTO,
         )
 
         assert result.is_hit
@@ -148,8 +196,18 @@ class TestQueryModeMixed:
         config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="query1"), {"agent": "test"}, "result1", mode=QueryMode.EXACT)
-        cache.store(MultiModalInput(text="query2"), {"agent": "test"}, "result2", mode=QueryMode.SEMANTIC)
+        cache.store(
+            MultiModalInput(text="query1"),
+            {"agent": "test"},
+            "result1",
+            mode=QueryMode.EXACT,
+        )
+        cache.store(
+            MultiModalInput(text="query2"),
+            {"agent": "test"},
+            "result2",
+            mode=QueryMode.SEMANTIC,
+        )
 
         assert cache.backend.exact_table.count_rows() == 1
         assert cache.backend.semantic_table.count_rows() == 1
@@ -160,14 +218,23 @@ class TestQueryModeMixed:
         config = ReminiscenceConfig(db_uri="memory://", log_level="WARNING")
         cache = Reminiscence(config)
 
-        cache.store(MultiModalInput(text="query"), {"agent": "test"}, "result", mode=QueryMode.EXACT)
+        cache.store(
+            MultiModalInput(text="query"),
+            {"agent": "test"},
+            "result",
+            mode=QueryMode.EXACT,
+        )
 
         # Lookup with semantic mode won't find it
-        result = cache.lookup(MultiModalInput(text="query"), {"agent": "test"}, mode=QueryMode.SEMANTIC)
+        result = cache.lookup(
+            MultiModalInput(text="query"), {"agent": "test"}, mode=QueryMode.SEMANTIC
+        )
         assert result.is_miss
 
         # Lookup with exact mode will find it
-        result = cache.lookup(MultiModalInput(text="query"), {"agent": "test"}, mode=QueryMode.EXACT)
+        result = cache.lookup(
+            MultiModalInput(text="query"), {"agent": "test"}, mode=QueryMode.EXACT
+        )
         assert result.is_hit
 
 

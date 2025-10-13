@@ -32,7 +32,9 @@ def test_cache_hit_logs_json(json_logging_env, capsys):
     config = ReminiscenceConfig.load()
     reminiscence = Reminiscence(config)
 
-    reminiscence.store(MultiModalInput(text="test query"), {"agent": "test"}, "test result")
+    reminiscence.store(
+        MultiModalInput(text="test query"), {"agent": "test"}, "test result"
+    )
     capsys.readouterr()
 
     result = reminiscence.lookup(MultiModalInput(text="test query"), {"agent": "test"})

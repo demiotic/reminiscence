@@ -5,8 +5,8 @@ from __future__ import annotations
 import gzip
 import time
 
-from .base import Compressor
 from ..utils.logging import get_logger
+from .base import Compressor
 
 logger = get_logger(__name__)
 

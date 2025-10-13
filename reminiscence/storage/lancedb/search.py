@@ -110,6 +110,18 @@ class SearchMixin:
         query_hash = compute_query_hash(query_text, context)
         context_hash = create_fingerprint(context)
 
+        # Enhanced debugging: Log table state BEFORE search
+        table_rows = self.exact_table.count_rows()
+        logger.info(
+            "exact_search_debug",
+            query_hash=query_hash,  # Full hash for debugging
+            context_hash=context_hash,  # Full hash for debugging
+            table_id=id(self.exact_table),
+            table_rows=table_rows,
+            query_text=query_text,
+            context=context,
+        )
+
         logger.debug(
             "exact_search_start",
             query_hash=query_hash[:16],
@@ -117,16 +129,21 @@ class SearchMixin:
         )
 
         try:
-            results = (
-                self.exact_table.search()
-                .where(
-                    f"query_hash = '{query_hash}' AND context_hash = '{context_hash}'"
-                )
-                .limit(1)
-                .to_arrow()
+            where_clause = (
+                f"query_hash = '{query_hash}' AND context_hash = '{context_hash}'"
             )
+            logger.info("exact_search_where", where_clause=where_clause)
+
+            results = self.exact_table.search().where(where_clause).limit(1).to_arrow()
 
             search_ms = (time.perf_counter() - search_start) * 1000
+
+            # Enhanced debugging: Log result details
+            logger.info(
+                "exact_search_results",
+                result_count=len(results),
+                result_schema=str(results.schema) if len(results) > 0 else "empty",
+            )
 
             if len(results) == 0:
                 logger.debug("exact_search_miss", latency_ms=round(search_ms, 1))
@@ -143,6 +160,7 @@ class SearchMixin:
                 error=str(e),
                 error_type=type(e).__name__,
                 latency_ms=round(search_ms, 1),
+                exc_info=True,  # Add stack trace
             )
             if self.metrics:
                 if not hasattr(self.metrics, "storage_search_errors"):

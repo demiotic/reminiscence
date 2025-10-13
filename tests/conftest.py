@@ -1,18 +1,18 @@
 """Shared fixtures for Reminiscence tests."""
 
-import pytest
-import tempfile
-import shutil
-import structlog
 import logging
+import shutil
+import tempfile
+
+import pytest
+import structlog
 
 from reminiscence import Reminiscence, ReminiscenceConfig
 from reminiscence.cache import CacheOperations
 from reminiscence.embeddings.fastembed import FastEmbedEmbedder
-from reminiscence.storage import LanceDBBackend
 from reminiscence.eviction import create_eviction_policy
 from reminiscence.metrics import CacheMetrics
-
+from reminiscence.storage import LanceDBBackend
 
 # ============================================================================
 # SINGLETON CLEANUP FIXTURES
@@ -24,8 +24,8 @@ def clear_singletons():
     """Clear singleton instances between tests for isolation."""
     yield
 
-    from reminiscence.storage.lancedb import LanceDBBackend
     from reminiscence.metrics.exporters import OpenTelemetryExporter
+    from reminiscence.storage.lancedb import LanceDBBackend
 
     LanceDBBackend._clear_instances()
     OpenTelemetryExporter._clear_instances()

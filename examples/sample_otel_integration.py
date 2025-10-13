@@ -1,7 +1,9 @@
 """Test script to verify OpenTelemetry integration with Reminiscence."""
 
 import time
+
 from dotenv import load_dotenv
+
 from reminiscence import Reminiscence, ReminiscenceConfig
 
 load_dotenv()

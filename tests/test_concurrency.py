@@ -1,8 +1,8 @@
 """Concurrency tests for Reminiscence with relaxed eviction and thread-safe metrics."""
 
 import multiprocessing
-import time
 import os
+import time
 
 # CRITICAL: Use spawn instead of fork to avoid deadlocks with sentence-transformers
 multiprocessing.set_start_method("spawn", force=True)
@@ -13,9 +13,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def worker_store_many(db_path: str, worker_id: int, num_stores: int):
     """Worker that performs many stores."""
     # Imports inside worker (after spawn)
+    import os
+
     from reminiscence import Reminiscence, ReminiscenceConfig
     from reminiscence.types import MultiModalInput
-    import os
 
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print(f"[Worker {worker_id}] Starting...", flush=True)
@@ -47,8 +48,10 @@ def worker_store_many(db_path: str, worker_id: int, num_stores: int):
             print(f"[Worker {worker_id}] Store {i} FAILED: {e}", flush=True)
 
     stats = reminiscence.get_stats()
+    success_count = num_stores - failed_stores
     print(
-        f"[Worker {worker_id}] FINISHED - {num_stores - failed_stores}/{num_stores} successful",
+        f"[Worker {worker_id}] FINISHED - "
+        f"{success_count}/{num_stores} successful",
         flush=True,
     )
 
@@ -110,7 +113,8 @@ class TestConcurrentStores:
 
         # Assertions - With relaxed eviction, should have near-zero failures
         assert total_failed <= total_attempted * 0.01, (
-            f"More than 1% failures (expected near-zero with relaxed eviction): {total_failed}/{total_attempted}"
+            f"More than 1% failures (expected near-zero with relaxed eviction): "
+            f"{total_failed}/{total_attempted}"
         )
         assert final_count > 0, "Cache should have entries"
 
@@ -161,14 +165,17 @@ class TestConcurrentStores:
 
         # With relaxed eviction, even high concurrency should have very low failure rate
         assert total_failed <= total_attempted * 0.02, (
-            f"More than 2% failures (expected near-zero with relaxed eviction): {total_failed}/{total_attempted}"
+            f"More than 2% failures (expected near-zero with relaxed eviction): "
+            f"{total_failed}/{total_attempted}"
         )
         assert final_count > 0, "Cache should have entries"
 
         # Verify max_entries soft limit (should be within 105% of limit)
         max_entries_configured = 100
-        assert final_count <= max_entries_configured * 1.10, (
-            f"Cache grew beyond 110% of max_entries: {final_count} > {max_entries_configured * 1.10}"
+        max_allowed = max_entries_configured * 1.10
+        assert final_count <= max_allowed, (
+            f"Cache grew beyond 110% of max_entries: "
+            f"{final_count} > {max_allowed}"
         )
 
         print("\n✅ Test PASSED - Relaxed eviction handles high concurrency")

@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 
-
 # =============================================================================
 # Enums for Type Safety
 # =============================================================================
@@ -224,7 +223,7 @@ class CacheEntry:
         context: Contextual parameters used for matching.
         embedding: Vector embedding of the query for similarity search.
         result: The cached result (can be any Python object).
-        timestamp: Unix timestamp when entry was created.
+        timestamp: Unix timestamp in milliseconds when entry was created.
         similarity: Similarity score if retrieved via semantic search.
         metadata: Additional metadata about the entry.
         ttl_seconds: Time-to-live for this specific entry.
@@ -235,7 +234,7 @@ class CacheEntry:
     context: Dict[str, Any]
     embedding: pa.Array
     result: Any
-    timestamp: int
+    timestamp: int  # Milliseconds since epoch
     similarity: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
     ttl_seconds: Optional[int] = None
@@ -262,7 +261,9 @@ class CacheEntry:
         Returns:
             Age of the entry in seconds.
         """
-        return time.time() - self.timestamp
+        current_ms = int(time.time() * 1000)
+        age_ms = current_ms - self.timestamp
+        return age_ms / 1000.0
 
     @property
     def is_expired(self) -> bool:

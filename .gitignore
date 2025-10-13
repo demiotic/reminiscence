@@ -7,3 +7,7 @@
 **/dist
 **/db
 CLAUDE.md
+ARCHITECTURE.md
+**/.claude
+**/.mypy_cache
+**/.ruff_cache

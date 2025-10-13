@@ -2,9 +2,9 @@
 
 import pytest
 
+from reminiscence import ReminiscenceConfig
 from reminiscence.embeddings import create_embedder
 from reminiscence.embeddings.fastembed import FastEmbedEmbedder
-from reminiscence import ReminiscenceConfig
 
 
 class TestEmbedderFactory:

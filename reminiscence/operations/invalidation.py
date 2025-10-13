@@ -84,7 +84,7 @@ class InvalidationOperations:
 
             # Invalidate by age
             if older_than_seconds is not None:
-                cutoff = time.time() - older_than_seconds
+                cutoff_ms = int(time.time() * 1000) - int(older_than_seconds * 1000)
 
                 for table, table_name, schema in [
                     (
@@ -102,12 +102,12 @@ class InvalidationOperations:
                     if len(arrow_table) == 0:
                         continue
 
-                    old_mask = pc.less_equal(arrow_table["timestamp"], cutoff)
+                    old_mask = pc.less_equal(arrow_table["timestamp"], cutoff_ms)
                     old_rows = arrow_table.filter(old_mask).to_pylist()
                     entries_to_remove.extend(old_rows)
 
                     if self.config.db_uri == "memory://":
-                        mask = pc.greater(arrow_table["timestamp"], cutoff)
+                        mask = pc.greater(arrow_table["timestamp"], cutoff_ms)
                         filtered = arrow_table.filter(mask)
                         new_table = self.storage.db.create_table(
                             table_name,
@@ -121,7 +121,7 @@ class InvalidationOperations:
                             self.storage.semantic_table = new_table
                             self.storage.table = new_table
                     else:
-                        table.delete(f"timestamp <= {cutoff}")
+                        table.delete(f"timestamp <= {cutoff_ms}")
 
             # Invalidate by context
             elif context is not None:
@@ -241,8 +241,9 @@ class InvalidationOperations:
                         )
                         context = {}
 
-                    # Calculate entry age
-                    age_seconds = time.time() - timestamp
+                    # Calculate entry age (convert millisecond timestamp to seconds)
+                    current_ms = int(time.time() * 1000)
+                    age_seconds = (current_ms - timestamp) / 1000.0
 
                     # Apply pattern matching filters
                     if not pattern.matches_query(query_text):

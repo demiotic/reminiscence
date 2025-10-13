@@ -6,13 +6,14 @@ Direct serializer benchmark without embeddings/cache.
 Run with: python benchmarks/compression_direct.py
 """
 
-import time
 import json
 import statistics
+import time
+
 import pandas as pd
 
-from reminiscence.serialization import ResultSerializer
 from reminiscence.compression import create_compressor
+from reminiscence.serialization import ResultSerializer
 
 
 class CompressionBenchmark:
@@ -61,9 +62,11 @@ class CompressionBenchmark:
     ) -> dict:
         """Run benchmark for specific configuration."""
         print(f"\n{'=' * 70}")
-        print(
-            f"Benchmarking: {data_type.upper():12} | {size.upper():6} | {compression.upper():4}"
+        benchmark_label = (
+            f"Benchmarking: {data_type.upper():12} | "
+            f"{size.upper():6} | {compression.upper():4}"
         )
+        print(benchmark_label)
         print(f"{'=' * 70}")
 
         # Create serializer with compression
@@ -144,17 +147,23 @@ class CompressionBenchmark:
             else 0,
         }
 
-        print(
-            f"  Serialize:    {result['serialize_ms']:.2f} ± {result['serialize_std']:.2f} ms"
+        serialize_stats = (
+            f"  Serialize:    {result['serialize_ms']:.2f} ± "
+            f"{result['serialize_std']:.2f} ms"
         )
-        print(
-            f"  Deserialize:  {result['deserialize_ms']:.2f} ± {result['deserialize_std']:.2f} ms"
+        print(serialize_stats)
+        deserialize_stats = (
+            f"  Deserialize:  {result['deserialize_ms']:.2f} ± "
+            f"{result['deserialize_std']:.2f} ms"
         )
+        print(deserialize_stats)
         print(f"  Original:     {result['original_kb']:.2f} KB")
         print(f"  Compressed:   {result['compressed_kb']:.2f} KB")
-        print(
-            f"  Ratio:        {result['compression_ratio']:.3f} ({result['space_savings_pct']:.1f}% savings)"
+        ratio_stats = (
+            f"  Ratio:        {result['compression_ratio']:.3f} "
+            f"({result['space_savings_pct']:.1f}% savings)"
         )
+        print(ratio_stats)
         print(f"  Throughput:   {result['throughput_mb_s']:.1f} MB/s")
 
         self.results.append(result)

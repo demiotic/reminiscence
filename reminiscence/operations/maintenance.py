@@ -64,13 +64,14 @@ class MaintenanceOperations:
             exact_table = self.storage.exact_table.to_arrow()
             semantic_table = self.storage.semantic_table.to_arrow()
 
-            cutoff = time.time() - self.config.ttl_seconds
+            # Cutoff in milliseconds (timestamps are now stored as milliseconds)
+            cutoff_ms = int(time.time() * 1000) - int(self.config.ttl_seconds * 1000)
             deleted_total = 0
 
             # Clean up exact table
             if len(exact_table) > 0:
                 before = len(exact_table)
-                expired_mask = pc.less_equal(exact_table["timestamp"], cutoff)
+                expired_mask = pc.less_equal(exact_table["timestamp"], cutoff_ms)
                 expired_rows = exact_table.filter(expired_mask).to_pylist()
 
                 # Notify eviction policy
@@ -87,7 +88,7 @@ class MaintenanceOperations:
                             error=str(e),
                         )
 
-                mask = pc.greater(exact_table["timestamp"], cutoff)
+                mask = pc.greater(exact_table["timestamp"], cutoff_ms)
 
                 if self.config.db_uri == "memory://":
                     filtered = exact_table.filter(mask)
@@ -100,14 +101,14 @@ class MaintenanceOperations:
                         mode="overwrite",
                     )
                 else:
-                    self.storage.exact_table.delete(f"timestamp <= {cutoff}")
+                    self.storage.exact_table.delete(f"timestamp <= {cutoff_ms}")
 
                 deleted_total += before - len(self.storage.exact_table.to_arrow())
 
             # Clean up semantic table
             if len(semantic_table) > 0:
                 before = len(semantic_table)
-                expired_mask = pc.less_equal(semantic_table["timestamp"], cutoff)
+                expired_mask = pc.less_equal(semantic_table["timestamp"], cutoff_ms)
                 expired_rows = semantic_table.filter(expired_mask).to_pylist()
 
                 # Notify eviction policy
@@ -124,7 +125,7 @@ class MaintenanceOperations:
                             error=str(e),
                         )
 
-                mask = pc.greater(semantic_table["timestamp"], cutoff)
+                mask = pc.greater(semantic_table["timestamp"], cutoff_ms)
 
                 if self.config.db_uri == "memory://":
                     filtered = semantic_table.filter(mask)
@@ -138,7 +139,7 @@ class MaintenanceOperations:
                     )
                     self.storage.table = self.storage.semantic_table
                 else:
-                    self.storage.semantic_table.delete(f"timestamp <= {cutoff}")
+                    self.storage.semantic_table.delete(f"timestamp <= {cutoff_ms}")
 
                 deleted_total += before - len(self.storage.semantic_table.to_arrow())
 

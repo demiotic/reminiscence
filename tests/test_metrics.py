@@ -1,8 +1,8 @@
 """Tests for metrics tracking and exporters."""
 
-from reminiscence.metrics.tracker import CacheMetrics
-from reminiscence.metrics.exporters import OpenTelemetryExporter
 from reminiscence.config import ReminiscenceConfig
+from reminiscence.metrics.exporters import OpenTelemetryExporter
+from reminiscence.metrics.tracker import CacheMetrics
 
 
 class TestCacheMetrics:

@@ -27,7 +27,8 @@ class CleanupScheduler:
         """Initialize cleanup scheduler.
 
         Args:
-            cleanup_func: Function to call for cleanup (returns number of deleted items).
+            cleanup_func: Function to call for cleanup
+                (returns number of deleted items).
             interval_seconds: Time between cleanup runs (default: 3600 = 1 hour).
             initial_delay_seconds: Delay before first cleanup (default: 60).
             metrics: Optional CacheMetrics instance.

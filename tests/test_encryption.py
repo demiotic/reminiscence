@@ -1,6 +1,7 @@
 """Tests for encryption backends."""
 
 import json
+
 import pytest
 
 from reminiscence.encryption import (

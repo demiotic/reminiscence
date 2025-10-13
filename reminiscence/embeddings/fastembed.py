@@ -6,7 +6,7 @@ import os
 import tempfile
 import time
 from functools import cached_property
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     from fastembed import TextEmbedding
@@ -15,9 +15,9 @@ try:
 except ImportError:
     FASTEMBED_AVAILABLE = False
 
+from ..utils.logging import get_logger
 from .base import EmbeddingModel
 from .model_registry import get_default_model
-from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -371,9 +371,16 @@ class PrometheusExporter(MetricsExporter):
         >>>
         >>> class PrometheusExporter(MetricsExporter):
         >>>     def __init__(self):
-        >>>         self.cache_hits = Counter('reminiscence_cache_hits_total', 'Cache hits')
-        >>>         self.cache_misses = Counter('reminiscence_cache_misses_total', 'Cache misses')
-        >>>         self.lookup_latency = Histogram('reminiscence_lookup_latency_seconds', 'Lookup latency')
+        >>>         self.cache_hits = Counter(
+        ...             'reminiscence_cache_hits_total', 'Cache hits'
+        ...         )
+        >>>         self.cache_misses = Counter(
+        ...             'reminiscence_cache_misses_total', 'Cache misses'
+        ...         )
+        >>>         self.lookup_latency = Histogram(
+        ...             'reminiscence_lookup_latency_seconds',
+        ...             'Lookup latency'
+        ...         )
         >>>
         >>>     def export(self, metrics: Dict[str, Any]):
         >>>         self.cache_hits.inc(metrics['hits'])

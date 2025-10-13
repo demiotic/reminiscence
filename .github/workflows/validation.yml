@@ -1,0 +1,29 @@
+name: Format and pytest
+run-name: Running validation by ${{ github.actor }}
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Ruff linter
+        uses: astral-sh/ruff-action@v3
+
+      - name: download code
+        uses: actions/checkout@v4
+
+      - name: Validate code format
+        run: ruff format --check
+
+      - name: Run pytest
+        run: |
+          uv sync --all-extras
+          uv run pytest
+
